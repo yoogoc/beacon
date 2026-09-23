@@ -13,11 +13,13 @@
 
 pub mod age;
 pub mod builtin;
+pub mod event;
 pub mod path;
 pub mod pod;
 pub mod printer;
 
 pub use age::{format_age, format_duration};
+pub use event::EventSummary;
 /// Re-exported so that consumers do not have to pick a `jiff` version to match
 /// the one `k8s-openapi` models timestamps with.
 pub use k8s_openapi::jiff::Timestamp;

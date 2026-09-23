@@ -105,6 +105,19 @@ impl WatchKey {
         self
     }
 
+    /// Everything the cluster has said about one object.
+    ///
+    /// Keyed on the UID rather than the name: a Deployment's pods are created
+    /// and destroyed under recycled names, and events about a previous
+    /// occupant of a name are not events about this object.
+    pub fn events_about(uid: &str, namespace: Option<String>) -> Self {
+        Self {
+            namespace,
+            ..Self::all(crate::resources::event())
+        }
+        .with_fields(format!("involvedObject.uid={uid}"))
+    }
+
     /// What a log line says about this watch: `Pod`, or `Pod in kube-system`.
     pub fn describe(&self) -> String {
         match &self.namespace {
@@ -563,6 +576,20 @@ mod tests {
         assert!(coalescer.ingest(Event::InitDone));
 
         assert_eq!(names(&coalescer.take()), ["reset[]"]);
+    }
+
+    /// Events are found by UID because names are recycled: a new pod with a
+    /// dead pod's name must not inherit its events.
+    #[test]
+    fn events_are_scoped_to_one_object() {
+        let key = WatchKey::events_about("abc-123", Some("kube-system".into()));
+        assert_eq!(key.resource.kind, "Event");
+        assert_eq!(key.fields.as_deref(), Some("involvedObject.uid=abc-123"));
+        assert_eq!(key.namespace.as_deref(), Some("kube-system"));
+
+        // A cluster-scoped object's events live in no namespace.
+        let key = WatchKey::events_about("abc-123", None);
+        assert!(key.namespace.is_none());
     }
 
     #[test]

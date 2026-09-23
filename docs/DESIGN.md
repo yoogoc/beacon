@@ -377,7 +377,7 @@ UI 里一个"转发列表"面板管理生命周期，Pod 消失时自动关闭�
 | **M0** ✅ | workspace 骨架、三平台 CI、空窗口、主题 token、tracing、登录 shell PATH 恢复 | 三平台各产出一个能开的窗口（macOS 已验证，Linux/Windows 待 CI 首跑） | 1w |
 | **M1** ✅ | kubeconfig 解析、context 切换、Pod 列表 + watch、tokio 桥 | 输出与 `kubectl get pods -A` 逐格一致；切 context/namespace 不泄漏任务。5000 pod 的 60fps 未实测，见附录 | 2w |
 | **M2** ✅ | Discovery、通用表格、列定义、CRD 支持、namespace 过滤、搜索 | 17 种资源（含 4 个 CRD）与 `kubectl get` 逐格一致；CRD 的 printer columns 运行时读取，无需改代码 | 2w |
-| **M3** | Dock 布局、详情面板（Overview/YAML 只读/Events）、命令面板 | ⌘K 可完成 90% 的导航操作 | 2w |
+| **M3** ✅ | Dock 布局、详情面板（Overview/YAML 只读/Events）、命令面板 | ⌘K 覆盖了应用里**全部**四种导航（kind / namespace / cluster / 对象），详情面板三个 tab 都跑通 | 2w |
 | **M4** | 日志流、写操作（delete/scale/restart/SSA apply）、权限预检 | 无权限动作正确置灰；apply 冲突有 diff | 2w |
 | **M5** | port-forward、exec（先一次性命令）、多集群并行 | 同时连 3 个集群内存 < 400MB | 3w |
 | **M6** | 交互式终端、metrics（CPU/内存图表）、Helm release 列表 | — | 4w+ |
@@ -532,3 +532,52 @@ macOS 上 `./target/debug/beacon` 能开窗并正确读出 kubeconfig。
   跑完是 0.03s。等有真实大集群数据再说。
 - 收藏夹、列的显示/隐藏、`-o wide` 那些 priority > 0 的列。
 - `..` 递归下降和非等值过滤器的 JSONPath——printer columns 里没见过，遇到了一律当"没匹配上"。
+
+
+---
+
+## 附：M3 实现记录（2026-09-23）
+
+`cargo test --workspace` 147 passed，`cargo clippy --workspace --all-targets` 干净。
+
+### 落地的东西
+
+| 位置 | 内容 |
+|---|---|
+| `beacon-ui/palette.rs` | 命令面板。前缀即路由：无前缀=当前 kind 内的对象，`@`=资源类型，`#`=命名空间，`ctx `=集群，`>`=命令。段内用 nucleo 模糊匹配，列表截到 50 条——5000 个 pod 里没人读第 51 行，他们会继续打字 |
+| `beacon-ui/detail.rs` | 详情面板三个 tab。Overview 读表格里已有的那份（元数据、标签、注解、Pod 的容器、status 的标量字段）；YAML **重新拉一次完整对象**——store 里是 slim 过的，而这个 tab 的全部意义就是被剥掉的那部分；Events 用 `involvedObject.uid` 单独起一个 watch |
+| `beacon-kube/session.rs` | `get_object`：按需取完整对象 |
+| `beacon-kube/watch.rs` | `WatchKey::events_about(uid, ns)`。按 **UID** 而不是名字：Deployment 的 pod 名字会被回收，上一个占用这个名字的对象的事件不是这个对象的事件 |
+| `beacon-columns/event.rs` | Event 的读法。这是唯一一张**没有 Name 列**的内置表——事件的名字是个带时间戳的哈希，kubectl 也不打它 |
+| `beacon-ui/cluster.rs` | 表格/详情的可拖分栏，选中行即打开详情，换 kind 关掉详情 |
+
+### 与设计的三处分歧
+
+1. **用 `v_resizable` 而不是 `DockArea`**（§6.1）。现在只有一个底部面板要排，DockArea 的可序列化多面板布局
+   等到真有多个面板（M5 的终端、port-forward 列表）再上。分栏位置已经跨"关掉再打开"保留。
+2. **YAML 没有语法高亮**。gpui-component 0.6.4 的 `tree-sitter-yaml` feature 依赖一个
+   **还没发布的 `tree-sitter` 版本**（要 0.26.13，crates.io 上最新 0.26.12），开不了。
+   代码照样 `.language("yaml")`——未知语言会退化成纯文本而不是 panic——所以将来打开 feature 是改一行。
+3. **Overview 不是"按 Pod 强类型渲染"那么细**（§6.4 说的探针/QoS/挂载）。现在是：元数据 + Pod 的容器
+   （镜像、状态、重启次数）+ `status` 的标量字段拍平一层。最后一条是通用的，Deployment 的副本数、
+   Service 的 clusterIP、PVC 的 phase 都能看见，性价比比逐个 kind 写渲染器高得多。
+
+### 新踩的坑
+
+1. **`Command` 的 `on_query` 回调是渲染时才装上的**。在面板第一次渲染之前调 `set_query`，
+   重算根本不会发生。真实使用没问题（用户打字时早就渲染过了），但写验证脚本时会得到一个
+   "No results found" 然后怀疑人生。
+2. **Event 的"最后一次发生"藏在四个字段里**：`series.lastObservedTime` → `lastTimestamp` →
+   `eventTime` → `firstTimestamp`。顺序读错的话，一个连续失败了一周的 pod 会显示成五天前的事。
+3. **kubectl 把 Event 的 involvedObject kind 小写**（`pod/api-7f9` 而不是 `Pod/api-7f9`），
+   因为那是你要打回 `kubectl get` 里的形式。
+
+### 明确没做 / 没验的
+
+- **⌘K 这个键本身没按过**。和 M2 一样，这台机器上的输入自动化工具在会话里不可用。
+  变通验证：临时让面板在连接后自动打开并预填查询，把 `@`、`#`、`>` 三个 section 各截了一张图，
+  确认分组标题、列表内容和顺序都对，然后把临时代码删干净。前缀路由和排序本身有单测覆盖。
+- **YAML 只读**。编辑要走 Server-Side Apply，那是 M4。
+- `>` 段目前只有四个动作（切主题、开关详情、清过滤、复制名字）——写操作（delete/scale/restart）
+  要等 M4 的权限预检一起做，现在放进去就是一个点了会 403 的菜单。
+- 侧边栏的 ★ 收藏（§6.1 画了）、面板布局持久化到磁盘。

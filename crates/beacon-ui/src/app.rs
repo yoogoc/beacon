@@ -10,17 +10,37 @@ use beacon_kube::{ClusterId, ClusterSession, config::Contexts};
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::select::{SearchableVec, Select, SelectEvent, SelectState};
 use gpui_kit::component::{ActiveTheme as _, IndexPath, Sizable as _, TitleBar, h_flex, v_flex};
+use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
 use crate::bridge::Bridge;
 use crate::cluster::ClusterView;
+use crate::palette::{self, Choice, Palette, PaletteEvent};
 use crate::theme::{BeaconTheme as _, Tone, toggle_mode};
+
+gpui_kit::actions!(beacon, [TogglePalette]);
+
+/// Installs the one key everything else is reachable from.
+///
+/// Bound without a context, so it works wherever focus happens to be -- the
+/// palette is no use if it only opens when nothing is selected.
+pub fn init(cx: &mut App) {
+    let stroke = if cfg!(target_os = "macos") {
+        "cmd-k"
+    } else {
+        "ctrl-k"
+    };
+    cx.bind_keys([KeyBinding::new(stroke, TogglePalette, None)]);
+}
 
 pub struct BeaconApp {
     contexts: Result<Contexts, String>,
     context_picker: Option<Entity<SelectState<SearchableVec<SharedString>>>>,
     connection: Connection,
+    palette: Entity<Palette>,
+    palette_open: bool,
     _connect: Option<Task<()>>,
+    _subscriptions: Vec<Subscription>,
 }
 
 enum Connection {
@@ -70,11 +90,30 @@ impl BeaconApp {
             })
         });
 
+        let palette = cx.new(|cx| Palette::new(window, cx));
+        let palette_events = cx.subscribe_in(
+            &palette,
+            window,
+            |view, _, event: &PaletteEvent, window, cx| match event {
+                PaletteEvent::Chose(choice) => {
+                    view.palette_open = false;
+                    view.choose(choice.clone(), window, cx);
+                }
+                PaletteEvent::Dismissed => {
+                    view.palette_open = false;
+                    cx.notify();
+                }
+            },
+        );
+
         let mut this = Self {
             contexts,
             context_picker,
             connection: Connection::Idle,
+            palette,
+            palette_open: false,
             _connect: None,
+            _subscriptions: vec![palette_events],
         };
 
         if let Some(picker) = this.context_picker.clone() {
@@ -160,6 +199,109 @@ impl BeaconApp {
                 cx.notify();
             });
         }));
+    }
+
+    fn cluster(&self) -> Option<&Entity<ClusterView>> {
+        match &self.connection {
+            Connection::Connected(cluster) => Some(cluster),
+            _ => None,
+        }
+    }
+
+    /// Opens the palette, or closes it if it is already open.
+    fn toggle_palette(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.palette_open {
+            self.palette_open = false;
+            cx.notify();
+            return;
+        }
+
+        let mut sources = self
+            .cluster()
+            .map(|cluster| cluster.read(cx).sources(cx))
+            .unwrap_or_default();
+
+        // Clusters come from the kubeconfig, not from the connected session --
+        // switching to one Beacon is not connected to is the point.
+        sources.clusters = self
+            .contexts
+            .as_ref()
+            .map(|contexts| {
+                contexts
+                    .entries()
+                    .iter()
+                    .map(|entry| entry.id.clone())
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        self.palette.update(cx, |palette, cx| {
+            palette.open(sources, window, cx);
+        });
+        self.palette_open = true;
+        cx.notify();
+    }
+
+    /// Carries out what the palette was asked for.
+    fn choose(&mut self, choice: Choice, window: &mut Window, cx: &mut Context<Self>) {
+        match choice {
+            Choice::Cluster(id) => {
+                // A context switch is the one choice that does not need a
+                // connected cluster, and the one that replaces it.
+                self.connect(id, window, cx);
+                return;
+            }
+            Choice::Action(palette::Action::ToggleTheme) => {
+                toggle_mode(window, cx);
+                cx.notify();
+                return;
+            }
+            _ => {}
+        }
+
+        let Some(cluster) = self.cluster().cloned() else {
+            cx.notify();
+            return;
+        };
+
+        cluster.update(cx, |cluster, cx| match choice {
+            Choice::Kind(kind) => cluster.show_kind(kind, window, cx),
+            Choice::Namespace(namespace) => cluster.set_namespace(namespace, window, cx),
+            Choice::Object(object) => cluster.reveal(&object, window, cx),
+            Choice::Action(palette::Action::ToggleDetails) => cluster.toggle_details(window, cx),
+            Choice::Action(palette::Action::ClearFilter) => cluster.clear_filter(window, cx),
+            Choice::Action(palette::Action::CopyName) => {
+                if let Some(selected) = cluster.selected(cx) {
+                    cx.write_to_clipboard(ClipboardItem::new_string(selected.name.clone()));
+                    tracing::info!(object = %selected, "copied name");
+                }
+            }
+            // Handled above, before the cluster was required.
+            Choice::Cluster(_) | Choice::Action(palette::Action::ToggleTheme) => {}
+        });
+
+        cx.notify();
+    }
+
+    /// The palette, over a scrim that dismisses it.
+    fn render_palette(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .absolute()
+            .inset_0()
+            .bg(gpui_kit::black().opacity(0.35))
+            .flex()
+            .flex_col()
+            .items_center()
+            .pt(px(120.))
+            .id("palette-scrim")
+            .on_click(cx.listener(|view, _, _, cx| {
+                view.palette_open = false;
+                cx.notify();
+            }))
+            .child(
+                // The palette itself must not take the scrim's dismiss click.
+                div().id("palette").occlude().child(self.palette.clone()),
+            )
     }
 
     fn render_title_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -313,12 +455,24 @@ impl BeaconApp {
 
 impl Render for BeaconApp {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        v_flex()
+        div()
+            .relative()
             .size_full()
             .bg(cx.theme().background)
             .text_color(cx.theme().foreground)
-            .child(self.render_title_bar(cx))
-            .child(div().flex_1().overflow_hidden().child(self.render_body(cx)))
-            .child(self.render_status_bar(cx))
+            .on_action(
+                cx.listener(|view, _: &TogglePalette, window, cx| view.toggle_palette(window, cx)),
+            )
+            .child(
+                v_flex()
+                    .size_full()
+                    .child(self.render_title_bar(cx))
+                    .child(div().flex_1().overflow_hidden().child(self.render_body(cx)))
+                    .child(self.render_status_bar(cx)),
+            )
+            .when(self.palette_open, |this| {
+                // Deferred so it paints over the table rather than under it.
+                this.child(deferred(self.render_palette(cx)))
+            })
     }
 }

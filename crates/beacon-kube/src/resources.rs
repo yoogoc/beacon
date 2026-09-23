@@ -7,7 +7,7 @@
 //! `k8s-openapi` definition is cheaper and more reliable than hardcoding the
 //! group/version/plural strings.
 
-use k8s_openapi::api::core::v1::{Namespace, Pod};
+use k8s_openapi::api::core::v1::{Event, Namespace, Pod};
 use kube::api::ApiResource;
 
 pub fn pod() -> ApiResource {
@@ -16,6 +16,10 @@ pub fn pod() -> ApiResource {
 
 pub fn namespace() -> ApiResource {
     ApiResource::erase::<Namespace>(&())
+}
+
+pub fn event() -> ApiResource {
+    ApiResource::erase::<Event>(&())
 }
 
 #[cfg(test)]
@@ -34,5 +38,6 @@ mod tests {
         assert_eq!(pod.plural, "pods");
 
         assert_eq!(namespace().plural, "namespaces");
+        assert_eq!(event().plural, "events");
     }
 }

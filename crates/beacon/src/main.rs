@@ -27,6 +27,7 @@ fn main() -> anyhow::Result<()> {
         .with_assets(gpui_kit::assets::Assets)
         .run(|cx: &mut App| {
             gpui_kit::init(cx);
+            beacon_ui::app::init(cx);
 
             if let Err(err) = Bridge::init(cx) {
                 // Without a runtime there is nothing to show, and a window that

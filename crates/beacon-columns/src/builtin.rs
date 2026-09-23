@@ -24,6 +24,12 @@ use crate::{Cell, CellValue, ColumnDef, ColumnSet, ColumnSource, ColumnWidth, po
 /// Keyed on group as well as kind: a `Pod` in a third-party API group is
 /// somebody else's resource that happens to share the name.
 pub fn column_set(group: &str, kind: &str, namespaced: bool) -> Option<ColumnSet> {
+    // Events do not start with a Name, so they build their own set rather than
+    // going through `assemble`. See `crate::event`.
+    if matches!((group, kind), ("" | "events.k8s.io", "Event")) {
+        return Some(crate::event::column_set(namespaced));
+    }
+
     let columns = match (group, kind) {
         ("", "Pod") => pod_columns(),
         ("", "Service") => service(),

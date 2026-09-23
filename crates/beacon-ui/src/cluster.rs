@@ -11,17 +11,20 @@
 use std::{sync::Arc, time::Duration};
 
 use beacon_columns::ColumnSet;
-use beacon_kube::{ClusterSession, Health, Kind, ResourceStore, WatchKey, resources};
+use beacon_kube::{ClusterSession, Health, Kind, ObjectRef, ResourceStore, WatchKey, resources};
 use gpui_kit::component::input::{Input, InputEvent, InputState};
+use gpui_kit::component::resizable::{ResizableState, resizable_panel, v_resizable};
 use gpui_kit::component::select::{SearchableVec, Select, SelectEvent, SelectState};
 use gpui_kit::component::sidebar::{Sidebar, SidebarGroup, SidebarMenu, SidebarMenuItem};
-use gpui_kit::component::table::TableState;
+use gpui_kit::component::table::{TableEvent, TableState};
 use gpui_kit::component::{ActiveTheme as _, IndexPath, Sizable as _, h_flex, v_flex};
 use gpui_kit::*;
 use nucleo_matcher::Matcher;
 
 use crate::bridge::{Bridge, drain_into};
 use crate::catalog::{Catalog, Entry};
+use crate::detail::{DetailClosed, DetailView};
+use crate::palette::Sources;
 use crate::table::ResourceTable;
 
 /// The namespace picker's entry for "do not scope at all". A namespace cannot
@@ -59,6 +62,13 @@ pub struct ClusterView {
     row_search: Entity<InputState>,
 
     table: Entity<TableState<ResourceTable>>,
+
+    /// The panel for the selected object. `None` means nothing is selected, or
+    /// the user closed it.
+    detail: Option<Entity<DetailView>>,
+    /// Kept across selections so that closing and reopening the panel does not
+    /// reset the split the user dragged.
+    split: Entity<ResizableState>,
 
     // Dropping any of these stops the work behind it.
     _health: Task<()>,
@@ -104,6 +114,7 @@ impl ClusterView {
             TableState::new(ResourceTable::new(ColumnSet::fallback(true)), window, cx)
                 .row_selectable(true)
         });
+        let split = cx.new(|_| ResizableState::default());
 
         let mut this = Self {
             health: Health::Connecting,
@@ -118,6 +129,8 @@ impl ClusterView {
             sidebar_query: String::new(),
             row_search,
             table,
+            detail: None,
+            split,
             _health: Task::ready(()),
             _namespaces: Task::ready(()),
             _objects: Task::ready(()),
@@ -157,6 +170,107 @@ impl ClusterView {
         self.kind.as_deref()
     }
 
+    /// Everything the command palette can offer about this cluster.
+    ///
+    /// A snapshot: the palette is open for seconds, and a list that shifted
+    /// under the highlighted row would confirm the wrong thing.
+    pub fn sources(&self, cx: &App) -> Sources {
+        Sources {
+            kinds: self
+                .catalog
+                .sections()
+                .iter()
+                .flat_map(|(_, entries)| entries)
+                .map(|entry| entry.kind.clone())
+                .collect(),
+            // Sorted here rather than relied upon: the store is a map, and a
+            // menu in hash order looks like a bug.
+            namespaces: {
+                let mut names: Vec<String> = self
+                    .namespaces
+                    .iter()
+                    .map(|(key, _)| key.name.clone())
+                    .collect();
+                names.sort();
+                names
+            },
+            clusters: Vec::new(),
+            objects: self.table.read(cx).delegate().keys(),
+            current_kind: self.kind.as_ref().map(|kind| kind.resource.kind.clone()),
+        }
+    }
+
+    /// Switches to a kind, as the sidebar or the palette asks.
+    pub fn show_kind(&mut self, kind: Arc<Kind>, window: &mut Window, cx: &mut Context<Self>) {
+        self.show(kind, window, cx);
+    }
+
+    /// Scopes to a namespace, or to all of them with `None`.
+    pub fn set_namespace(
+        &mut self,
+        namespace: Option<String>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.namespace == namespace {
+            return;
+        }
+        tracing::info!(namespace = ?namespace, "scoping to namespace");
+        self.namespace = namespace;
+        self.refresh_namespace_picker(window, cx);
+        self.watch_objects(window, cx);
+        self.load_columns(window, cx);
+        cx.notify();
+    }
+
+    /// Reveals one object: clears whatever is hiding it, selects its row and
+    /// scrolls to it, and opens the detail panel on it.
+    pub fn reveal(&mut self, key: &ObjectRef, window: &mut Window, cx: &mut Context<Self>) {
+        self.clear_filter(window, cx);
+
+        let row = self.table.read(cx).delegate().row_of(key);
+        let Some(row) = row else {
+            // The palette searched the whole store, so this means the object
+            // disappeared between opening the palette and confirming.
+            tracing::debug!(object = %key, "no longer in the list");
+            return;
+        };
+
+        self.table.update(cx, |state, cx| {
+            state.set_selected_row(row, cx);
+            state.scroll_to_row(row, cx);
+        });
+        self.open_detail(row, window, cx);
+    }
+
+    /// Shows or hides the detail panel without changing the selection.
+    pub fn toggle_details(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.detail.is_some() {
+            self.detail = None;
+        } else if let Some(row) = self.table.read(cx).selected_row() {
+            self.open_detail(row, window, cx);
+        }
+        cx.notify();
+    }
+
+    /// Empties the search box.
+    pub fn clear_filter(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.row_search
+            .update(cx, |input, cx| input.set_value("", window, cx));
+        self.table.update(cx, |state, cx| {
+            if state.delegate_mut().set_filter("") {
+                cx.notify();
+            }
+        });
+        cx.notify();
+    }
+
+    /// The selected object, for the palette's copy command.
+    pub fn selected(&self, cx: &App) -> Option<ObjectRef> {
+        let table = self.table.read(cx);
+        table.delegate().key_at(table.selected_row()?).cloned()
+    }
+
     /// Switches the table to another kind.
     ///
     /// The list starts immediately with whatever columns are known without
@@ -173,9 +287,60 @@ impl ClusterView {
 
         tracing::info!(kind = %kind.display_name(), "showing");
         self.kind = Some(kind);
+        // The panel is about an object of the previous kind.
+        self.detail = None;
         self.watch_objects(window, cx);
         self.load_columns(window, cx);
         cx.notify();
+    }
+
+    /// Opens the detail panel on a row, reusing the existing panel when it is
+    /// already showing that object.
+    fn open_detail(&mut self, row: usize, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(kind) = self.kind.clone() else {
+            return;
+        };
+
+        let table = self.table.read(cx);
+        let Some(key) = table.delegate().key_at(row).cloned() else {
+            return;
+        };
+        let Some(object) = table.delegate().object(&key).cloned() else {
+            return;
+        };
+
+        if let Some(detail) = &self.detail
+            && detail.read(cx).target() == &key
+        {
+            return;
+        }
+
+        let session = self.session.clone();
+        let detail = cx.new(|cx| DetailView::new(session, kind, object, window, cx));
+        cx.subscribe(&detail, |view, _, _: &DetailClosed, cx| {
+            view.detail = None;
+            cx.notify();
+        })
+        .detach();
+
+        self.detail = Some(detail);
+        cx.notify();
+    }
+
+    /// Hands the detail panel the object the table now holds, so that Overview
+    /// tracks a changing pod rather than freezing at the moment it was opened.
+    fn refresh_detail(&mut self, cx: &mut Context<Self>) {
+        let Some(detail) = self.detail.clone() else {
+            return;
+        };
+        let key = detail.read(cx).target().clone();
+        let Some(object) = self.table.read(cx).delegate().object(&key).cloned() else {
+            // The object was deleted. The panel keeps showing what it had,
+            // which is more useful than a panel that empties itself the
+            // instant something disappears.
+            return;
+        };
+        detail.update(cx, |detail, cx| detail.refresh(object, cx));
     }
 
     /// (Re)starts the watch for the current kind and namespace.
@@ -212,6 +377,7 @@ impl ClusterView {
                     state.delegate_mut().apply(batch);
                     cx.notify();
                 });
+                view.refresh_detail(cx);
             },
             window,
         );
@@ -332,13 +498,18 @@ impl ClusterView {
                     None | Some(ALL_NAMESPACES) => None,
                     Some(namespace) => Some(namespace.to_string()),
                 };
+                view.set_namespace(namespace, window, cx);
+            },
+        );
 
-                if view.namespace != namespace {
-                    tracing::info!(namespace = ?namespace, "scoping to namespace");
-                    view.namespace = namespace;
-                    view.watch_objects(window, cx);
-                    view.load_columns(window, cx);
-                    cx.notify();
+        let table = cx.subscribe_in(
+            &self.table.clone(),
+            window,
+            |view, _, event: &TableEvent, window, cx| {
+                // A single click is enough: in a list of pods, picking a row is
+                // always a request to look at it.
+                if let TableEvent::SelectRow(row) = event {
+                    view.open_detail(*row, window, cx);
                 }
             },
         );
@@ -370,7 +541,7 @@ impl ClusterView {
             },
         );
 
-        self._subscriptions = vec![namespace_picker, sidebar_search, row_search];
+        self._subscriptions = vec![namespace_picker, sidebar_search, row_search, table];
     }
 
     fn refresh_namespace_picker(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -530,6 +701,39 @@ impl ClusterView {
 
 impl Render for ClusterView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // `TableState` renders itself; it is the virtualised table, not a
+        // delegate that something else draws.
+        let table = div()
+            .size_full()
+            .overflow_hidden()
+            .child(self.table.clone())
+            .into_any_element();
+
+        let body = match self.detail.clone() {
+            None => table,
+            Some(detail) => v_resizable("detail-split")
+                .with_state(&self.split)
+                .child(
+                    resizable_panel()
+                        .size(px(440.))
+                        .size_range(px(120.)..px(2000.))
+                        .child(table),
+                )
+                .child(
+                    resizable_panel()
+                        .size(px(300.))
+                        .size_range(px(120.)..px(2000.))
+                        .child(
+                            div()
+                                .size_full()
+                                .border_t_1()
+                                .border_color(cx.theme().border)
+                                .child(detail),
+                        ),
+                )
+                .into_any_element(),
+        };
+
         h_flex()
             .size_full()
             .items_start()
@@ -542,9 +746,7 @@ impl Render for ClusterView {
                     .border_l_1()
                     .border_color(cx.theme().border)
                     .child(self.render_toolbar(cx))
-                    // `TableState` renders itself; it is the virtualised table,
-                    // not a delegate that something else draws.
-                    .child(div().flex_1().overflow_hidden().child(self.table.clone())),
+                    .child(div().flex_1().overflow_hidden().child(body)),
             )
     }
 }

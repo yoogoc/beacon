@@ -4,14 +4,30 @@ A cross-platform Kubernetes client built with Rust and [GPUI](https://www.gpui.r
 in the spirit of Lens: browse any cluster, follow logs, edit manifests, forward
 ports — natively, on macOS, Linux and Windows.
 
-**Status: M2.** Beacon connects to a kubeconfig context and lists any kind the
-cluster serves — built-in or custom — following each with a watch, with a
-sidebar to pick the kind, a namespace picker and a fuzzy filter over the rows.
-Tables are column-for-column what `kubectl get` prints, and a CRD's own
+**Status: M3.** Beacon connects to a kubeconfig context and lists any kind the
+cluster serves — built-in or custom — following each with a watch. Tables are
+column-for-column what `kubectl get` prints, and a CRD's own
 `additionalPrinterColumns` are read from the cluster at runtime, so a CRD
-installed this morning lists correctly this afternoon. Writing to a cluster,
-logs, detail panes and the command palette are still ahead; see
+installed this morning lists correctly this afternoon. Selecting a row opens a
+detail panel with Overview, YAML and Events. Everything is reachable from the
+command palette. Writing to a cluster and following logs are still ahead; see
 [docs/DESIGN.md](docs/DESIGN.md) for the architecture and the milestone plan.
+
+## The command palette
+
+`⌘K` (`Ctrl+K` off macOS). A prefix decides what the list is, so there is no
+mode to be in and nothing to remember being in:
+
+```
+(nothing)   objects of the kind on screen
+@           resource kinds, including CRDs
+#           namespaces
+ctx         clusters
+>           commands
+```
+
+Matching is fuzzy within a section: `@dep` finds Deployment, `#kube-sys` finds
+kube-system.
 
 ## Running
 

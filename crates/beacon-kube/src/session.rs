@@ -12,8 +12,8 @@ use std::sync::{
 };
 
 use kube::{
-    Client,
-    api::ApiResource,
+    Api, Client,
+    api::{ApiResource, DynamicObject},
     config::{Config, KubeConfigOptions},
     runtime::watcher,
 };
@@ -134,6 +134,25 @@ impl ClusterSession {
     /// Everything this cluster can show.
     pub fn discovery(&self) -> &Discovery {
         &self.discovery
+    }
+
+    /// Reads one object in full.
+    ///
+    /// The store deliberately holds slimmed objects -- `managedFields` alone is
+    /// often larger than everything else -- so anything that wants the real
+    /// manifest, which in practice means the YAML pane, has to ask for it
+    /// again. One object at a time is cheap; keeping every object whole is not.
+    pub async fn get_object(
+        self: Arc<Self>,
+        resource: ApiResource,
+        namespace: Option<String>,
+        name: String,
+    ) -> Result<DynamicObject> {
+        let api: Api<DynamicObject> = match &namespace {
+            Some(namespace) => Api::namespaced_with(self.client.clone(), namespace, &resource),
+            None => Api::all_with(self.client.clone(), &resource),
+        };
+        Ok(api.get(&name).await?)
     }
 
     /// The `additionalPrinterColumns` a kind publishes for itself.

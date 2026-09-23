@@ -11,7 +11,7 @@
 //! per frame -- and never per row.
 
 use beacon_columns::{Cell, CellValue, ColumnDef, ColumnSet, ColumnSource, ColumnWidth, Timestamp};
-use beacon_kube::{DeltaBatch, ObjectRef, ResourceStore};
+use beacon_kube::{DeltaBatch, DynamicObject, ObjectRef, ResourceStore};
 use gpui_kit::component::table::{Column, ColumnSort, TableDelegate, TableState};
 use gpui_kit::component::{ActiveTheme as _, h_flex};
 use gpui_kit::*;
@@ -19,6 +19,7 @@ use nucleo_matcher::{
     Matcher, Utf32Str,
     pattern::{CaseMatching, Normalization, Pattern},
 };
+use std::sync::Arc;
 
 use crate::status;
 use crate::theme::BeaconTheme as _;
@@ -99,6 +100,30 @@ impl ResourceTable {
     /// `len()`; this is what it is a fraction of.
     pub fn total(&self) -> usize {
         self.store.len()
+    }
+
+    /// The object a row is showing.
+    pub fn key_at(&self, row: usize) -> Option<&ObjectRef> {
+        self.rows.get(row)
+    }
+
+    /// Where a key sits in the current order, if it is on screen at all.
+    ///
+    /// `None` for an object the filter is hiding, which is why the palette
+    /// clears the filter before revealing a row.
+    pub fn row_of(&self, key: &ObjectRef) -> Option<usize> {
+        self.rows.iter().position(|candidate| candidate == key)
+    }
+
+    pub fn object(&self, key: &ObjectRef) -> Option<&Arc<DynamicObject>> {
+        self.store.get(key)
+    }
+
+    /// Every object the watch holds, unfiltered -- what the palette searches.
+    pub fn keys(&self) -> Vec<ObjectRef> {
+        let mut keys: Vec<ObjectRef> = self.store.iter().map(|(key, _)| key.clone()).collect();
+        keys.sort();
+        keys
     }
 
     /// Re-reads the clock. Ages are relative, so a table nobody is changing
