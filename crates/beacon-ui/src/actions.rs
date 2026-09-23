@@ -81,6 +81,39 @@ pub fn may_apply(kind: &Kind, rules: Option<&Rules>) -> bool {
     })
 }
 
+/// The container ports a pod declares, deduplicated and in order.
+///
+/// Read from the spec rather than asked for, because the pod already said.
+pub fn ports(data: &serde_json::Value) -> Vec<u16> {
+    let Some(containers) = data
+        .get("spec")
+        .and_then(|spec| spec.get("containers"))
+        .and_then(|containers| containers.as_array())
+    else {
+        return Vec::new();
+    };
+
+    let mut ports = Vec::new();
+    for container in containers {
+        let Some(declared) = container.get("ports").and_then(|ports| ports.as_array()) else {
+            continue;
+        };
+        for port in declared {
+            let Some(number) = port
+                .get("containerPort")
+                .and_then(serde_json::Value::as_i64)
+                .and_then(|number| u16::try_from(number).ok())
+            else {
+                continue;
+            };
+            if !ports.contains(&number) {
+                ports.push(number);
+            }
+        }
+    }
+    ports
+}
+
 fn label(operation: &Operation) -> String {
     match operation {
         Operation::Delete => "Delete".to_string(),
@@ -212,6 +245,25 @@ mod tests {
         assert!(choices.iter().all(|choice| choice.allowed));
         assert!(choices.iter().all(|choice| choice.tooltip().is_none()));
         assert!(may_apply(&kind, None));
+    }
+
+    /// A pod's ports come from its spec, so the menu can offer them by number
+    /// instead of asking somebody to go and read the manifest.
+    #[test]
+    fn a_pods_declared_ports_are_offered() {
+        let spec = serde_json::json!({ "spec": { "containers": [
+            { "ports": [{ "containerPort": 8080 }, { "containerPort": 8443 }] },
+            { "ports": [{ "containerPort": 9090 }, { "containerPort": 8080 }] },
+            { }
+        ]}});
+
+        assert_eq!(
+            ports(&spec),
+            [8080, 8443, 9090],
+            "in order, without repeats"
+        );
+        assert!(ports(&serde_json::json!({})).is_empty());
+        assert!(ports(&serde_json::json!({ "spec": { "containers": [{}] } })).is_empty());
     }
 
     /// The prompt opens on the number that is set, not on zero.

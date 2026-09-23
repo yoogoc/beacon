@@ -4,7 +4,7 @@ A cross-platform Kubernetes client built with Rust and [GPUI](https://www.gpui.r
 in the spirit of Lens: browse any cluster, follow logs, edit manifests, forward
 ports — natively, on macOS, Linux and Windows.
 
-**Status: M4.** Beacon connects to a kubeconfig context and lists any kind the
+**Status: M6 — feature complete against the milestone plan.** Beacon connects to a kubeconfig context and lists any kind the
 cluster serves — built-in or custom — following each with a watch. Tables are
 column-for-column what `kubectl get` prints, and a CRD's own
 `additionalPrinterColumns` are read from the cluster at runtime, so a CRD
@@ -14,7 +14,12 @@ deleted, restarted, scaled and applied — and Beacon asks the cluster what you
 are allowed to do before it offers, so an action that would be refused is
 greyed out with the reason rather than failing with a 403. Editing the YAML
 applies it with Server-Side Apply; when another field manager owns what you
-changed, the refusal names the fields and their owner. See
+changed, the refusal names the fields and their owner.
+
+Pods also get logs, a one-shot command runner and an interactive shell. Ports
+forward to localhost and keep running while you work elsewhere. CPU and memory
+come from metrics-server, Helm releases are read straight out of the cluster,
+and every cluster you connect to stays connected. See
 [docs/DESIGN.md](docs/DESIGN.md) for the architecture and the milestone plan.
 
 ## The command palette

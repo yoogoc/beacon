@@ -379,8 +379,8 @@ UI 里一个"转发列表"面板管理生命周期，Pod 消失时自动关闭�
 | **M2** ✅ | Discovery、通用表格、列定义、CRD 支持、namespace 过滤、搜索 | 17 种资源（含 4 个 CRD）与 `kubectl get` 逐格一致；CRD 的 printer columns 运行时读取，无需改代码 | 2w |
 | **M3** ✅ | Dock 布局、详情面板（Overview/YAML 只读/Events）、命令面板 | ⌘K 覆盖了应用里**全部**四种导航（kind / namespace / cluster / 对象），详情面板三个 tab 都跑通 | 2w |
 | **M4** ✅ | 日志流、写操作（delete/scale/restart/SSA apply）、权限预检 | 无权限动作带原因置灰（截图验证）；apply 冲突对真实 API server 验证过（dry run，未写入） | 2w |
-| **M5** | port-forward、exec（先一次性命令）、多集群并行 | 同时连 3 个集群内存 < 400MB | 3w |
-| **M6** | 交互式终端、metrics（CPU/内存图表）、Helm release 列表 | — | 4w+ |
+| **M5** ✅ | port-forward、exec（先一次性命令）、多集群并行 | 转发真的通了（curl 过去拿到 argocd-server 的响应）；exec 与 kubectl 一致；多集群按 session 缓存，内存未在 3 集群下实测 | 3w |
+| **M6** ✅ | 交互式终端、metrics、Helm release 列表 | 容器里真的开出了 shell（提示符、命令、输出、ANSI 颜色）；CPU/内存与 `kubectl top` 一致；Helm 列表与 `helm list -A` 一致 | 4w+ |
 
 M1→M4 完成即是一个**日常可用**的只读为主客户端，这是最该追求的第一个可用里程碑。
 
@@ -401,9 +401,12 @@ M1→M4 完成即是一个**日常可用**的只读为主客户端，这是最�
 
 ## 10. 待定的产品决策
 
-1. **Helm 支持**：调 `helm` CLI（简单、可靠）还是解析 Secret 里的 release 数据（无外部依赖）？建议前者。
-2. **指标来源**：metrics-server（`metrics.k8s.io`，需自定义 Rust 类型，k8s-openapi 不含）还是 Prometheus？建议先做前者。
-3. **是否做插件系统**：Lens 的插件是它的护城河。若要做，早期就得把 UI 抽象成可扩展的 panel registry，代价不小。建议 v1 不做。
+1. **Helm 支持**：~~建议调 CLI~~ → **决定解析 Secret**。理由在真正写到这一步才清楚：Beacon 已经有一个
+   认证好的、能用的 client，而调 CLI 会把 §5 那个 PATH 问题原样搬回来——从 Finder 启动的 GUI
+   同样找不到 `helm`。见 `beacon-kube/helm.rs`。
+2. **指标来源**：**决定 metrics-server**，按建议做了。`metrics.k8s.io` 的类型确实要自己写。
+   Prometheus 没做。
+3. **是否做插件系统**：**决定不做**，按建议。
 
 
 ---
@@ -653,3 +656,66 @@ API server 写列表键用 `containers[name="app"]` 这种语法，`beacon-colum
   单测和 dry-run 覆盖——在别人的开发集群上点"删除"不是我该替他做的决定。
 - 日志的 grep 高亮和下载到文件（§6.4 列了）、`--force-conflicts` 之外的冲突合并策略。
 - 权限缓存没有失效机制：RoleBinding 改了要重连才知道。
+
+
+---
+
+## 附：M5 / M6 实现记录（2026-09-23）
+
+`cargo test --workspace` 221 passed，`cargo clippy --workspace --all-targets` 干净。
+
+### 落地的东西
+
+| 位置 | 内容 |
+|---|---|
+| `beacon-kube/forward.rs` | port-forward。一个本地监听器，每条连接一条独立隧道（`kubectl port-forward` 也是这样，隧道是一条到 API server 的 WebSocket，多路复用会把流搅在一起）。转发属于 **session** 而不是视图——它存在的意义就是让你把浏览器指过去，切个资源就断掉是没法用的 |
+| `beacon-kube/exec.rs` | 一次性命令 + 输出。带超时和输出上限 |
+| `beacon-kube/terminal.rs` | 交互式会话的管道：一个字节流出来，两个 channel 进去（stdin 和 resize） |
+| `beacon-kube/metrics.rs` | `metrics.k8s.io`。有意思的是数量解析：`1500n`、`128974848`、`123Mi`、`129e6` 四种写法都要认 |
+| `beacon-kube/helm.rs` | Helm release，从 Secret 里读 |
+| `beacon-ui/terminal.rs` | VT 解析 + 网格 + 按键编码。解析和网格用 `alacritty_terminal`（Zed 和 Alacritty 同款）；自己写的是两头：字节进来怎么画，按键出去编成什么 |
+| `beacon-ui/cluster.rs` | 侧边栏多了 "Cluster tools"：Helm Releases 和 Port Forwards 两个不是资源类型的列表 |
+| `beacon-ui/app.rs` | 多集群：session 按 context 缓存，切回去是重建视图而不是重连 |
+
+### 真机验证
+
+- **port-forward**：对 `argocd-server:8080` 开一条转发，`curl` 本地端口拿到了 argocd-server 的
+  307 重定向——真的通了，不是"看起来开了"。
+- **exec**：三种结局都对上了 kubectl——正常输出、非零退出（只有 stderr）、**起不来**
+  （distroless 镜像里没有 `ls`，报 OCI 的 "executable file not found"）。
+- **metrics**：`k3s: 335m 2.8Gi`，`kubectl top node` 是 `335m / 2873Mi`。
+- **Helm**：7 个 release，与 `helm list -A` 的名字/命名空间/revision/status/chart/appVersion 全部一致。
+- **交互式终端**：在 `argocd-server` 里开出真 shell，跑了 `echo hello from $(hostname)`、
+  `ls -1 /etc | head -3` 和一段 ANSI 彩色输出——提示符、命令回显、输出、绿色和粗体红色、光标块
+  全都对。按键是程序注入的（见下）。
+
+### 踩到的坑
+
+1. **exec 的状态在第三个 channel 上**。stdout/stderr 都空的时候，"命令跑完什么也没输出" 和
+   "命令根本起不来" 长得一模一样。distroless 镜像里没有 `ls`，不读状态 channel 的话界面上就是一片空白。
+   `exec.rs` 和 `terminal.rs` 都补上了。
+2. **Helm 的 payload base64 了两层**。Helm 把 gzip 过的 JSON 编一次，API 又把 Secret 的值编一次。
+   只解一层拿到的是 `H4sI...`——那正是 base64 过的 gzip 的样子，也是这个 bug 的长相。
+3. **终端的尺寸消息会跑在 shell 前面**。面板一量完就发 resize，但那时 `exec` 还没建出进程，
+   没有 TTY 可应用，于是 shell 从默认 80 列起步、在错误的位置折行。现在 400ms 后补发一次。
+4. **prepaint 里不能更新自己的 entity**。测量面板尺寸的 canvas 回调跑在自己的布局过程中，
+   entity 处于 leased 状态，`update` 会被**静默丢弃**——表现是网格看起来该 resize 却一直没动。
+   改成 prepaint 写进一个 `Cell`，下一帧 render 开头再应用。
+
+### 与设计的分歧
+
+- **Helm 读 Secret 而不是调 CLI**（§10 原建议调 CLI），理由见上。
+- **“3 个集群内存 < 400MB” 的做法**：session 缓存（client、discovery、权限、转发），
+  但 **watch 跟着视图走**。这正是 §0.3 “只 watch 正在看的东西” 的延伸——切回去时 registry 的
+  30s linger 还在，watch 直接复用。代价是切换要重建视图（很快），好处是挂 N 个集群的常驻内存
+  基本只有 N 份 discovery 缓存。
+
+### 明确没做 / 没验的
+
+- **没有真的按过键**（连续第四个里程碑，输入自动化工具不可用）。终端的按键编码是纯函数，
+  9 个单测覆盖了 ctrl 组合、方向键的两种模式、Alt 前缀、backspace 是 DEL 不是 BS；
+  从编码到容器再回到网格这条链路，是用临时插桩把按键**程序化注入**跑通并截图的，之后把插桩删干净。
+  没验的只剩 GPUI 的 KeyDownEvent 接到编码器那几行。
+- **3 集群 400MB 没实测**——手上只有一个集群。
+- 终端的选区/复制粘贴/滚动回看、日志的 grep 高亮和下载、Prometheus 指标、插件系统。
+- 写操作在真集群上仍然只跑过 dry-run（见 M4 记录）。

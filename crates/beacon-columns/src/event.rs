@@ -257,6 +257,7 @@ mod tests {
             metadata: &metadata,
             data: &data,
             now: now(),
+            usage: None,
         };
 
         let values: Vec<String> = column_set(false)

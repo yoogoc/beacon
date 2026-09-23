@@ -135,6 +135,10 @@ pub enum Choice {
     Action(Action),
     /// Something that changes the cluster, aimed at the selected object.
     Operation(Operation),
+    /// Forward a port the selected pod declares.
+    Forward {
+        remote_port: u16,
+    },
 }
 
 pub enum PaletteEvent {
@@ -158,6 +162,10 @@ pub struct Sources {
     /// What can be done to the selected object, already marked with whether
     /// this user may do it. Empty when nothing is selected.
     pub operations: Vec<crate::actions::Choice>,
+    /// The ports the selected pod declares. Offered one per port rather than
+    /// behind a prompt: the pod already said which ports it has, so asking
+    /// again would be asking the user to read the manifest for us.
+    pub ports: Vec<u16>,
     /// The kind on screen, for the placeholder.
     pub current_kind: Option<String>,
 }
@@ -238,6 +246,12 @@ impl Palette {
                         Choice::Operation(choice.operation.clone()),
                     )
                 })
+                .chain(self.sources.ports.iter().map(|port| {
+                    (
+                        format!("Forward port {port}"),
+                        Choice::Forward { remote_port: *port },
+                    )
+                }))
                 .chain(
                     Action::ALL
                         .iter()
@@ -276,6 +290,9 @@ impl Palette {
             Choice::Cluster(cluster) => SharedString::from(cluster.to_string()),
             Choice::Action(action) => SharedString::from(action.label()),
             Choice::Operation(operation) => SharedString::from(operation.describe()),
+            Choice::Forward { remote_port } => {
+                SharedString::from(format!("Forward port {remote_port}"))
+            }
         }
     }
 }

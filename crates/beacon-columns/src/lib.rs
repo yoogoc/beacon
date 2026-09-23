@@ -28,6 +28,49 @@ pub use pod::PodSummary;
 use k8s_openapi::apimachinery::pkg::apis::meta::v1::ObjectMeta;
 use serde_json::Value;
 
+/// What a row is using, when the cluster can say.
+///
+/// Deliberately a second, tiny copy of `beacon_kube::Usage` rather than a
+/// shared type: the rule that `beacon-kube` depends on nothing of ours is
+/// worth more than saving two fields, and the conversion is three lines in
+/// the layer that already knows about both.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Usage {
+    /// Thousandths of a core, the unit Kubernetes itself asks for.
+    pub cpu_millis: i64,
+    pub memory_bytes: i64,
+}
+
+impl Usage {
+    /// `250m`, the way a resource request is written.
+    pub fn cpu(&self) -> String {
+        format!("{}m", self.cpu_millis)
+    }
+
+    /// `1.4Gi`, rounded the way a person reads it rather than exactly.
+    pub fn memory(&self) -> String {
+        const UNITS: [(&str, f64); 4] = [
+            ("Gi", 1024.0 * 1024.0 * 1024.0),
+            ("Mi", 1024.0 * 1024.0),
+            ("Ki", 1024.0),
+            ("", 1.0),
+        ];
+
+        let bytes = self.memory_bytes as f64;
+        for (unit, size) in UNITS {
+            if bytes >= size {
+                let value = bytes / size;
+                return if value >= 100.0 || unit.is_empty() {
+                    format!("{}{unit}", value.round() as i64)
+                } else {
+                    format!("{value:.1}{unit}")
+                };
+            }
+        }
+        "0".to_string()
+    }
+}
+
 /// One object, as a column needs to see it.
 ///
 /// Split the way a `DynamicObject` is split: typed metadata, and the rest of
@@ -39,6 +82,10 @@ pub struct Cell<'a> {
     /// `spec` and `status`.
     pub data: &'a Value,
     pub now: Timestamp,
+    /// CPU and memory, when metrics-server is installed and has an answer for
+    /// this object. `None` renders as `<none>` rather than as a zero, because
+    /// "no metrics-server" and "using nothing" are different things.
+    pub usage: Option<Usage>,
 }
 
 /// A value ready to be painted into a table cell.
@@ -347,6 +394,7 @@ mod tests {
             metadata: &metadata,
             data,
             now: now(),
+            usage: None,
         })
     }
 
@@ -432,7 +480,16 @@ mod tests {
 
         assert_eq!(
             ColumnSet::resolve("", "Pod", true, Some(&declared)).headers(),
-            ["Name", "Namespace", "Ready", "Status", "Restarts", "Age"],
+            [
+                "Name",
+                "Namespace",
+                "Ready",
+                "Status",
+                "Restarts",
+                "CPU",
+                "Memory",
+                "Age"
+            ],
             "a built-in table wins over whatever else is published"
         );
 
@@ -479,6 +536,7 @@ mod tests {
             metadata: &metadata,
             data: &data,
             now: now(),
+            usage: None,
         };
 
         let values: Vec<_> = ColumnSet::for_kind("", "Pod", true)
@@ -487,6 +545,11 @@ mod tests {
             .map(|column| column.resolve(&cell).display().to_string())
             .collect();
 
-        assert_eq!(values, ["api-7f9", "payments", "2/2", "Running", "0", "3d"]);
+        assert_eq!(
+            values,
+            [
+                "api-7f9", "payments", "2/2", "Running", "0", "<none>", "<none>", "3d"
+            ]
+        );
     }
 }

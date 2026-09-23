@@ -24,7 +24,11 @@ use crate::{
     ClusterId, Error, Result,
     access::{Access, Rules, fetch_rules},
     discovery::{Discovery, PrinterColumns, fetch_printer_columns},
+    exec,
+    forward::{Forward, ForwardId, Forwards},
+    helm::{self, Release},
     logs::{LogEvent, LogOptions},
+    metrics::{self, Metrics},
     ops::{self, Applied, Operation},
     watch::{Registry, Subscription, WatchKey},
 };
@@ -73,6 +77,8 @@ pub struct ClusterSession {
     printer_columns: Mutex<PrinterColumns>,
     /// Filled in one namespace at a time, as somebody looks at one.
     access: Mutex<Access>,
+    /// Port forwards outlive whatever view started them, so they live here.
+    forwards: Forwards,
     registry: Arc<Registry>,
     health: Arc<HealthState>,
 }
@@ -135,6 +141,7 @@ impl ClusterSession {
             discovery,
             printer_columns: Mutex::new(PrinterColumns::default()),
             access: Mutex::new(Access::default()),
+            forwards: Forwards::default(),
             registry,
             health,
         })
@@ -208,6 +215,73 @@ impl ClusterSession {
                 .await
             }
         }
+    }
+
+    /// Opens a port forward. `local_port` of 0 asks for any free port.
+    ///
+    /// The forward belongs to the session, so it survives navigating away from
+    /// the pod and switching to another cluster and back.
+    pub async fn forward(
+        self: Arc<Self>,
+        namespace: String,
+        pod: String,
+        remote_port: u16,
+        local_port: u16,
+    ) -> Result<Forward> {
+        self.forwards
+            .open(
+                self.client.clone(),
+                &self.runtime,
+                namespace,
+                pod,
+                remote_port,
+                local_port,
+            )
+            .await
+    }
+
+    pub fn forwards(&self) -> Vec<Forward> {
+        self.forwards.list()
+    }
+
+    pub fn close_forward(&self, id: ForwardId) {
+        self.forwards.close(id);
+    }
+
+    /// Stops the forwards aimed at a pod that no longer exists.
+    pub fn close_forwards_for(&self, namespace: &str, pod: &str) {
+        self.forwards.close_for_pod(namespace, pod);
+    }
+
+    /// Runs a one-shot command in a container.
+    pub async fn exec(
+        self: Arc<Self>,
+        namespace: String,
+        pod: String,
+        container: Option<String>,
+        command: Vec<String>,
+    ) -> Result<exec::Output> {
+        exec::run(
+            &self.client,
+            &namespace,
+            &pod,
+            container.as_deref(),
+            &command,
+        )
+        .await
+    }
+
+    /// CPU and memory for everything metrics-server knows about.
+    ///
+    /// Not cached: usage is the one thing here that is only interesting when
+    /// it is current. The caller refreshes it on a timer.
+    pub async fn metrics(self: Arc<Self>) -> Metrics {
+        metrics::fetch(&self.client).await
+    }
+
+    /// Helm releases, newest revision of each.
+    pub async fn helm_releases(self: Arc<Self>, namespace: Option<String>) -> Result<Vec<Release>> {
+        helm::list(&self.client, namespace.as_deref()).await
     }
 
     /// Follows a pod's logs. The returned stream is a channel, safe to poll

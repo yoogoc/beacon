@@ -91,6 +91,25 @@ fn age() -> ColumnDef {
     ColumnDef::new("Age", ColumnWidth::Fixed(72.0), ColumnSource::Age)
 }
 
+/// What metrics-server says this object is using.
+///
+/// `<none>` rather than a zero when there is no answer: a cluster without
+/// metrics-server is a different thing from a pod using nothing, and a column
+/// of zeroes would say the second while meaning the first.
+fn cpu() -> ColumnDef {
+    computed("CPU", 80.0, |cell| match cell.usage {
+        Some(usage) => CellValue::text(usage.cpu()),
+        None => CellValue::Missing,
+    })
+}
+
+fn memory() -> ColumnDef {
+    computed("Memory", 88.0, |cell| match cell.usage {
+        Some(usage) => CellValue::text(usage.memory()),
+        None => CellValue::Missing,
+    })
+}
+
 fn computed(header: &str, width: f32, compute: fn(&Cell<'_>) -> CellValue) -> ColumnDef {
     ColumnDef::new(
         header,
@@ -121,6 +140,8 @@ fn pod_columns() -> Vec<ColumnDef> {
         computed("Restarts", 120.0, |cell| {
             CellValue::text(pod::summarize(cell.metadata, cell.data, cell.now).restarts)
         }),
+        cpu(),
+        memory(),
     ]
 }
 
@@ -400,6 +421,8 @@ fn node() -> Vec<ColumnDef> {
     vec![
         computed("Status", 152.0, |cell| node_status(cell.data)),
         flexible("Roles", 1.0, node_roles),
+        cpu(),
+        memory(),
         // kubectl puts Age before Version here, and only here.
         age(),
         computed("Version", 120.0, |cell| {
@@ -662,6 +685,7 @@ mod tests {
             metadata: &metadata,
             data: &data,
             now: now(),
+            usage: None,
         };
         columns
             .columns
@@ -707,7 +731,7 @@ mod tests {
     fn node_puts_age_before_version() {
         assert_eq!(
             headers("", "Node", false),
-            ["Name", "Status", "Roles", "Age", "Version"]
+            ["Name", "Status", "Roles", "CPU", "Memory", "Age", "Version"]
         );
     }
 
@@ -883,7 +907,13 @@ mod tests {
                     }
                 })
             ),
-            ["Ready", "control-plane,master", "v1.33.3+k3s1"]
+            [
+                "Ready",
+                "control-plane,master",
+                "<none>",
+                "<none>",
+                "v1.33.3+k3s1"
+            ]
         );
     }
 

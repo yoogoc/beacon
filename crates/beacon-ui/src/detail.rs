@@ -15,7 +15,7 @@ use beacon_kube::{
     ObjectRef, Operation, ResourceStore, Rules, WatchKey,
 };
 use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::input::{Editor, EditorState};
+use gpui_kit::component::input::{Editor, EditorState, Input, InputState};
 use gpui_kit::component::tab::{Tab, TabBar};
 use gpui_kit::component::{ActiveTheme as _, Disableable as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
@@ -31,6 +31,8 @@ pub enum DetailTab {
     Yaml,
     Events,
     Logs,
+    Exec,
+    Shell,
 }
 
 impl DetailTab {
@@ -40,6 +42,8 @@ impl DetailTab {
         let mut tabs = vec![Self::Overview, Self::Yaml, Self::Events];
         if kind.resource.kind == "Pod" && kind.resource.group.is_empty() {
             tabs.push(Self::Logs);
+            tabs.push(Self::Exec);
+            tabs.push(Self::Shell);
         }
         tabs
     }
@@ -50,6 +54,8 @@ impl DetailTab {
             Self::Yaml => "YAML",
             Self::Events => "Events",
             Self::Logs => "Logs",
+            Self::Exec => "Exec",
+            Self::Shell => "Shell",
         }
     }
 }
@@ -91,6 +97,13 @@ pub struct DetailView {
     events: ResourceStore,
     events_listed: bool,
 
+    command: Entity<InputState>,
+    ran: Exec,
+    /// Built when the Shell tab is first opened: a terminal holds a grid and a
+    /// WebSocket, and neither is worth having for a pod nobody opens a shell
+    /// on.
+    shell: Option<Entity<crate::terminal::TerminalView>>,
+
     logs: LogBuffer,
     log_options: LogOptions,
     log_status: LogStatus,
@@ -106,7 +119,16 @@ pub struct DetailView {
     _apply_task: Option<Task<()>>,
     _events_task: Option<Task<()>>,
     _logs_task: Option<Task<()>>,
+    _exec_task: Option<Task<()>>,
     _clock: Task<()>,
+}
+
+/// What the Exec tab has to show.
+enum Exec {
+    Idle,
+    Running,
+    Done(Box<beacon_kube::Output>),
+    Failed(String),
 }
 
 /// What the Logs tab is doing.
@@ -134,6 +156,11 @@ impl DetailView {
         cx: &mut Context<Self>,
     ) -> Self {
         let yaml_editor = cx.new(|cx| EditorState::new(window, cx).language("yaml"));
+        let command = cx.new(|cx| {
+            InputState::new(window, cx)
+                .placeholder("A command to run, e.g. ls -la /etc")
+                .default_value("ls -la /")
+        });
 
         let mut this = Self {
             target: ObjectRef::of(&object),
@@ -147,6 +174,9 @@ impl DetailView {
             apply: Apply::Idle,
             events: ResourceStore::new(),
             events_listed: false,
+            command,
+            ran: Exec::Idle,
+            shell: None,
             logs: LogBuffer::new(),
             log_options: LogOptions::default(),
             log_status: LogStatus::Unopened,
@@ -157,6 +187,7 @@ impl DetailView {
             _apply_task: None,
             _events_task: None,
             _logs_task: None,
+            _exec_task: None,
             _clock: Task::ready(()),
         };
 
@@ -212,6 +243,7 @@ impl DetailView {
             DetailTab::Logs if self.log_status == LogStatus::Unopened => {
                 self.follow_logs(window, cx)
             }
+            DetailTab::Shell if self.shell.is_none() => self.open_shell(window, cx),
             _ => {}
         }
         cx.notify();
@@ -1041,6 +1073,129 @@ impl DetailView {
             .into_any_element()
     }
 
+    /// Runs the typed command in the pod.
+    fn run_command(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(namespace) = self.target.namespace.clone() else {
+            return;
+        };
+        let typed = self.command.read(cx).value().to_string();
+        let command = beacon_kube::exec::split(&typed);
+        if command.is_empty() {
+            return;
+        }
+
+        self.ran = Exec::Running;
+        cx.notify();
+
+        let session = self.session.clone();
+        let pod = self.target.name.clone();
+        let container = self.log_options.container.clone();
+        let running = Bridge::global(cx)
+            .run(async move { session.exec(namespace, pod, container, command).await });
+
+        self._exec_task = Some(cx.spawn_in(window, async move |this, cx| {
+            let result = running.await;
+            let _ = this.update(cx, |view, cx| {
+                view.ran = match result {
+                    Ok(Ok(output)) => Exec::Done(Box::new(output)),
+                    Ok(Err(error)) => Exec::Failed(error.to_string()),
+                    Err(error) => Exec::Failed(error.to_string()),
+                };
+                cx.notify();
+            });
+        }));
+    }
+
+    /// Builds the terminal pane. The shell itself is not started until the
+    /// user asks -- opening a tab should not run something in a container.
+    fn open_shell(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(namespace) = self.target.namespace.clone() else {
+            return;
+        };
+
+        let session = self.session.clone();
+        let pod = self.target.name.clone();
+        let container = self.log_options.container.clone();
+
+        self.shell = Some(cx.new(|cx| {
+            crate::terminal::TerminalView::new(session, namespace, pod, container, window, cx)
+        }));
+    }
+
+    fn render_shell(&self, cx: &mut Context<Self>) -> AnyElement {
+        match self.shell.clone() {
+            Some(shell) => div().size_full().child(shell).into_any_element(),
+            None => self.notice("A pod outside a namespace has no shell.", Tone::Unknown, cx),
+        }
+    }
+
+    fn render_exec(&self, cx: &mut Context<Self>) -> AnyElement {
+        let running = matches!(self.ran, Exec::Running);
+
+        let output: AnyElement = match &self.ran {
+            Exec::Idle => self.notice(
+                "Runs one command and shows what it wrote. \
+                 An interactive shell is not here yet — see the design notes.",
+                Tone::Unknown,
+                cx,
+            ),
+            Exec::Running => self.notice("Running…", Tone::Progressing, cx),
+            Exec::Failed(error) => self.notice(error.clone(), Tone::Critical, cx),
+            Exec::Done(output) => {
+                let text = output.combined();
+                div()
+                    .id("exec-output")
+                    .size_full()
+                    .overflow_scroll()
+                    .p_3()
+                    .child(
+                        v_flex()
+                            .gap_2()
+                            .children(output.note.clone().map(|note| {
+                                div()
+                                    .text_xs()
+                                    .text_color(cx.theme().tone(Tone::Warning))
+                                    .child(note)
+                            }))
+                            .child(div().font_family("monospace").text_xs().child(
+                                if text.is_empty() {
+                                    "(no output)".to_string()
+                                } else {
+                                    text
+                                },
+                            )),
+                    )
+                    .into_any_element()
+            }
+        };
+
+        v_flex()
+            .size_full()
+            .child(
+                h_flex()
+                    .w_full()
+                    .px_3()
+                    .py_1p5()
+                    .gap_2()
+                    .items_center()
+                    .border_b_1()
+                    .border_color(cx.theme().border)
+                    .child(div().flex_1().child(Input::new(&self.command).small()))
+                    .child(
+                        Button::new("run")
+                            .primary()
+                            .xsmall()
+                            .label(if running { "Running…" } else { "Run" })
+                            .disabled(running)
+                            .on_click(
+                                cx.listener(|view, _, window, cx| view.run_command(window, cx)),
+                            ),
+                    ),
+            )
+            .child(div().flex_1().overflow_hidden().child(output))
+            .into_any_element()
+    }
+
     fn notice(
         &self,
         message: impl Into<SharedString>,
@@ -1194,6 +1349,8 @@ impl Render for DetailView {
             DetailTab::Yaml => self.render_yaml(cx),
             DetailTab::Events => self.render_events(cx),
             DetailTab::Logs => self.render_logs(cx),
+            DetailTab::Exec => self.render_exec(cx),
+            DetailTab::Shell => self.render_shell(cx),
         };
 
         v_flex()

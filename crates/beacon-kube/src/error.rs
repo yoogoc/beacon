@@ -20,6 +20,9 @@ pub enum Error {
     #[error("kubernetes api: {0}")]
     Api(#[from] kube::Error),
 
+    #[error("{what}: {cause}")]
+    Forward { what: String, cause: String },
+
     /// A connection attempt that failed, already carrying everything needed to
     /// act on it. See [`diagnose`].
     #[error("could not connect to {context}: {diagnosis}")]

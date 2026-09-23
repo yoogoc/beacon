@@ -9,26 +9,36 @@ pub mod access;
 pub mod config;
 pub mod discovery;
 pub mod error;
+pub mod exec;
+pub mod forward;
+pub mod helm;
 pub mod logs;
+pub mod metrics;
 pub mod ops;
 pub mod resources;
 pub mod session;
 pub mod shell_env;
 pub mod store;
+pub mod terminal;
 pub mod watch;
 
 pub use access::Rules;
 pub use discovery::{Discovery, Kind};
 pub use error::{Error, Result};
+pub use exec::Output;
+pub use forward::{Forward, ForwardId};
+pub use helm::Release;
 /// Re-exported so that consumers can name and build the types this crate hands
 /// them without taking their own `kube` dependency -- and without it being a
 /// different `kube`, which is a whole class of confusing type errors.
 pub use kube::api::{ApiResource, DynamicObject};
 pub use kube::core::GroupVersionKind;
 pub use logs::{LogBuffer, LogEvent, LogOptions};
+pub use metrics::{Metrics, Usage};
 pub use ops::{Applied, Conflict, Operation};
 pub use session::{ClusterSession, Health};
 pub use store::{Delta, DeltaBatch, ObjectRef, ResourceStore};
+pub use terminal::{Terminal, TerminalEvent};
 pub use watch::{Subscription, WatchKey};
 
 use std::fmt;

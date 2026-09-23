@@ -49,6 +49,13 @@ impl Bridge {
         cx.global::<Self>()
     }
 
+    /// A handle to the runtime, for code that starts its own long-lived task
+    /// there -- the terminal's duplex stream, which is neither a one-shot nor
+    /// a plain producer.
+    pub fn handle(&self) -> tokio::runtime::Handle {
+        self.runtime.handle().clone()
+    }
+
     /// Runs one piece of network work on the runtime.
     ///
     /// The returned handle is an ordinary future: `await` it from a GPUI task

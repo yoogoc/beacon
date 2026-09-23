@@ -10,8 +10,10 @@
 //! It happens once per incoming batch -- which the watch already limits to one
 //! per frame -- and never per row.
 
-use beacon_columns::{Cell, CellValue, ColumnDef, ColumnSet, ColumnSource, ColumnWidth, Timestamp};
-use beacon_kube::{DeltaBatch, DynamicObject, ObjectRef, ResourceStore};
+use beacon_columns::{
+    Cell, CellValue, ColumnDef, ColumnSet, ColumnSource, ColumnWidth, Timestamp, Usage,
+};
+use beacon_kube::{DeltaBatch, DynamicObject, Metrics, ObjectRef, ResourceStore};
 use gpui_kit::component::table::{Column, ColumnSort, TableDelegate, TableState};
 use gpui_kit::component::{ActiveTheme as _, h_flex};
 use gpui_kit::*;
@@ -44,6 +46,9 @@ pub struct ResourceTable {
     /// What "now" means for the whole frame, so that every Age in a render
     /// agrees and so that tests can pin it.
     now: Timestamp,
+    /// CPU and memory, refreshed on its own timer. Empty on a cluster with no
+    /// metrics-server, which the columns render as `<none>`.
+    metrics: Metrics,
 }
 
 /// How the rows are ordered.
@@ -67,7 +72,28 @@ impl ResourceTable {
             filter: String::new(),
             matcher: crate::catalog::matcher(),
             now: Timestamp::now(),
+            metrics: Metrics::default(),
         }
+    }
+
+    /// Replaces the usage figures. Returns whether anything changed, so a
+    /// cluster without metrics-server costs one comparison and no renders.
+    pub fn set_metrics(&mut self, metrics: Metrics) -> bool {
+        if metrics.is_empty() && self.metrics.is_empty() {
+            return false;
+        }
+        self.metrics = metrics;
+        true
+    }
+
+    /// What one object is using, in the shape a column reads.
+    fn usage(&self, key: &ObjectRef) -> Option<Usage> {
+        self.metrics
+            .get(key.namespace.as_deref(), &key.name)
+            .map(|usage| Usage {
+                cpu_millis: usage.cpu_millis,
+                memory_bytes: usage.memory_bytes,
+            })
     }
 
     /// Applies one coalesced batch from a watch.
@@ -276,12 +302,14 @@ impl ResourceTable {
             metadata: &object.metadata,
             data: &object.data,
             now: self.now,
+            usage: self.usage(key),
         }))
     }
 
     fn cell(&self, row: usize, column: usize) -> Option<(&ColumnDef, CellValue)> {
         let column = self.columns.columns.get(column)?;
-        let object = self.store.get(self.rows.get(row)?)?;
+        let key = self.rows.get(row)?;
+        let object = self.store.get(key)?;
 
         Some((
             column,
@@ -289,6 +317,7 @@ impl ResourceTable {
                 metadata: &object.metadata,
                 data: &object.data,
                 now: self.now,
+                usage: self.usage(key),
             }),
         ))
     }

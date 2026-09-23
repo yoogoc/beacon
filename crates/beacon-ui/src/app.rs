@@ -4,7 +4,7 @@
 //! that exists before and between connections -- which contexts there are,
 //! which one is being connected to, and what went wrong if it failed.
 
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 
 use beacon_kube::{ClusterId, ClusterSession, config::Contexts};
 use gpui_kit::component::button::{Button, ButtonVariants as _};
@@ -37,6 +37,13 @@ pub struct BeaconApp {
     contexts: Result<Contexts, String>,
     context_picker: Option<Entity<SelectState<SearchableVec<SharedString>>>>,
     connection: Connection,
+    /// Every cluster connected in this session, kept alive across switches.
+    ///
+    /// A session is a client, a discovery cache, a permission cache and any
+    /// port forwards -- all cheap to hold and slow to rebuild. The *watches*
+    /// are not kept: they belong to the view, and the registry's linger means
+    /// switching back within half a minute reuses them anyway.
+    sessions: HashMap<ClusterId, Arc<ClusterSession>>,
     palette: Entity<Palette>,
     palette_open: bool,
     _connect: Option<Task<()>>,
@@ -110,6 +117,7 @@ impl BeaconApp {
             contexts,
             context_picker,
             connection: Connection::Idle,
+            sessions: HashMap::new(),
             palette,
             palette_open: false,
             _connect: None,
@@ -155,6 +163,17 @@ impl BeaconApp {
             .and_then(|contexts| contexts.get(&id))
             .and_then(|entry| entry.namespace.clone());
 
+        // Already connected: switching back is rebuilding a view over a
+        // session that still has its client, its discovery and its forwards.
+        if let Some(session) = self.sessions.get(&id).cloned() {
+            tracing::info!(context = %id, "switching back");
+            self.connection = Connection::Connected(
+                cx.new(|cx| ClusterView::new(session, namespace, window, cx)),
+            );
+            cx.notify();
+            return;
+        }
+
         tracing::info!(context = %id, namespace = ?namespace, "connecting");
         self.connection = Connection::Connecting(id.clone());
         cx.notify();
@@ -177,6 +196,7 @@ impl BeaconApp {
                 view.connection = match result {
                     Ok(Ok(session)) => {
                         let session = Arc::new(session);
+                        view.sessions.insert(id.clone(), session.clone());
                         Connection::Connected(
                             cx.new(|cx| ClusterView::new(session, namespace, window, cx)),
                         )
@@ -269,6 +289,7 @@ impl BeaconApp {
             Choice::Namespace(namespace) => cluster.set_namespace(namespace, window, cx),
             Choice::Object(object) => cluster.reveal(&object, window, cx),
             Choice::Operation(operation) => cluster.start(operation, window, cx),
+            Choice::Forward { remote_port } => cluster.start_forward(remote_port, window, cx),
             Choice::Action(palette::Action::ToggleDetails) => cluster.toggle_details(window, cx),
             Choice::Action(palette::Action::ClearFilter) => cluster.clear_filter(window, cx),
             Choice::Action(palette::Action::CopyName) => {
@@ -419,15 +440,21 @@ impl BeaconApp {
                     .map(|reason| format!("{} — {reason}", health.label()))
                     .unwrap_or_else(|| health.label().to_string());
 
-                (
-                    tone,
-                    format!(
-                        "{} · {} · {} watches",
-                        cluster.session().server(),
-                        detail,
-                        cluster.session().active_watches()
-                    ),
-                )
+                let forwards = cluster.session().forwards().len();
+                let mut status = format!(
+                    "{} · {} · {} watches",
+                    cluster.session().server(),
+                    detail,
+                    cluster.session().active_watches()
+                );
+                if self.sessions.len() > 1 {
+                    status.push_str(&format!(" · {} clusters", self.sessions.len()));
+                }
+                if forwards > 0 {
+                    status.push_str(&format!(" · {forwards} forwarding"));
+                }
+
+                (tone, status)
             }
         };
 

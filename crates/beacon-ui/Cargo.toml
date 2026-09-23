@@ -6,6 +6,7 @@ rust-version.workspace = true
 license.workspace = true
 
 [dependencies]
+alacritty_terminal.workspace = true
 beacon-columns.workspace = true
 beacon-kube.workspace = true
 gpui-kit.workspace = true

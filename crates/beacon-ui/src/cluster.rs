@@ -12,9 +12,10 @@ use std::{sync::Arc, time::Duration};
 
 use beacon_columns::ColumnSet;
 use beacon_kube::{
-    Applied, ClusterSession, Health, Kind, ObjectRef, Operation, ResourceStore, Rules, WatchKey,
-    resources,
+    Applied, ClusterSession, Forward, Health, Kind, ObjectRef, Operation, Release, ResourceStore,
+    Rules, WatchKey, resources,
 };
+use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::component::resizable::{ResizableState, resizable_panel, v_resizable};
 use gpui_kit::component::select::{SearchableVec, Select, SelectEvent, SelectState};
@@ -39,6 +40,41 @@ const ALL_NAMESPACES: &str = "All namespaces";
 /// How often the Age column is repainted. Ages are relative, so a table that
 /// nothing is changing still has to advance.
 const CLOCK: Duration = Duration::from_secs(1);
+
+/// How often usage is re-read. metrics-server itself only recomputes every
+/// fifteen seconds or so, so asking faster costs requests and shows the same
+/// numbers.
+const METRICS_INTERVAL: Duration = Duration::from_secs(10);
+
+/// What the main area is showing.
+///
+/// Helm releases and port forwards are cluster-wide lists rather than resource
+/// kinds, so they cannot live in the catalog with the kinds -- but they belong
+/// in the same sidebar, because that is where somebody looks for them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Mode {
+    Objects,
+    Releases,
+    Forwards,
+}
+
+impl Mode {
+    pub fn label(&self) -> &'static str {
+        match self {
+            Self::Objects => "Objects",
+            Self::Releases => "Helm Releases",
+            Self::Forwards => "Port Forwards",
+        }
+    }
+}
+
+/// What the Helm list has to show.
+enum Releases {
+    Unopened,
+    Loading,
+    Ready(Vec<Release>),
+    Failed(String),
+}
 
 /// What the last write operation said, for the toolbar.
 enum Outcome {
@@ -89,6 +125,8 @@ pub struct ClusterView {
     prompt: Option<Entity<Prompt>>,
     /// What the last write said, for the toolbar.
     outcome: Option<Outcome>,
+    mode: Mode,
+    releases: Releases,
 
     // Dropping any of these stops the work behind it.
     _health: Task<()>,
@@ -97,6 +135,9 @@ pub struct ClusterView {
     _columns: Option<Task<()>>,
     _operation: Option<Task<()>>,
     _rules: Option<Task<()>>,
+    _metrics: Task<()>,
+    _forward: Option<Task<()>>,
+    _releases: Option<Task<()>>,
     _clock: Task<()>,
     _subscriptions: Vec<Subscription>,
 }
@@ -156,12 +197,17 @@ impl ClusterView {
             rules: None,
             prompt: None,
             outcome: None,
+            mode: Mode::Objects,
+            releases: Releases::Unopened,
             _health: Task::ready(()),
             _namespaces: Task::ready(()),
             _objects: Task::ready(()),
             _columns: None,
             _operation: None,
             _rules: None,
+            _metrics: Task::ready(()),
+            _forward: None,
+            _releases: None,
             _clock: Task::ready(()),
             _subscriptions: Vec::new(),
             session,
@@ -169,6 +215,7 @@ impl ClusterView {
 
         this.listen(window, cx);
         this.load_rules(window, cx);
+        this.watch_metrics(window, cx);
         this.watch_health(window, cx);
         this.watch_namespaces(window, cx);
         this.start_clock(cx);
@@ -225,8 +272,100 @@ impl ClusterView {
             clusters: Vec::new(),
             objects: self.table.read(cx).delegate().keys(),
             operations: self.operations(cx),
+            ports: self.selected_ports(cx),
             current_kind: self.kind.as_ref().map(|kind| kind.resource.kind.clone()),
         }
+    }
+
+    /// The ports the selected pod declares.
+    fn selected_ports(&self, cx: &App) -> Vec<u16> {
+        let Some(kind) = self.kind.as_ref() else {
+            return Vec::new();
+        };
+        if kind.resource.kind != "Pod" || !kind.resource.group.is_empty() {
+            return Vec::new();
+        }
+
+        let Some(selected) = self.selected(cx) else {
+            return Vec::new();
+        };
+        self.table
+            .read(cx)
+            .delegate()
+            .object(&selected)
+            .map(|object| crate::actions::ports(&object.data))
+            .unwrap_or_default()
+    }
+
+    /// Opens a port forward to the selected pod and shows the forward list.
+    pub fn start_forward(&mut self, remote_port: u16, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(selected) = self.selected(cx) else {
+            return;
+        };
+        let Some(namespace) = selected.namespace.clone() else {
+            return;
+        };
+
+        self.outcome = Some(Outcome::Running(format!("Forwarding port {remote_port}")));
+        self.mode = Mode::Forwards;
+        cx.notify();
+
+        let session = self.session.clone();
+        let pod = selected.name.clone();
+        // A local port of 0 asks the operating system for a free one. Picking
+        // a number ourselves means a clash with whatever is already listening.
+        let opening = Bridge::global(cx)
+            .run(async move { session.forward(namespace, pod, remote_port, 0).await });
+
+        self._forward = Some(cx.spawn_in(window, async move |this, cx| {
+            let result = opening.await;
+            let _ = this.update(cx, |view, cx| {
+                view.outcome = Some(match result {
+                    Ok(Ok(forward)) => Outcome::Done(format!("Forwarding {}", forward.address())),
+                    Ok(Err(error)) => Outcome::Failed(error.to_string()),
+                    Err(error) => Outcome::Failed(error.to_string()),
+                });
+                cx.notify();
+            });
+        }));
+    }
+
+    /// Stops one forward.
+    pub fn close_forward(&mut self, id: beacon_kube::ForwardId, cx: &mut Context<Self>) {
+        self.session.close_forward(id);
+        cx.notify();
+    }
+
+    /// Switches the main area between the object table and the cluster-wide
+    /// lists that are not resource kinds.
+    pub fn show_mode(&mut self, mode: Mode, window: &mut Window, cx: &mut Context<Self>) {
+        if self.mode == mode {
+            return;
+        }
+        self.mode = mode;
+        if mode == Mode::Releases {
+            self.load_releases(window, cx);
+        }
+        cx.notify();
+    }
+
+    fn load_releases(&mut self, window: &Window, cx: &mut Context<Self>) {
+        self.releases = Releases::Loading;
+        let session = self.session.clone();
+        let namespace = self.namespace.clone();
+        let listing = Bridge::global(cx).run(async move { session.helm_releases(namespace).await });
+
+        self._releases = Some(cx.spawn_in(window, async move |this, cx| {
+            let result = listing.await;
+            let _ = this.update(cx, |view, cx| {
+                view.releases = match result {
+                    Ok(Ok(releases)) => Releases::Ready(releases),
+                    Ok(Err(error)) => Releases::Failed(error.to_string()),
+                    Err(error) => Releases::Failed(error.to_string()),
+                };
+                cx.notify();
+            });
+        }));
     }
 
     /// What can be done to the selected object right now.
@@ -431,6 +570,7 @@ impl ClusterView {
         }
 
         tracing::info!(kind = %kind.display_name(), "showing");
+        self.mode = Mode::Objects;
         self.kind = Some(kind);
         // The panel is about an object of the previous kind.
         self.detail = None;
@@ -620,6 +760,42 @@ impl ClusterView {
         );
     }
 
+    /// Re-reads CPU and memory on a timer.
+    ///
+    /// Usage is the one thing here that is only interesting when it is
+    /// current, so it is polled rather than watched -- metrics-server has no
+    /// watch endpoint to use even if we wanted one.
+    fn watch_metrics(&mut self, window: &Window, cx: &mut Context<Self>) {
+        let session = self.session.clone();
+
+        self._metrics = cx.spawn_in(window, async move |this, cx| {
+            loop {
+                let reading = match cx.update(|_, cx| {
+                    let session = session.clone();
+                    Bridge::global(cx).run(async move { session.metrics().await })
+                }) {
+                    Ok(reading) => reading,
+                    Err(_) => return,
+                };
+
+                if let Ok(metrics) = reading.await {
+                    let updated = this.update(cx, |view, cx| {
+                        view.table.update(cx, |state, cx| {
+                            if state.delegate_mut().set_metrics(metrics) {
+                                cx.notify();
+                            }
+                        });
+                    });
+                    if updated.is_err() {
+                        return;
+                    }
+                }
+
+                cx.background_executor().timer(METRICS_INTERVAL).await;
+            }
+        });
+    }
+
     fn start_clock(&mut self, cx: &mut Context<Self>) {
         self._clock = cx.spawn(async move |this, cx| {
             loop {
@@ -755,6 +931,15 @@ impl ClusterView {
                 .collect()
         };
 
+        let mode = self.mode;
+        let tools = SidebarMenu::new().children([Mode::Releases, Mode::Forwards].map(|item| {
+            SidebarMenuItem::new(item.label())
+                .active(mode == item)
+                .on_click(cx.listener(move |view, _, window, cx| {
+                    view.show_mode(item, window, cx);
+                }))
+        }));
+
         let menu = SidebarMenu::new().children(sections.into_iter().zip(open_by_default).map(
             |((label, entries), open)| {
                 SidebarMenuItem::new(label)
@@ -782,23 +967,173 @@ impl ClusterView {
                     .py_1()
                     .child(Input::new(&self.sidebar_search).small()),
             )
+            .child(SidebarGroup::new("Cluster tools").child(tools))
             .child(SidebarGroup::new("").child(menu))
+    }
+
+    fn render_releases(&self, cx: &mut Context<Self>) -> AnyElement {
+        let rows: AnyElement = match &self.releases {
+            Releases::Unopened | Releases::Loading => self.notice("Reading releases…", cx),
+            Releases::Failed(error) => self.notice(error.clone(), cx),
+            Releases::Ready(releases) if releases.is_empty() => {
+                self.notice("No Helm releases in this scope.", cx)
+            }
+            Releases::Ready(releases) => div()
+                .id("releases")
+                .size_full()
+                .overflow_y_scroll()
+                .child(v_flex().w_full().children(releases.iter().map(|release| {
+                    let tone = if release.status == "deployed" {
+                        Tone::Healthy
+                    } else if release.status.starts_with("pending") {
+                        Tone::Progressing
+                    } else {
+                        Tone::Warning
+                    };
+
+                    h_flex()
+                        .w_full()
+                        .px_3()
+                        .py_2()
+                        .gap_3()
+                        .items_center()
+                        .border_b_1()
+                        .border_color(cx.theme().border)
+                        .text_sm()
+                        .child(div().w(px(220.)).truncate().child(release.name.clone()))
+                        .child(
+                            div()
+                                .w(px(160.))
+                                .truncate()
+                                .text_color(cx.theme().muted_foreground)
+                                .child(release.namespace.clone()),
+                        )
+                        .child(
+                            div()
+                                .w(px(110.))
+                                .text_color(cx.theme().tone(tone))
+                                .child(release.status.clone()),
+                        )
+                        .child(
+                            div()
+                                .w(px(80.))
+                                .text_color(cx.theme().muted_foreground)
+                                .child(format!("rev {}", release.revision)),
+                        )
+                        .child(div().flex_1().truncate().child(release.chart.clone()))
+                        .child(
+                            div()
+                                .w(px(120.))
+                                .truncate()
+                                .text_color(cx.theme().muted_foreground)
+                                .child(release.app_version.clone()),
+                        )
+                })))
+                .into_any_element(),
+        };
+
+        rows
+    }
+
+    fn render_forwards(&self, cx: &mut Context<Self>) -> AnyElement {
+        let forwards: Vec<Forward> = self.session.forwards();
+
+        if forwards.is_empty() {
+            return self.notice(
+                "Nothing is being forwarded. Select a pod and run “Forward port …” from ⌘K.",
+                cx,
+            );
+        }
+
+        div()
+            .id("forwards")
+            .size_full()
+            .overflow_y_scroll()
+            .child(
+                v_flex()
+                    .w_full()
+                    .children(forwards.into_iter().map(|forward| {
+                        let id = forward.id;
+                        h_flex()
+                            .w_full()
+                            .px_3()
+                            .py_2()
+                            .gap_3()
+                            .items_center()
+                            .border_b_1()
+                            .border_color(cx.theme().border)
+                            .text_sm()
+                            .child(
+                                div()
+                                    .w(px(170.))
+                                    .font_family("monospace")
+                                    .text_color(cx.theme().tone(Tone::Healthy))
+                                    .child(forward.address()),
+                            )
+                            .child(div().flex_1().truncate().child(format!(
+                                "{}/{}:{}",
+                                forward.namespace, forward.pod, forward.remote_port
+                            )))
+                            .child(
+                                div()
+                                    .w(px(120.))
+                                    .text_xs()
+                                    .text_color(cx.theme().muted_foreground)
+                                    .child(match forward.connections {
+                                        0 => "idle".to_string(),
+                                        1 => "1 connection".to_string(),
+                                        many => format!("{many} connections"),
+                                    }),
+                            )
+                            .child(
+                                Button::new(SharedString::from(format!("close-forward-{id}")))
+                                    .xsmall()
+                                    .ghost()
+                                    .label("Stop")
+                                    .on_click(cx.listener(move |view, _, _, cx| {
+                                        view.close_forward(id, cx);
+                                    })),
+                            )
+                    })),
+            )
+            .into_any_element()
+    }
+
+    fn notice(&self, message: impl Into<SharedString>, cx: &mut Context<Self>) -> AnyElement {
+        h_flex()
+            .size_full()
+            .p_6()
+            .items_center()
+            .justify_center()
+            .text_sm()
+            .text_color(cx.theme().muted_foreground)
+            .child(message.into())
+            .into_any_element()
     }
 
     fn render_toolbar(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let (shown, total) = self.counts(cx);
-        let title = self
-            .kind
-            .as_ref()
-            .map(|kind| kind.resource.kind.clone())
-            .unwrap_or_else(|| "Nothing selected".into());
+        let title = match self.mode {
+            Mode::Objects => self
+                .kind
+                .as_ref()
+                .map(|kind| kind.resource.kind.clone())
+                .unwrap_or_else(|| "Nothing selected".into()),
+            other => other.label().to_string(),
+        };
 
         // `12 of 340` while filtering, `340` otherwise: the fraction is only
-        // information when something is being hidden.
-        let count = if shown == total {
-            total.to_string()
-        } else {
-            format!("{shown} of {total}")
+        // information when something is being hidden. The other modes count
+        // their own rows -- showing the pod count above a list of Helm
+        // releases is worse than showing nothing.
+        let count = match self.mode {
+            Mode::Objects if shown == total => total.to_string(),
+            Mode::Objects => format!("{shown} of {total}"),
+            Mode::Releases => match &self.releases {
+                Releases::Ready(releases) => releases.len().to_string(),
+                _ => String::new(),
+            },
+            Mode::Forwards => self.session.forwards().len().to_string(),
         };
 
         h_flex()
@@ -872,6 +1207,12 @@ impl Render for ClusterView {
             .overflow_hidden()
             .child(self.table.clone())
             .into_any_element();
+
+        let table = match self.mode {
+            Mode::Objects => table,
+            Mode::Releases => self.render_releases(cx),
+            Mode::Forwards => self.render_forwards(cx),
+        };
 
         let body = match self.detail.clone() {
             None => table,

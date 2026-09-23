@@ -13,6 +13,7 @@ pub mod palette;
 pub mod prompt;
 pub mod status;
 pub mod table;
+pub mod terminal;
 pub mod theme;
 
 pub use app::BeaconApp;

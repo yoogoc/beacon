@@ -44,6 +44,88 @@ async fn main() -> anyhow::Result<()> {
     let session = Arc::new(ClusterSession::connect(context).await?);
     println!("connected to {} at {}", session.id(), session.server());
 
+    if arguments.metrics {
+        let metrics = session.clone().metrics().await;
+        println!("{} objects have metrics", metrics.len());
+        for kind in session.discovery().kinds() {
+            if kind.resource.kind != "Pod" && kind.resource.kind != "Node" {
+                continue;
+            }
+        }
+        for (namespace, name) in [(Some("kube-system"), "coredns"), (None, "k3s")] {
+            if let Some(usage) = metrics.get(namespace, name) {
+                println!("  {name}: {} {}", usage.cpu(), usage.memory());
+            }
+        }
+        return Ok(());
+    }
+
+    if arguments.helm {
+        for release in session.clone().helm_releases(None).await? {
+            println!(
+                "  {:<24} {:<14} rev {:<4} {:<12} {:<28} {}",
+                release.name,
+                release.namespace,
+                release.revision,
+                release.status,
+                release.chart,
+                release.app_version
+            );
+        }
+        return Ok(());
+    }
+
+    if arguments.exec {
+        let target = arguments
+            .namespace
+            .clone()
+            .ok_or_else(|| anyhow::anyhow!("--exec needs <namespace>/<pod>"))?;
+        let (namespace, pod) = target
+            .split_once('/')
+            .ok_or_else(|| anyhow::anyhow!("expected <namespace>/<pod>"))?;
+
+        let command = beacon_kube::exec::split(&arguments.command);
+        let output = session
+            .clone()
+            .exec(namespace.to_string(), pod.to_string(), None, command)
+            .await?;
+
+        print!("{}", output.combined());
+        if let Some(note) = output.note {
+            println!("\n[{note}]");
+        }
+        return Ok(());
+    }
+
+    if arguments.forward {
+        let target = arguments
+            .namespace
+            .clone()
+            .ok_or_else(|| anyhow::anyhow!("--forward needs <namespace>/<pod>"))?;
+        let (namespace, pod) = target
+            .split_once('/')
+            .ok_or_else(|| anyhow::anyhow!("expected <namespace>/<pod>"))?;
+        let remote: u16 = arguments.command.trim().parse().unwrap_or(80);
+
+        let forward = session
+            .clone()
+            .forward(namespace.to_string(), pod.to_string(), remote, 0)
+            .await?;
+
+        println!("{}", forward.describe());
+        println!("listening for 20s; connections are reported on exit");
+        tokio::time::sleep(std::time::Duration::from_secs(20)).await;
+
+        for forward in session.forwards() {
+            println!(
+                "{} — {} connections",
+                forward.describe(),
+                forward.connections
+            );
+        }
+        return Ok(());
+    }
+
     if arguments.list_kinds {
         for kind in session.discovery().kinds() {
             println!(
@@ -168,12 +250,19 @@ struct Arguments {
     context: Option<String>,
     kind: String,
     namespace: Option<String>,
+    /// The rest of the positional arguments, joined -- the command for
+    /// `--exec`.
+    command: String,
     list_kinds: bool,
     /// Print the first list and stop, for scripting a comparison against
     /// `kubectl get`.
     once: bool,
     /// Dry-run an apply and report what the API server said.
     apply_check: bool,
+    metrics: bool,
+    helm: bool,
+    exec: bool,
+    forward: bool,
 }
 
 impl Arguments {
@@ -183,12 +272,20 @@ impl Arguments {
         let mut list_kinds = false;
         let mut once = false;
         let mut apply_check = false;
+        let mut metrics = false;
+        let mut helm = false;
+        let mut exec = false;
+        let mut forward = false;
 
         let mut arguments = std::env::args().skip(1);
         while let Some(argument) = arguments.next() {
             match argument.as_str() {
                 "--kinds" => list_kinds = true,
                 "--apply-check" => apply_check = true,
+                "--metrics" => metrics = true,
+                "--helm" => helm = true,
+                "--exec" => exec = true,
+                "--forward" => forward = true,
                 "--once" => once = true,
                 "--context" => {
                     context = Some(
@@ -205,13 +302,21 @@ impl Arguments {
         }
 
         let mut positional = positional.into_iter();
+        let kind = positional.next().unwrap_or_else(|| "Pod".to_string());
+        let namespace = positional.next();
+        let command = positional.collect::<Vec<_>>().join(" ");
         Ok(Self {
             context,
-            kind: positional.next().unwrap_or_else(|| "Pod".to_string()),
-            namespace: positional.next(),
+            kind,
+            namespace,
+            command,
             list_kinds,
             once,
             apply_check,
+            metrics,
+            helm,
+            exec,
+            forward,
         })
     }
 }
@@ -248,6 +353,7 @@ fn print_table(columns: &ColumnSet, store: &ResourceStore) {
             metadata: &object.metadata,
             data: &object.data,
             now,
+            usage: None,
         };
         table.push(
             columns

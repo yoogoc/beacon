@@ -8,6 +8,8 @@ license.workspace = true
 # Deliberately free of any UI dependency. Everything here must be usable from a
 # headless binary, which is also how most of it gets tested.
 [dependencies]
+base64.workspace = true
+flate2.workspace = true
 kube.workspace = true
 k8s-openapi.workspace = true
 tokio.workspace = true
