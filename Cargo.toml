@@ -1,0 +1,55 @@
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.90"
+license = "Apache-2.0"
+repository = "https://github.com/yoogo/beacon"
+
+[workspace.dependencies]
+beacon-columns = { path = "crates/beacon-columns" }
+beacon-kube = { path = "crates/beacon-kube" }
+beacon-ui = { path = "crates/beacon-ui" }
+
+# UI. gpui-kit pins the matching GPUI release and re-exports gpui, gpui-base,
+# gpui-component and the default icon assets, so the UI lists one dependency.
+# GPUI's API still moves between patch releases -- keep this pinned and treat
+# an upgrade as its own task.
+gpui-kit = "=0.6.4"
+
+# Kubernetes. Default features already give us client + rustls-tls + ring;
+# rustls matters because it keeps the three CI targets free of an OpenSSL
+# toolchain dependency. `http-proxy` is not optional in practice: kube reads
+# HTTPS_PROXY from the environment and refuses to connect at all when it is set
+# and the feature is off, which is most corporate laptops.
+kube = { version = "4.0", features = ["runtime", "ws", "gzip", "oidc", "http-proxy"] }
+k8s-openapi = { version = "0.28", features = ["latest"] }
+
+# Async. kube/hyper need a tokio reactor; GPUI has its own executor. These two
+# never mix -- see crates/beacon-ui/src/bridge.rs.
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "net", "io-util"] }
+futures = "0.3"
+
+anyhow = "1"
+thiserror = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tracing = "0.1"
+tracing-appender = "0.2"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+directories = "6"
+
+[profile.dev]
+# GPUI in debug is slow enough to matter when scrolling a few thousand rows.
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 3
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true

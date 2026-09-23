@@ -1,0 +1,24 @@
+[package]
+name = "beacon-kube"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+# Deliberately free of any UI dependency. Everything here must be usable from a
+# headless binary, which is also how most of it gets tested.
+[dependencies]
+kube.workspace = true
+k8s-openapi.workspace = true
+tokio.workspace = true
+futures.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+
+# The example is the headless proof that this crate stands on its own.
+[dev-dependencies]
+anyhow.workspace = true
+beacon-columns.workspace = true
+tracing-subscriber.workspace = true

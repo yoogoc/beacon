@@ -1,0 +1,27 @@
+name: Linux build dependencies
+description: System packages GPUI needs to build on Linux (X11, Wayland, Vulkan, fonts).
+
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y --no-install-recommends \
+          clang \
+          cmake \
+          pkg-config \
+          libasound2-dev \
+          libfontconfig-dev \
+          libfreetype6-dev \
+          libssl-dev \
+          libvulkan-dev \
+          libwayland-dev \
+          libx11-xcb-dev \
+          libxcb-render0-dev \
+          libxcb-shape0-dev \
+          libxcb-xfixes0-dev \
+          libxkbcommon-dev \
+          libxkbcommon-x11-dev \
+          libzstd-dev \
+          mesa-vulkan-drivers

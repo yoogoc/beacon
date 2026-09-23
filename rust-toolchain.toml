@@ -1,0 +1,6 @@
+[toolchain]
+# Pinned so that the three CI targets and every developer agree on what
+# compiles. GPUI moves fast enough that a toolchain difference is not a
+# variable worth debugging on top of it.
+channel = "1.98"
+components = ["rustfmt", "clippy"]

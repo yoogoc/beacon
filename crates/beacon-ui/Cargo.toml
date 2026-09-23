@@ -1,0 +1,18 @@
+[package]
+name = "beacon-ui"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+beacon-columns.workspace = true
+beacon-kube.workspace = true
+gpui-kit.workspace = true
+anyhow.workspace = true
+futures.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
