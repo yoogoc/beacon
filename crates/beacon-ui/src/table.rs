@@ -15,6 +15,10 @@ use beacon_kube::{DeltaBatch, ObjectRef, ResourceStore};
 use gpui_kit::component::table::{Column, ColumnSort, TableDelegate, TableState};
 use gpui_kit::component::{ActiveTheme as _, h_flex};
 use gpui_kit::*;
+use nucleo_matcher::{
+    Matcher, Utf32Str,
+    pattern::{CaseMatching, Normalization, Pattern},
+};
 
 use crate::status;
 use crate::theme::BeaconTheme as _;
@@ -31,6 +35,11 @@ pub struct ResourceTable {
     /// changes; everything else reads it.
     rows: Vec<ObjectRef>,
     sort: Sort,
+    /// What the search box contains. Empty means everything.
+    filter: String,
+    /// Reused across keystrokes: it owns scratch buffers, and allocating one
+    /// per rebuild would be the expensive part of filtering.
+    matcher: Matcher,
     /// What "now" means for the whole frame, so that every Age in a render
     /// agrees and so that tests can pin it.
     now: Timestamp,
@@ -54,6 +63,8 @@ impl ResourceTable {
             store: ResourceStore::new(),
             rows: Vec::new(),
             sort: Sort::Natural,
+            filter: String::new(),
+            matcher: crate::catalog::matcher(),
             now: Timestamp::now(),
         }
     }
@@ -63,6 +74,31 @@ impl ResourceTable {
         if self.store.apply_batch(batch) {
             self.reindex();
         }
+    }
+
+    /// Narrows the table to the rows matching a query.
+    ///
+    /// Fuzzy, against `namespace/name`: typing part of a namespace narrows to
+    /// it, and typing part of a name finds it without knowing where it lives.
+    /// Returns whether anything changed, so that a repeated keystroke that
+    /// resolves to the same query costs nothing.
+    pub fn set_filter(&mut self, query: &str) -> bool {
+        if self.filter == query {
+            return false;
+        }
+        self.filter = query.to_string();
+        self.reindex();
+        true
+    }
+
+    pub fn filter(&self) -> &str {
+        &self.filter
+    }
+
+    /// How many objects the watch holds, before filtering. The table shows
+    /// `len()`; this is what it is a fraction of.
+    pub fn total(&self) -> usize {
+        self.store.len()
     }
 
     /// Re-reads the clock. Ages are relative, so a table nobody is changing
@@ -83,8 +119,25 @@ impl ResourceTable {
         self.sort = Sort::Natural;
     }
 
+    /// Swaps the columns without disturbing the rows.
+    ///
+    /// A kind's own printer columns arrive from the cluster a moment after its
+    /// list does. Re-listing to show them would throw away rows that are
+    /// already on screen and correct.
+    pub fn set_columns(&mut self, columns: ColumnSet) {
+        self.columns = columns;
+        // A sort by column index means nothing against a different set.
+        self.sort = Sort::Natural;
+        self.reindex();
+    }
+
+    /// How many rows are on screen, after filtering.
     pub fn len(&self) -> usize {
         self.rows.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.rows.is_empty()
     }
 
     /// Reorders by a column, or back to the natural order with
@@ -110,7 +163,20 @@ impl ResourceTable {
     /// for a computed column is real work. It is bounded to once per batch, and
     /// the default order costs nothing because it sorts the keys themselves.
     fn reindex(&mut self) {
-        let mut rows: Vec<ObjectRef> = self.store.iter().map(|(key, _)| key.clone()).collect();
+        let mut ranked = self.matching();
+        let by_score = !self.filter.is_empty() && matches!(self.sort, Sort::Natural);
+
+        if by_score {
+            // With a fuzzy filter and no column chosen, the best match belongs
+            // at the top -- that is what the filter is for.
+            ranked.sort_by(|(left_score, left), (right_score, right)| {
+                right_score.cmp(left_score).then_with(|| left.cmp(right))
+            });
+            self.rows = ranked.into_iter().map(|(_, key)| key).collect();
+            return;
+        }
+
+        let mut rows: Vec<ObjectRef> = ranked.into_iter().map(|(_, key)| key).collect();
 
         match self.sort {
             Sort::Natural => rows.sort(),
@@ -141,6 +207,30 @@ impl ResourceTable {
         }
 
         self.rows = rows;
+    }
+
+    /// The keys that survive the filter, each with its match score.
+    ///
+    /// An empty filter scores everything zero, which costs one pass and keeps
+    /// the two paths through `reindex` identical in shape.
+    fn matching(&mut self) -> Vec<(u32, ObjectRef)> {
+        if self.filter.is_empty() {
+            return self.store.iter().map(|(key, _)| (0, key.clone())).collect();
+        }
+
+        let pattern = Pattern::parse(&self.filter, CaseMatching::Smart, Normalization::Smart);
+        let mut buffer = Vec::new();
+        let mut matched = Vec::new();
+
+        for (key, _) in self.store.iter() {
+            let haystack = key.to_string();
+            if let Some(score) =
+                pattern.score(Utf32Str::new(&haystack, &mut buffer), &mut self.matcher)
+            {
+                matched.push((score, key.clone()));
+            }
+        }
+        matched
     }
 
     fn sort_key(&self, column: &ColumnDef, key: &ObjectRef) -> SortKey {
@@ -388,6 +478,60 @@ mod tests {
         assert_eq!(first.namespace.as_deref(), Some("ns-00"));
         assert_eq!(first.name, "pod-00000");
         assert_eq!(second.name, "pod-00020", "same namespace, next name");
+    }
+
+    /// Filtering runs on every keystroke, over every object in the store. At
+    /// M1's target size that is five thousand fuzzy matches between one frame
+    /// and the next, so it has to stay a single pass that allocates nothing
+    /// per row beyond the key it keeps.
+    #[test]
+    fn a_large_list_filters_on_every_keystroke() {
+        let mut table = filled(5_000);
+
+        // Typing out a name, one character at a time, the way the search box
+        // delivers it.
+        for query in ["p", "po", "pod", "pod-0", "pod-04", "pod-049", "pod-04990"] {
+            assert!(table.set_filter(query), "{query:?} is a new query");
+        }
+
+        // Matching is fuzzy, so the survivors are not only the literal
+        // substring matches -- but the best match is what leads, and that is
+        // what makes the filter usable.
+        assert_eq!(table.rows.first().expect("rows").name, "pod-04990");
+        assert!(table.len() < 5_000, "the filter narrowed something");
+        assert_eq!(table.total(), 5_000, "the store is untouched by filtering");
+
+        assert!(
+            !table.set_filter("pod-04990"),
+            "the same query changes nothing"
+        );
+
+        table.set_filter("");
+        assert_eq!(table.len(), 5_000);
+    }
+
+    /// A filter narrows the rows; it does not overrule a column the user chose
+    /// to sort by.
+    #[test]
+    fn a_chosen_sort_survives_a_filter() {
+        let mut table = filled(200);
+        table.sort_by(4, ColumnSort::Ascending);
+        table.set_filter("pod-001");
+
+        assert!(table.len() < 200, "the filter narrowed something");
+
+        // Restarts is `5000 - index`, so ascending by it means descending by
+        // the index in the name. The filter decides which rows; the column
+        // still decides their order.
+        let indices: Vec<u32> = table
+            .rows
+            .iter()
+            .map(|key| key.name.trim_start_matches("pod-").parse().expect("index"))
+            .collect();
+        assert!(
+            indices.windows(2).all(|pair| pair[0] > pair[1]),
+            "not ordered by the chosen column: {indices:?}"
+        );
     }
 
     /// Sorting by a computed column resolves that column for every object, so

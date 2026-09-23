@@ -3,17 +3,25 @@
 //! Owns the session, so dropping this view disconnects: every watch it started
 //! is aborted with it. That is what makes switching contexts a matter of
 //! replacing one entity with another rather than unwinding state by hand.
+//!
+//! The view is generic over resource kinds in the same way the layers under it
+//! are. Nothing here knows what a Pod is: picking a kind in the sidebar changes
+//! a `WatchKey` and a `ColumnSet`, and everything else follows.
 
 use std::{sync::Arc, time::Duration};
 
 use beacon_columns::ColumnSet;
-use beacon_kube::{ClusterSession, Health, ResourceStore, WatchKey, resources};
+use beacon_kube::{ClusterSession, Health, Kind, ResourceStore, WatchKey, resources};
+use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::component::select::{SearchableVec, Select, SelectEvent, SelectState};
+use gpui_kit::component::sidebar::{Sidebar, SidebarGroup, SidebarMenu, SidebarMenuItem};
 use gpui_kit::component::table::TableState;
 use gpui_kit::component::{ActiveTheme as _, IndexPath, Sizable as _, h_flex, v_flex};
 use gpui_kit::*;
+use nucleo_matcher::Matcher;
 
-use crate::bridge::drain_into;
+use crate::bridge::{Bridge, drain_into};
+use crate::catalog::{Catalog, Entry};
 use crate::table::ResourceTable;
 
 /// The namespace picker's entry for "do not scope at all". A namespace cannot
@@ -27,6 +35,13 @@ const CLOCK: Duration = Duration::from_secs(1);
 pub struct ClusterView {
     session: Arc<ClusterSession>,
     health: Health,
+
+    /// The kinds this cluster serves, grouped for the sidebar.
+    catalog: Catalog,
+    /// The kind currently on screen.
+    kind: Option<Arc<Kind>>,
+    matcher: Matcher,
+
     /// `None` means every namespace.
     namespace: Option<String>,
     /// The namespaces that exist, kept live by its own watch. Whether a
@@ -38,13 +53,20 @@ pub struct ClusterView {
     /// wipe whatever the user had typed into its search box.
     namespace_names: Vec<SharedString>,
     namespace_picker: Entity<SelectState<SearchableVec<SharedString>>>,
-    pods: Entity<TableState<ResourceTable>>,
+
+    sidebar_search: Entity<InputState>,
+    sidebar_query: String,
+    row_search: Entity<InputState>,
+
+    table: Entity<TableState<ResourceTable>>,
 
     // Dropping any of these stops the work behind it.
     _health: Task<()>,
     _namespaces: Task<()>,
-    _pods: Task<()>,
+    _objects: Task<()>,
+    _columns: Option<Task<()>>,
     _clock: Task<()>,
+    _subscriptions: Vec<Subscription>,
 }
 
 impl ClusterView {
@@ -54,6 +76,9 @@ impl ClusterView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
+        let catalog = Catalog::new(session.discovery().kinds());
+        let kind = catalog.default_kind();
+
         let namespace_picker = cx.new(|cx| {
             SelectState::new(
                 SearchableVec::new(vec![SharedString::from(ALL_NAMESPACES)]),
@@ -64,30 +89,53 @@ impl ClusterView {
             .searchable(true)
         });
 
-        let pods = cx.new(|cx| {
-            TableState::new(ResourceTable::new(columns_for(&namespace)), window, cx)
+        let sidebar_search = cx.new(|cx| {
+            InputState::new(window, cx)
+                .placeholder("Filter resources")
+                .clean_on_escape()
+        });
+        let row_search = cx.new(|cx| {
+            InputState::new(window, cx)
+                .placeholder("Search")
+                .clean_on_escape()
+        });
+
+        let table = cx.new(|cx| {
+            TableState::new(ResourceTable::new(ColumnSet::fallback(true)), window, cx)
                 .row_selectable(true)
         });
 
         let mut this = Self {
             health: Health::Connecting,
+            catalog,
+            kind: None,
+            matcher: crate::catalog::matcher(),
             namespace,
             namespaces: ResourceStore::new(),
             namespace_names: vec![SharedString::from(ALL_NAMESPACES)],
             namespace_picker,
-            pods,
+            sidebar_search,
+            sidebar_query: String::new(),
+            row_search,
+            table,
             _health: Task::ready(()),
             _namespaces: Task::ready(()),
-            _pods: Task::ready(()),
+            _objects: Task::ready(()),
+            _columns: None,
             _clock: Task::ready(()),
+            _subscriptions: Vec::new(),
             session,
         };
 
+        this.listen(window, cx);
         this.watch_health(window, cx);
         this.watch_namespaces(window, cx);
-        this.watch_pods(window, cx);
         this.start_clock(cx);
-        this.listen_to_picker(window, cx);
+
+        if let Some(kind) = kind {
+            this.show(kind, window, cx);
+        }
+
         this
     }
 
@@ -99,9 +147,124 @@ impl ClusterView {
         &self.health
     }
 
-    /// How many rows the table is showing, for the status bar.
-    pub fn row_count(&self, cx: &App) -> usize {
-        self.pods.read(cx).delegate().len()
+    /// What the table is showing, and out of how many.
+    pub fn counts(&self, cx: &App) -> (usize, usize) {
+        let table = self.table.read(cx).delegate();
+        (table.len(), table.total())
+    }
+
+    pub fn kind(&self) -> Option<&Kind> {
+        self.kind.as_deref()
+    }
+
+    /// Switches the table to another kind.
+    ///
+    /// The list starts immediately with whatever columns are known without
+    /// asking the cluster; a kind that publishes its own gets them a moment
+    /// later, without re-listing.
+    fn show(&mut self, kind: Arc<Kind>, window: &mut Window, cx: &mut Context<Self>) {
+        if self
+            .kind
+            .as_ref()
+            .is_some_and(|current| current.gvk() == kind.gvk())
+        {
+            return;
+        }
+
+        tracing::info!(kind = %kind.display_name(), "showing");
+        self.kind = Some(kind);
+        self.watch_objects(window, cx);
+        self.load_columns(window, cx);
+        cx.notify();
+    }
+
+    /// (Re)starts the watch for the current kind and namespace.
+    ///
+    /// Dropping the previous task drops its subscription, which is what
+    /// releases the old watch -- there is no separate unsubscribe to forget.
+    fn watch_objects(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(kind) = self.kind.clone() else {
+            return;
+        };
+
+        let columns = self.columns(&kind, None);
+        self.table.update(cx, |state, cx| {
+            state.delegate_mut().reset(columns);
+            // The table lays its columns out once and caches the result, so a
+            // different set of them is not visible until it is told to look
+            // again. Without this the header keeps the previous kind's shape
+            // and the extra columns simply do not appear.
+            state.refresh(cx);
+            // Without this, scrolling halfway down one list and switching to a
+            // shorter one lands on a blank stretch of table.
+            state.scroll_to_row(0, cx);
+            cx.notify();
+        });
+
+        let key = WatchKey::all(kind.resource.clone()).in_namespace(self.scope(&kind));
+        let subscription = self.session.subscribe(key);
+
+        self._objects = drain_into(
+            cx,
+            subscription,
+            |view, batch, _window, cx| {
+                view.table.update(cx, |state, cx| {
+                    state.delegate_mut().apply(batch);
+                    cx.notify();
+                });
+            },
+            window,
+        );
+    }
+
+    /// Asks the cluster for the kind's own printer columns, and applies them if
+    /// it has any.
+    fn load_columns(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(kind) = self.kind.clone() else {
+            return;
+        };
+
+        let wanted = kind.gvk();
+        let session = self.session.clone();
+        let resource = kind.resource.clone();
+        let fetching =
+            Bridge::global(cx).run(async move { session.printer_columns(resource).await });
+
+        self._columns = Some(cx.spawn_in(window, async move |this, cx| {
+            let Ok(Some(printer_columns)) = fetching.await else {
+                return;
+            };
+
+            let _ = this.update(cx, |view, cx| {
+                // The user may have moved on while this was in flight.
+                let Some(kind) = view.kind.clone().filter(|kind| kind.gvk() == wanted) else {
+                    return;
+                };
+
+                let columns = view.columns(&kind, Some(&printer_columns));
+                view.table.update(cx, |state, cx| {
+                    state.delegate_mut().set_columns(columns);
+                    state.refresh(cx);
+                    cx.notify();
+                });
+            });
+        }));
+    }
+
+    /// The namespace to watch in: none at all for a cluster-scoped kind, which
+    /// is also what stops its table growing a Namespace column it can never
+    /// fill.
+    fn scope(&self, kind: &Kind) -> Option<String> {
+        self.namespace.clone().filter(|_| kind.namespaced)
+    }
+
+    fn columns(&self, kind: &Kind, printer_columns: Option<&serde_json::Value>) -> ColumnSet {
+        ColumnSet::resolve(
+            &kind.resource.group,
+            &kind.resource.kind,
+            kind.namespaced && self.scope(kind).is_none(),
+            printer_columns,
+        )
     }
 
     /// Follows the session's health. `tokio::sync::watch` is a plain channel
@@ -142,42 +305,12 @@ impl ClusterView {
         );
     }
 
-    /// (Re)starts the pod watch for the current namespace.
-    ///
-    /// Dropping the previous task drops its subscription, which is what
-    /// releases the old watch -- there is no separate unsubscribe to forget.
-    fn watch_pods(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let columns = columns_for(&self.namespace);
-        self.pods.update(cx, |state, cx| {
-            state.delegate_mut().reset(columns);
-            // Without this, scrolling halfway down one namespace and switching
-            // to a smaller one lands on a blank stretch of table.
-            state.scroll_to_row(0, cx);
-            cx.notify();
-        });
-
-        let key = WatchKey::all(resources::pod()).in_namespace(self.namespace.clone());
-        let subscription = self.session.subscribe(key);
-
-        self._pods = drain_into(
-            cx,
-            subscription,
-            |view, batch, _window, cx| {
-                view.pods.update(cx, |state, cx| {
-                    state.delegate_mut().apply(batch);
-                    cx.notify();
-                });
-            },
-            window,
-        );
-    }
-
     fn start_clock(&mut self, cx: &mut Context<Self>) {
         self._clock = cx.spawn(async move |this, cx| {
             loop {
                 cx.background_executor().timer(CLOCK).await;
                 let updated = this.update(cx, |view, cx| {
-                    view.pods.update(cx, |state, cx| {
+                    view.table.update(cx, |state, cx| {
                         state.delegate_mut().tick();
                         cx.notify();
                     });
@@ -189,8 +322,8 @@ impl ClusterView {
         });
     }
 
-    fn listen_to_picker(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        cx.subscribe_in(
+    fn listen(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let namespace_picker = cx.subscribe_in(
             &self.namespace_picker.clone(),
             window,
             |view, _, event: &SelectEvent<SearchableVec<SharedString>>, window, cx| {
@@ -203,12 +336,41 @@ impl ClusterView {
                 if view.namespace != namespace {
                     tracing::info!(namespace = ?namespace, "scoping to namespace");
                     view.namespace = namespace;
-                    view.watch_pods(window, cx);
+                    view.watch_objects(window, cx);
+                    view.load_columns(window, cx);
                     cx.notify();
                 }
             },
-        )
-        .detach();
+        );
+
+        let sidebar_search = cx.subscribe(
+            &self.sidebar_search.clone(),
+            |view, state, event: &InputEvent, cx| {
+                if matches!(event, InputEvent::Change) {
+                    view.sidebar_query = state.read(cx).value().to_string();
+                    cx.notify();
+                }
+            },
+        );
+
+        let row_search = cx.subscribe(
+            &self.row_search.clone(),
+            |view, state, event: &InputEvent, cx| {
+                if !matches!(event, InputEvent::Change) {
+                    return;
+                }
+                let query = state.read(cx).value().to_string();
+                view.table.update(cx, |table, cx| {
+                    if table.delegate_mut().set_filter(&query) {
+                        table.scroll_to_row(0, cx);
+                        cx.notify();
+                    }
+                });
+                cx.notify();
+            },
+        );
+
+        self._subscriptions = vec![namespace_picker, sidebar_search, row_search];
     }
 
     fn refresh_namespace_picker(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -237,8 +399,87 @@ impl ClusterView {
         });
     }
 
+    // MARK: rendering
+
+    fn render_sidebar(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
+        let current = self.kind.as_ref().map(|kind| kind.gvk());
+
+        // A query replaces the sections with a flat ranked list: with a hundred
+        // kinds, the answer to "where is it" should not be "in one of seven
+        // collapsed groups".
+        let sections: Vec<(SharedString, Vec<Entry>)> = if self.sidebar_query.is_empty() {
+            self.catalog
+                .sections()
+                .iter()
+                .map(|(category, entries)| (SharedString::from(category.label()), entries.clone()))
+                .collect()
+        } else {
+            let matches = self.catalog.search(&self.sidebar_query, &mut self.matcher);
+            vec![(SharedString::from("Matches"), matches)]
+        };
+
+        let open_by_default: Vec<bool> = if !self.sidebar_query.is_empty() {
+            vec![true]
+        } else {
+            self.catalog
+                .sections()
+                .iter()
+                .map(|(category, entries)| {
+                    // A section also opens when it holds what is on screen, so
+                    // that the selection is never hidden inside a closed group.
+                    category.starts_open()
+                        || entries
+                            .iter()
+                            .any(|entry| current.as_ref() == Some(&entry.kind.gvk()))
+                })
+                .collect()
+        };
+
+        let menu = SidebarMenu::new().children(sections.into_iter().zip(open_by_default).map(
+            |((label, entries), open)| {
+                SidebarMenuItem::new(label)
+                    .click_to_toggle(true)
+                    .default_open(open)
+                    .children(entries.into_iter().map(|entry| {
+                        let selected = current.as_ref() == Some(&entry.kind.gvk());
+                        let kind = entry.kind.clone();
+                        SidebarMenuItem::new(entry.label)
+                            .active(selected)
+                            .on_click(cx.listener(move |view, _, window, cx| {
+                                view.show(kind.clone(), window, cx);
+                            }))
+                    }))
+            },
+        ));
+
+        Sidebar::new("resources")
+            .collapsible(false)
+            .w(px(232.))
+            .header(
+                div()
+                    .w_full()
+                    .px_2()
+                    .py_1()
+                    .child(Input::new(&self.sidebar_search).small()),
+            )
+            .child(SidebarGroup::new("").child(menu))
+    }
+
     fn render_toolbar(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let rows = self.row_count(cx);
+        let (shown, total) = self.counts(cx);
+        let title = self
+            .kind
+            .as_ref()
+            .map(|kind| kind.resource.kind.clone())
+            .unwrap_or_else(|| "Nothing selected".into());
+
+        // `12 of 340` while filtering, `340` otherwise: the fraction is only
+        // information when something is being hidden.
+        let count = if shown == total {
+            total.to_string()
+        } else {
+            format!("{shown} of {total}")
+        };
 
         h_flex()
             .w_full()
@@ -257,38 +498,53 @@ impl ClusterView {
                         div()
                             .font_weight(FontWeight::SEMIBOLD)
                             .text_sm()
-                            .child("Pods"),
+                            .child(title),
                     )
                     .child(
                         div()
                             .text_xs()
                             .text_color(cx.theme().muted_foreground)
-                            .child(format!("{rows}")),
+                            .child(count),
                     ),
             )
             .child(
-                Select::new(&self.namespace_picker)
-                    .small()
-                    .menu_width(px(280.))
-                    .menu_max_h(px(420.))
-                    .search_placeholder("Filter namespaces")
-                    .accessibility_label("Namespace"),
+                h_flex()
+                    .gap_2()
+                    .items_center()
+                    .child(
+                        div()
+                            .w(px(220.))
+                            .child(Input::new(&self.row_search).small()),
+                    )
+                    .children(self.kind.as_ref().filter(|kind| kind.namespaced).map(|_| {
+                        Select::new(&self.namespace_picker)
+                            .small()
+                            .menu_width(px(280.))
+                            .menu_max_h(px(420.))
+                            .search_placeholder("Filter namespaces")
+                            .accessibility_label("Namespace")
+                    })),
             )
     }
 }
 
 impl Render for ClusterView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        v_flex().size_full().child(self.render_toolbar(cx)).child(
-            // `TableState` renders itself; it is the virtualised table,
-            // not a delegate that something else draws.
-            div().flex_1().overflow_hidden().child(self.pods.clone()),
-        )
+        h_flex()
+            .size_full()
+            .items_start()
+            .child(self.render_sidebar(cx))
+            .child(
+                v_flex()
+                    .flex_1()
+                    .h_full()
+                    .overflow_hidden()
+                    .border_l_1()
+                    .border_color(cx.theme().border)
+                    .child(self.render_toolbar(cx))
+                    // `TableState` renders itself; it is the virtualised table,
+                    // not a delegate that something else draws.
+                    .child(div().flex_1().overflow_hidden().child(self.table.clone())),
+            )
     }
-}
-
-/// Pods carry a Namespace column only when the list spans namespaces, the same
-/// way `kubectl get pods` does and `kubectl get pods -A` does not.
-fn columns_for(namespace: &Option<String>) -> ColumnSet {
-    ColumnSet::for_kind("", "Pod", namespace.is_none())
 }

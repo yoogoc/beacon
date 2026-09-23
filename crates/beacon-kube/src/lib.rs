@@ -6,6 +6,7 @@
 //! this crate, a headless CLI or an integration test is another.
 
 pub mod config;
+pub mod discovery;
 pub mod error;
 pub mod resources;
 pub mod session;
@@ -13,10 +14,13 @@ pub mod shell_env;
 pub mod store;
 pub mod watch;
 
+pub use discovery::{Discovery, Kind};
 pub use error::{Error, Result};
-/// Re-exported so that consumers can build and inspect objects without taking
-/// their own `kube` dependency, and without it being a different `kube`.
-pub use kube::api::DynamicObject;
+/// Re-exported so that consumers can name and build the types this crate hands
+/// them without taking their own `kube` dependency -- and without it being a
+/// different `kube`, which is a whole class of confusing type errors.
+pub use kube::api::{ApiResource, DynamicObject};
+pub use kube::core::GroupVersionKind;
 pub use session::{ClusterSession, Health};
 pub use store::{Delta, DeltaBatch, ObjectRef, ResourceStore};
 pub use watch::{Subscription, WatchKey};

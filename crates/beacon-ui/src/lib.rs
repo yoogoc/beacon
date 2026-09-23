@@ -5,6 +5,7 @@
 
 pub mod app;
 pub mod bridge;
+pub mod catalog;
 pub mod cluster;
 pub mod status;
 pub mod table;

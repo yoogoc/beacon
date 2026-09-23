@@ -16,7 +16,7 @@ use std::{
     pin::Pin,
     sync::{
         Arc, Mutex, MutexGuard, Weak,
-        atomic::{AtomicU64, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
     },
     task::{Context, Poll},
     time::Duration,
@@ -138,10 +138,15 @@ impl WatchKey {
 
 /// A view's end of a watch.
 ///
-/// Yields [`DeltaBatch`]es until the watch stops, beginning with a
-/// [`Delta::Reset`] carrying whatever the watch already knew. Dropping it
-/// releases the subscription; when it was the last one the watch lingers for
-/// [`LINGER`] and then shuts down.
+/// Yields [`DeltaBatch`]es until the watch stops. A subscriber that joins a
+/// watch which has already listed is handed its contents immediately, as a
+/// [`Delta::Reset`]; one that joins a watch still listing waits for the real
+/// list. Either way the first `Reset` to arrive means "this is everything",
+/// which is what lets a view tell an empty namespace from one it has not
+/// heard about yet.
+///
+/// Dropping it releases the subscription; when it was the last one the watch
+/// lingers for [`LINGER`] and then shuts down.
 pub struct Subscription {
     key: WatchKey,
     id: u64,
@@ -168,6 +173,9 @@ struct WatchHandle {
     /// The authoritative contents, so a late subscriber is caught up without
     /// waiting for the next event.
     store: Arc<Mutex<ResourceStore>>,
+    /// Whether the initial list has completed. Until it has, an empty store
+    /// means "not yet", not "nothing there".
+    listed: Arc<AtomicBool>,
     subscribers: Subscribers,
     /// Bumped on every new subscriber, so a pending shutdown can tell that
     /// somebody re-subscribed while it was sleeping.
@@ -233,7 +241,9 @@ impl Registry {
             };
 
             // Catch the new subscriber up before it sees a single event, so it
-            // never renders an empty table over a populated watch.
+            // never renders an empty table over a populated watch. A watch that
+            // has not listed yet has nothing to catch up with, and sending an
+            // empty Reset would tell the subscriber the opposite.
             //
             // The subscriber list is locked across the snapshot and the insert,
             // and `flush` holds the same lock across its send and its write to
@@ -242,8 +252,10 @@ impl Registry {
             // list this subscriber was not in yet -- lost, in both directions
             // at once. The lock order is subscribers, then store, in both.
             let mut subscribers = lock(&handle.subscribers);
-            let snapshot = lock(&handle.store).snapshot();
-            let _ = sender.unbounded_send(vec![Delta::Reset(snapshot)]);
+            if handle.listed.load(Ordering::Acquire) {
+                let snapshot = lock(&handle.store).snapshot();
+                let _ = sender.unbounded_send(vec![Delta::Reset(snapshot)]);
+            }
             subscribers.insert(id, sender);
         }
 
@@ -264,17 +276,20 @@ impl Registry {
     fn start(&self, key: &WatchKey) -> WatchHandle {
         let store = Arc::new(Mutex::new(ResourceStore::new()));
         let subscribers: Subscribers = Arc::new(Mutex::new(HashMap::new()));
+        let listed = Arc::new(AtomicBool::new(false));
 
         let task = self.runtime.spawn(run(
             key.clone(),
             key.api(self.client.clone()),
             store.clone(),
             subscribers.clone(),
+            listed.clone(),
             self.health.clone(),
         ));
 
         WatchHandle {
             store,
+            listed,
             subscribers,
             generation: 0,
             task: task.abort_handle(),
@@ -394,6 +409,7 @@ async fn run(
     api: Api<DynamicObject>,
     store: Arc<Mutex<ResourceStore>>,
     subscribers: Subscribers,
+    listed: Arc<AtomicBool>,
     health: Arc<HealthState>,
 ) {
     let mut reporter = HealthState::reporter(&health, key.describe());
@@ -425,7 +441,14 @@ async fn run(
         };
 
         if flush_now {
-            flush(&store, &subscribers, coalescer.take());
+            let batch = coalescer.take();
+            // Ordering::Release pairs with the Acquire in `subscribe`: a
+            // subscriber that sees this flag must also see the store it
+            // describes.
+            if batch.iter().any(|delta| matches!(delta, Delta::Reset(_))) {
+                listed.store(true, Ordering::Release);
+            }
+            flush(&store, &subscribers, batch);
         }
     }
 

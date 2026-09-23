@@ -4,9 +4,12 @@ A cross-platform Kubernetes client built with Rust and [GPUI](https://www.gpui.r
 in the spirit of Lens: browse any cluster, follow logs, edit manifests, forward
 ports — natively, on macOS, Linux and Windows.
 
-**Status: M1.** Beacon connects to a kubeconfig context, lists pods and follows
-them with a watch, and switches cluster and namespace from the title bar. The
-list is column-for-column what `kubectl get pods` prints. Writing to a cluster,
+**Status: M2.** Beacon connects to a kubeconfig context and lists any kind the
+cluster serves — built-in or custom — following each with a watch, with a
+sidebar to pick the kind, a namespace picker and a fuzzy filter over the rows.
+Tables are column-for-column what `kubectl get` prints, and a CRD's own
+`additionalPrinterColumns` are read from the cluster at runtime, so a CRD
+installed this morning lists correctly this afternoon. Writing to a cluster,
 logs, detail panes and the command palette are still ahead; see
 [docs/DESIGN.md](docs/DESIGN.md) for the architecture and the milestone plan.
 
@@ -22,14 +25,21 @@ on macOS). `RUST_LOG=beacon=debug,kube=debug` turns up the volume.
 ## Checking a change against a real cluster
 
 ```sh
-cargo run -p beacon-kube --example watch -- [context] [namespace]
+cargo run -p beacon-kube --example watch -- [--context NAME] [--once] [Kind] [namespace]
+cargo run -p beacon-kube --example watch -- --kinds
 ```
 
-Lists and follows pods with no window at all, printing the same columns the
+Lists and follows any kind with no window at all, printing the same columns the
 table renders. It is the fastest way to see whether a change to the domain
 layer is right, and it is only possible because `beacon-kube` does not depend
-on GPUI — see below. Diffing its output against `kubectl get pods -A` is how
-the column code is kept honest.
+on GPUI — see below. `--once` prints the first list and exits, which is what
+makes the column code checkable against `kubectl get` in a loop; that diff is
+how it is kept honest.
+
+Beacon differs from kubectl deliberately in two places, both documented in the
+design notes: an absent value renders as `<none>` rather than as a blank cell,
+and a kind with no columns of its own gets an `Age` rather than kubectl's
+`Created At` timestamp.
 
 ## Looking at the UI
 
@@ -47,9 +57,9 @@ Screen Recording permission.
 
 ```
 crates/
-  beacon-kube/     Kubernetes domain layer — config, sessions, watches, store
+  beacon-kube/     Kubernetes domain layer — config, sessions, discovery, watches, store
   beacon-columns/  Column definitions, and what kubectl prints in each of them
-  beacon-ui/       GPUI views, theme tokens, the tokio bridge
+  beacon-ui/       GPUI views, the resource catalog, theme tokens, the tokio bridge
   beacon/          The binary: logging, startup, window
 scripts/
   screenshot.sh    Capture the running window (see above)
@@ -81,6 +91,13 @@ events, and one render per event would stall the frame loop for seconds.
   from the environment, and with the feature off it refuses to connect at all
   rather than falling back to a direct connection — which is a confusing
   failure on any machine that has a proxy configured.
+
+## One thing to know about the table
+
+`gpui-component`'s `TableState` caches its column layout. Changing the
+`ColumnSet` and calling `cx.notify()` is not enough — the header keeps the
+previous shape and the new columns are simply not drawn. Call
+`state.refresh(cx)` whenever the columns change, not just the rows.
 
 ## One thing to know about writing tests here
 

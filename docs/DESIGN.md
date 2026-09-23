@@ -30,7 +30,7 @@
 | K8s 类型 | `k8s-openapi` | 0.28 | feature `latest`，仅用于按需强类型解析。**注意 0.28 的时间戳用 `jiff` 而非 chrono** |
 | 异步 | `tokio` | 1.x | `rt-multi-thread, net, macros, sync` |
 | 桥接 channel | `futures` | 0.3 | `futures::channel::mpsc` 跨 runtime 安全 |
-| 模糊搜索 | `nucleo` | 0.5 | Helix/Zed 同款，10k 条目亚毫秒 |
+| 模糊搜索 | `nucleo-matcher` | 0.3 | Helix/Zed 同款算法。用的是 `nucleo` 里的**匹配器**而不是完整的 `nucleo`：后者带一套多线程增量前端，而这里的列表本来就在内存里，每个视图起一个线程池不值 |
 | 终端模拟 | `alacritty_terminal` | 0.25 | exec 终端的 VT 解析（M5 才引入） |
 | 错误 | `anyhow` + `thiserror` | — | 领域层 thiserror，UI 层 anyhow |
 | 日志 | `tracing` + `tracing-subscriber` | — | 文件 + 可开关的面板输出 |
@@ -376,7 +376,7 @@ UI 里一个"转发列表"面板管理生命周期，Pod 消失时自动关闭�
 |---|---|---|---|
 | **M0** ✅ | workspace 骨架、三平台 CI、空窗口、主题 token、tracing、登录 shell PATH 恢复 | 三平台各产出一个能开的窗口（macOS 已验证，Linux/Windows 待 CI 首跑） | 1w |
 | **M1** ✅ | kubeconfig 解析、context 切换、Pod 列表 + watch、tokio 桥 | 输出与 `kubectl get pods -A` 逐格一致；切 context/namespace 不泄漏任务。5000 pod 的 60fps 未实测，见附录 | 2w |
-| **M2** | Discovery、通用表格、列定义、CRD 支持、namespace 过滤、搜索 | 任意 CRD 无需改代码即可正确列出并显示 printer columns | 2w |
+| **M2** ✅ | Discovery、通用表格、列定义、CRD 支持、namespace 过滤、搜索 | 17 种资源（含 4 个 CRD）与 `kubectl get` 逐格一致；CRD 的 printer columns 运行时读取，无需改代码 | 2w |
 | **M3** | Dock 布局、详情面板（Overview/YAML 只读/Events）、命令面板 | ⌘K 可完成 90% 的导航操作 | 2w |
 | **M4** | 日志流、写操作（delete/scale/restart/SSA apply）、权限预检 | 无权限动作正确置灰；apply 冲突有 diff | 2w |
 | **M5** | port-forward、exec（先一次性命令）、多集群并行 | 同时连 3 个集群内存 < 400MB | 3w |
@@ -475,3 +475,60 @@ macOS 上 `./target/debug/beacon` 能开窗并正确读出 kubeconfig。
 - **命名空间选择器只能选它列得出来的**。多租户集群上用户往往没有集群级
   `list namespaces` 权限——现在的表现是选择器只剩"All namespaces"、状态栏显示 Degraded
   并给出原因，不会假装正常，但也没法手输一个自己有权限的命名空间。M4 做权限预检时一并解决。
+
+
+---
+
+## 附：M2 实现记录（2026-09-23）
+
+`cargo test --workspace` 127 passed，`cargo clippy --workspace --all-targets` 干净。
+
+### 落地的东西
+
+| 位置 | 内容 |
+|---|---|
+| `beacon-kube/discovery.rs` | 聚合 discovery（一两个请求拿全量，不行再退回逐 group 查）；只保留 **list + watch 都支持**的 kind——整套架构建在 watch 上，watch 不了的 kind 给出来就是一张永远空的表 |
+| 同上 | CRD 的 printer columns **按需单个 GET**（`<plural>.<group>`），不 list 全部：一个 CRD 带着整份 OpenAPI schema，为了四个列名搬几 MB 不划算。结果按 GVK 缓存，"没有"也缓存 |
+| `beacon-columns/builtin.rs` | kubectl 内置表的移植：Pod / Deployment / StatefulSet / DaemonSet / ReplicaSet / Job / CronJob / Service / Ingress / Node / Namespace / ConfigMap / Secret / ServiceAccount / PVC / RoleBinding |
+| `beacon-columns/printer.rs` | CRD 自述的列：跳过 `priority > 0`（那是 `-o wide` 的东西），`type: date` 渲染成时长而不是时间戳 |
+| `beacon-columns/path.rs` | JSONPath 子集扩到了**过滤器和通配符**：`conditions[?(@.type=="Accepted")].status` 和 `addresses[*].value` 是真实 CRD 里最常见的两种写法，只支持点号路径的话 gateway-api 这类 CRD 最重要的那列会是空的 |
+| `beacon-ui/catalog.rs` | 98 个 kind 分成 Workloads / Config / Network / Storage / Access Control / Cluster / Custom Resources；分组是张表不是规则——`Lease` 是协调原语、`Endpoints` 是网络，API 里没有任何字段这么说 |
+| `beacon-ui/cluster.rs` | 侧边栏选 kind → 换 `WatchKey` + `ColumnSet`，其余自动跟上。列先用本地已知的立刻出表，CRD 自述的列到了再换上去，**不重新 list** |
+| `beacon-ui/table.rs` | 行过滤（模糊，匹配 `namespace/name`）。没选排序列时按匹配分排，选了就尊重用户选的 |
+
+### 实测
+
+对本机 k3s v1.33.3，把 `examples/watch --once` 的输出和 `kubectl get` 逐格 diff：
+
+**17 种资源完全一致**，包括 4 个 CRD（Application / Addon / Workflow / WorkflowTemplate）——
+其中 Application 正确隐藏了 priority=10 的两列，Addon 正确地没有 Age 列（CRD 没声明）。
+脚本在 `/tmp` 里没留，逻辑是：Beacon 输出 NAME 在前、kubectl `-A` 输出 NAMESPACE 在前，换列后排序再 diff。
+
+### 与 kubectl 的两处有意分歧
+
+1. **空值**：kubectl 在内置表里用 `<none>`，但 CRD 的列和 PVC 的 storageclass 这些地方直接留空。
+   Beacon 一律 `<none>`。GUI 里的空单元格和"渲染挂了"长得一样。
+2. **Age vs Created At**：kubectl 对 Role/ClusterRole 和没声明列的 CRD 打的是 `CREATED AT`（完整时间戳）。
+   Beacon 一律给 Age。一个窗口里并排十五种资源的时候，和其他行一致的相对时间比精确字符串有用。
+
+### 新踩的坑
+
+1. **gpui-component 的 `TableState` 会缓存列布局**。换了 `ColumnSet` 只 `notify()` 没用——
+   表头保持上一个 kind 的形状，多出来的列根本不画。必须调 `state.refresh(cx)`。
+   （症状是 Pod 表只显示 Name/Namespace/Ready 三列，剩下三列凭空消失。）
+2. **`type: date` 的转换在服务端**。apiextensions 的 tableconvertor 把这类值转成时长*再*返回，
+   所以 kubectl 看到的已经是 `5d`。我们直接读对象，得自己转。
+3. **watch 的"列完了"和"本来就是空的"必须能区分**。原来 registry 给新订阅者先发一个空 `Reset`
+   当作预热，结果订阅者没法区分这两件事——空命名空间会先闪一下"没有内容"。
+   现在只有在初次 list 完成后才预热，`Reset` 一律意味着"这就是全部"。
+
+### 明确没做 / 没验的
+
+- **本会话没能点**：侧边栏点击、搜索框输入这两条路径是代码正确、但没有真的点过——
+  这台机器上的 computer-use 工具在这次会话里断开了。变通验证过 CRD 那条：临时把启动 kind
+  改成 `Application` 跑了一次，截图确认列是 CRD 自述的那四列，然后改回来。
+- **排序/过滤仍然在前台线程**。§6.3 说要搬到 `background_executor`，暂时没搬，因为测下来
+  5000 条目的索引重建 + 按计算列排序 + 连打 7 个字符的模糊过滤，整个 `beacon-ui` 测试套件
+  跑完是 0.03s。等有真实大集群数据再说。
+- 收藏夹、列的显示/隐藏、`-o wide` 那些 priority > 0 的列。
+- `..` 递归下降和非等值过滤器的 JSONPath——printer columns 里没见过，遇到了一律当"没匹配上"。

@@ -7,19 +7,22 @@
 //! switching contexts safe rather than a slow leak.
 
 use std::sync::{
-    Arc,
+    Arc, Mutex,
     atomic::{AtomicUsize, Ordering},
 };
 
 use kube::{
     Client,
+    api::ApiResource,
     config::{Config, KubeConfigOptions},
     runtime::watcher,
 };
+use serde_json::Value;
 use tokio::sync::watch as watch_channel;
 
 use crate::{
     ClusterId, Error, Result,
+    discovery::{Discovery, PrinterColumns, fetch_printer_columns},
     watch::{Registry, Subscription, WatchKey},
 };
 
@@ -60,6 +63,10 @@ pub struct ClusterSession {
     /// The API server URL, which is what distinguishes two contexts that have
     /// confusingly similar names.
     server: String,
+    client: Client,
+    discovery: Discovery,
+    /// Filled in one kind at a time, as somebody opens them.
+    printer_columns: Mutex<PrinterColumns>,
     registry: Arc<Registry>,
     health: Arc<HealthState>,
 }
@@ -99,9 +106,16 @@ impl ClusterSession {
             "connected"
         );
 
+        // Part of connecting, not of opening the first view: a window that
+        // cannot say what the cluster contains is not connected in any sense
+        // the user cares about.
+        let discovery = Discovery::load(&client)
+            .await
+            .map_err(|error| Error::connect(&id, &error))?;
+
         let health = Arc::new(HealthState::new(Health::Connected));
         let registry = Arc::new(Registry::new(
-            client,
+            client.clone(),
             tokio::runtime::Handle::current(),
             health.clone(),
         ));
@@ -109,9 +123,43 @@ impl ClusterSession {
         Ok(Self {
             id,
             server,
+            client,
+            discovery,
+            printer_columns: Mutex::new(PrinterColumns::default()),
             registry,
             health,
         })
+    }
+
+    /// Everything this cluster can show.
+    pub fn discovery(&self) -> &Discovery {
+        &self.discovery
+    }
+
+    /// The `additionalPrinterColumns` a kind publishes for itself.
+    ///
+    /// Read from the CRD the first time a kind is opened and remembered after
+    /// that, including the very common answer of "there are none".
+    pub async fn printer_columns(self: Arc<Self>, resource: ApiResource) -> Option<Arc<Value>> {
+        let gvk =
+            kube::core::GroupVersionKind::gvk(&resource.group, &resource.version, &resource.kind);
+
+        // Scoped so that no lock is held across the request below.
+        if let Some(known) = self
+            .printer_columns
+            .lock()
+            .expect("printer column cache")
+            .get(&gvk)
+        {
+            return known.cloned();
+        }
+
+        let columns = fetch_printer_columns(&self.client, &resource).await;
+        self.printer_columns
+            .lock()
+            .expect("printer column cache")
+            .insert(gvk, columns.clone());
+        columns
     }
 
     pub fn id(&self) -> &ClusterId {
