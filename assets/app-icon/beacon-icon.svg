@@ -1,0 +1,86 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <title>Beacon</title>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1024" y2="1024" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#2F6BE8"/>
+      <stop offset="0.52" stop-color="#1B45B8"/>
+      <stop offset="1" stop-color="#0B1E63"/>
+    </linearGradient>
+    <linearGradient id="sheen" x1="512" y1="60" x2="512" y2="640" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.18"/>
+      <stop offset="1" stop-color="#ffffff" stop-opacity="0"/>
+    </linearGradient>
+    <linearGradient id="beamL" x1="512" y1="512" x2="129" y2="55" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FFF6DC" stop-opacity="0.90"/>
+      <stop offset="0.22" stop-color="#FFD98A" stop-opacity="0.55"/>
+      <stop offset="0.50" stop-color="#FFB13D" stop-opacity="0.16"/>
+      <stop offset="0.78" stop-color="#FFB13D" stop-opacity="0"/>
+    </linearGradient>
+    <linearGradient id="beamR" x1="512" y1="512" x2="895" y2="55" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FFF6DC" stop-opacity="0.90"/>
+      <stop offset="0.22" stop-color="#FFD98A" stop-opacity="0.55"/>
+      <stop offset="0.50" stop-color="#FFB13D" stop-opacity="0.16"/>
+      <stop offset="0.78" stop-color="#FFB13D" stop-opacity="0"/>
+    </linearGradient>
+    <radialGradient id="halo" cx="512" cy="512" r="210" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FFC661" stop-opacity="0.60"/>
+      <stop offset="0.5" stop-color="#FFA92E" stop-opacity="0.18"/>
+      <stop offset="1" stop-color="#FFA92E" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="lens" x1="512" y1="410" x2="512" y2="614" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FFFBEB"/>
+      <stop offset="0.55" stop-color="#FFD780"/>
+      <stop offset="1" stop-color="#FFA92E"/>
+    </linearGradient>
+    <filter id="soft" x="-50%" y="-50%" width="200%" height="200%">
+      <feDropShadow dx="0" dy="12" stdDeviation="22" flood-color="#04123F" flood-opacity="0.45"/>
+    </filter>
+    <clipPath id="tile">
+      <rect x="0" y="0" width="1024" height="1024" rx="230"/>
+    </clipPath>
+  </defs>
+
+  <rect x="0" y="0" width="1024" height="1024" rx="230" fill="url(#bg)"/>
+  <rect x="0" y="0" width="1024" height="1024" rx="230" fill="url(#sheen)"/>
+
+  <g clip-path="url(#tile)">
+    <!-- Twin beams, apex on the lens, running off the tile. Warm against the
+         cool background on purpose: hue contrast is what survives being
+         resampled to 16px, where the ring below has already disappeared. -->
+    <g style="mix-blend-mode:screen">
+      <path d="M512 512 L231 -40 L17 139 Z" fill="url(#beamL)"/>
+      <path d="M512 512 L793 -40 L1007 139 Z" fill="url(#beamR)"/>
+    </g>
+
+    <!-- Seven sides, seven vertices: the helm Kubernetes puts on everything.
+         Two strokes, a wide faint one under a narrow bright one, so the edge
+         keeps its shape as it is resampled down. -->
+    <g stroke-linejoin="round" fill="none">
+      <path d="M512 244 L721.5 344.9 L773.3 571.6 L628.3 753.5 L395.7 753.5 L250.7 571.6 L302.5 344.9 Z"
+            stroke="#0B1E63" stroke-opacity="0.28" stroke-width="30"/>
+      <path d="M512 244 L721.5 344.9 L773.3 571.6 L628.3 753.5 L395.7 753.5 L250.7 571.6 L302.5 344.9 Z"
+            stroke="#E6F0FF" stroke-opacity="0.80" stroke-width="10"/>
+    </g>
+
+    <!-- A node per vertex: the cluster the beacon is pointed at. -->
+    <g fill="#F2F7FF">
+      <circle cx="512" cy="244" r="26"/>
+      <circle cx="721.5" cy="344.9" r="26"/>
+      <circle cx="773.3" cy="571.6" r="26"/>
+      <circle cx="628.3" cy="753.5" r="26"/>
+      <circle cx="395.7" cy="753.5" r="26"/>
+      <circle cx="250.7" cy="571.6" r="26"/>
+      <circle cx="302.5" cy="344.9" r="26"/>
+    </g>
+
+    <circle cx="512" cy="512" r="210" fill="url(#halo)"/>
+
+    <!-- The lamp. Large enough to still be the subject at 32px. -->
+    <g filter="url(#soft)">
+      <circle cx="512" cy="512" r="102" fill="url(#lens)"/>
+    </g>
+    <circle cx="512" cy="512" r="102" fill="none" stroke="#FFF3D1" stroke-opacity="0.9" stroke-width="10"/>
+    <circle cx="512" cy="512" r="40" fill="#0E2A86"/>
+    <circle cx="512" cy="512" r="15" fill="#FFFBEB"/>
+  </g>
+</svg>

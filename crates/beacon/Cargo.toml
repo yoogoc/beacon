@@ -19,3 +19,96 @@ directories.workspace = true
 tracing.workspace = true
 tracing-appender.workspace = true
 tracing-subscriber.workspace = true
+
+# ── packaging ─────────────────────────────────────────────────────────────
+#
+# One configuration for all three platforms: `cargo packager` reads this and
+# produces .app/.dmg on macOS, .deb/.AppImage on Linux and an NSIS installer on
+# Windows. See docs/PACKAGING.md for what has actually been built and what has
+# not.
+[package.metadata.packager]
+product-name = "Beacon"
+# Has to stay in step with `ProjectDirs::from("dev", "beacon", "Beacon")` in
+# crates/beacon/src/logging.rs, which is what decides where the log directory
+# lives. Changing it strands whatever is already on disk.
+identifier = "dev.beacon.Beacon"
+description = "A Kubernetes client for the desktop"
+long-description = """
+Beacon connects to every context in your kubeconfig, lists any kind the cluster
+serves including CRDs, streams logs, forwards ports, opens a shell in a
+container, and edits objects with server-side apply.
+"""
+homepage = "https://github.com/yoogo/beacon"
+authors = ["yoogo"]
+category = "DeveloperTool"
+
+# cargo-packager packages a binary that already exists; it never builds one.
+# The build stays an explicit step, here and in CI. A packager hook could not
+# do it portably anyway: hooks run through `sh` on Unix and `cmd.exe` on
+# Windows, so nothing involving `--target $MATRIX` expands on both.
+binaries = [{ path = "beacon", main = true }]
+
+# The packager takes what each platform wants out of this list: the .icns for
+# macOS, the .ico for Windows, the PNGs for Linux's hicolor theme.
+# `scripts/icons.sh` regenerates all of them from beacon-icon.svg.
+icons = [
+    "../../assets/app-icon/beacon.icns",
+    "../../assets/app-icon/beacon.ico",
+    "../../assets/app-icon/icon-16.png",
+    "../../assets/app-icon/icon-32.png",
+    "../../assets/app-icon/icon-64.png",
+    "../../assets/app-icon/icon-128.png",
+    "../../assets/app-icon/icon-256.png",
+    "../../assets/app-icon/icon-512.png",
+    "../../assets/app-icon/icon-1024.png",
+]
+
+[package.metadata.packager.macos]
+minimum-system-version = "11.0"
+
+# Uncomment when a Developer ID Application certificate exists. The identity
+# *string* is not a secret -- it is readable out of any signed binary -- so it
+# belongs in the repo; the .p12 never does. Without it the bundle is unsigned,
+# which runs on this machine and nowhere else.
+#
+# cargo-packager always passes `--options runtime`, and passes `--entitlements`
+# only when one is configured, so leaving `entitlements` unset is what keeps the
+# app out of the App Sandbox. Beacon reads ~/.kube/config and runs kubeconfig
+# `exec` credential plugins, neither of which a sandboxed app can do without
+# entitlements nobody has asked for yet.
+# signing-identity = "Developer ID Application: NAME (TEAMID)"
+
+# Notarization is credential-driven rather than config-driven: cargo-packager
+# notarizes when it finds APPLE_ID + APPLE_PASSWORD + APPLE_TEAM_ID, or
+# APPLE_API_KEY + APPLE_API_ISSUER + APPLE_API_KEY_PATH, or
+# APPLE_KEYCHAIN_PROFILE. With none of them it logs a warning and carries on.
+
+[package.metadata.packager.deb]
+# cargo-packager does not derive these. It writes exactly what is listed and
+# nothing at all when the field is missing, and a .deb with no Depends installs
+# cleanly and then fails to start -- the worse of the two failures.
+#
+# These are the runtime counterparts of the -dev packages in
+# .github/actions/linux-deps. No libssl: the lockfile has openssl-probe but no
+# openssl-sys, because kube is built against rustls.
+depends = [
+    "libasound2t64 | libasound2",
+    "libfontconfig1",
+    "libfreetype6",
+    "libvulkan1",
+    "libwayland-client0",
+    "libx11-6",
+    "libx11-xcb1",
+    "libxcb1",
+    "libxcb-render0",
+    "libxcb-shape0",
+    "libxcb-xfixes0",
+    "libxkbcommon0",
+    "libxkbcommon-x11-0",
+]
+
+[package.metadata.packager.dmg]
+# The drag-to-Applications window everyone already knows how to use.
+window-size = { width = 660, height = 400 }
+app-position = { x = 180, y = 170 }
+application-folder-position = { x = 480, y = 170 }

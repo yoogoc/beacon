@@ -1,3 +1,5 @@
+<img src="assets/app-icon/icon-256.png" alt="" width="104" align="right">
+
 # Beacon
 
 A cross-platform Kubernetes client built with Rust and [GPUI](https://www.gpui.rs),
@@ -82,6 +84,26 @@ produces exactly the same output as a correct one, so anything that changes what
 is on screen gets looked at. macOS only, and the terminal running it needs
 Screen Recording permission.
 
+## Packaging
+
+```sh
+cargo install cargo-packager --locked
+cargo build --release -p beacon
+cargo packager -p beacon --release --formats app,dmg
+```
+
+One configuration in `crates/beacon/Cargo.toml` covers all three platforms:
+`.app` and `.dmg` on macOS, `.deb` and AppImage on Linux, an NSIS installer on
+Windows. `.github/workflows/package.yml` runs the same two commands across six
+runners on every push to main and publishes the results.
+
+What has actually been built, what signing would take, and which platforms are
+still guesses: [docs/PACKAGING.md](docs/PACKAGING.md).
+
+The icons come from `assets/app-icon/beacon-icon.svg`; `scripts/icons.sh`
+regenerates the `.icns`, the `.ico` and the PNG set from it, rendering each size
+from the SVG rather than downscaling the largest one.
+
 ## Layout
 
 ```
@@ -90,8 +112,11 @@ crates/
   beacon-columns/  Column definitions, and what kubectl prints in each of them
   beacon-ui/       GPUI views, the resource catalog, theme tokens, the tokio bridge
   beacon/          The binary: logging, startup, window
+assets/
+  app-icon/        beacon-icon.svg and everything scripts/icons.sh renders from it
 scripts/
   screenshot.sh    Capture the running window (see above)
+  icons.sh         Regenerate assets/app-icon/ from the SVG
 ```
 
 ## Two rules the architecture depends on

@@ -719,3 +719,59 @@ API server 写列表键用 `containers[name="app"]` 这种语法，`beacon-colum
 - **3 集群 400MB 没实测**——手上只有一个集群。
 - 终端的选区/复制粘贴/滚动回看、日志的 grep 高亮和下载、Prometheus 指标、插件系统。
 - 写操作在真集群上仍然只跑过 dry-run（见 M4 记录）。
+
+---
+
+## 附：打包与图标实现记录（2026-09-23）
+
+### 落地的东西
+
+- **图标**：`assets/app-icon/beacon-icon.svg` 是唯一源文件，`scripts/icons.sh` 从它渲染出
+  `beacon.icns` / `beacon.ico` / `icon-{16..1024}.png`。图形是七边形环（Kubernetes 那顶舵轮）
+  + 七个顶点上的节点 + 中心的暖色灯和两道光束。
+- **打包**：`crates/beacon/Cargo.toml` 的 `[package.metadata.packager]`，一套配置覆盖
+  app/dmg/deb/appimage/nsis。
+- **CI**：新增 `.github/workflows/package.yml`（六个矩阵项 + release job）；原有的
+  `ci.yml` 补了一步"打包配置里列的图标文件都还在"的检查。
+- 新文档 `docs/PACKAGING.md`。
+
+### 关于图标，两条不是审美偏好的事
+
+1. **每个尺寸单独从 SVG 渲染，不从 1024 缩**。16px 那一档，七边形环和光束在双缩放下会被一起
+   抹平；按目标尺寸渲染时 librsvg 至少还按几何形状去抗锯齿。
+2. **冷底 + 暖灯是为了 16px**。第一版整张图都是蓝的（环、光束、灯都是冷色），缩到 16px 就是
+   一团看不出内容的蓝；把灯和光束换成琥珀色之后，**色相对比是唯一扛过重采样的东西** ——
+   16px 上环确实没了，但"深蓝底 + 一点暖光"仍然认得出是哪个 app。这跟 roam 用暖红指针配冷蓝
+   底是同一个理由。
+
+### 实测
+
+- macOS arm64：`--formats app,dmg` 产出 `Beacon.app` 和 11.9 MB 的
+  `Beacon_0.1.0_aarch64.dmg`；Info.plist 的 identifier 与 `ProjectDirs` 一致；
+  bundle 里的 icns 与源文件 **sha256 相同**；DMG 挂载后有 `/Applications` 链接；
+  **从 bundle 启动开了窗口并连上 k3s 集群**（截了图）。
+- macOS x86_64：交叉编译 + 打包通过，产出 12.5 MB 的 `Beacon_0.1.0_x64.dmg`，
+  Rosetta 下启动同样出界面、连上集群。所以 CI 里 macOS 两项都不是 `unproven`。
+
+### 踩到的坑
+
+1. **`--formats dmg` 单独跑会把 `.app` 吃掉**。它把 app 挪进 DMG 之后不留副本，
+   目录里只剩 dmg。要两个产物就写 `app,dmg`。
+2. **SOCKS 代理让 DMG 打不出来**。cargo-packager 用 `curl` 去下 `create-dmg`，而这台机器的
+   `all_proxy` 是 socks5，curl 报 `SOCKS feature disabled`。删掉
+   `~/Library/Caches/.cargo-packager/` 之后**复现过一次**，`env -u all_proxy` 再跑就成功。
+   缓存命中后不再联网，所以这个坑只在第一次出现——也因此很容易被误判成"偶发"。
+3. **`.deb` 的 depends 不会被自动推导**。不配就产出一个能装、跑不起来的包。
+   照着 `.github/actions/linux-deps` 的 `-dev` 列表写了运行时对应物；没有列 libssl，
+   因为 Cargo.lock 里只有 `openssl-probe` 而没有 `openssl-sys`（kube 走 rustls）。
+
+### 明确没做 / 没验的
+
+- **签名与公证**：没有 Developer ID 证书，整条路一次都没跑过；配置里那行
+  `signing-identity` 是注释掉的。
+- **Linux 与 Windows 的打包一次都没跑过**，所以 package.yml 里这四项标了
+  `continue-on-error: true`。AppImage 的 `APPIMAGE_EXTRACT_AND_RUN` 是从 roam 抄来的修法，
+  在这里没验证过。
+- `.deb` 的 depends **没有在干净的 Debian 上装过**。
+- 两个 arm64 runner label（`ubuntu-24.04-arm` / `windows-11-arm`）在本机无从验证；
+  拿不到 runner 时的失败长得很像构建失败。

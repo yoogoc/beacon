@@ -1,0 +1,166 @@
+name: package
+
+# Every push to main, plus version tags, plus on demand -- deliberately not
+# every branch. Each matrix entry is a full build of the dependency tree with
+# GPUI in it, six times over, and a feature branch does not need installers.
+# CI (.github/workflows/ci.yml) is what runs on branches and pull requests.
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  package:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    # Only the platforms nobody has ever produced a package on are allowed to
+    # fail, so a break on a proven one still turns the run red. Every `true`
+    # below is a claim about what has actually been built, not a way to keep
+    # the badge green -- delete it the first time that platform packages.
+    continue-on-error: ${{ matrix.unproven }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Built, mounted and launched on this machine. See docs/PACKAGING.md.
+          - name: macos-arm64
+            runner: macos-15
+            target: aarch64-apple-darwin
+            formats: app,dmg
+            unproven: false
+
+          # Cross-compiled on the same arm64 runner rather than asking for an
+          # Intel one: the macOS SDK produces both, and the Intel runners are
+          # on their way out.
+          - name: macos-amd64
+            runner: macos-15
+            target: x86_64-apple-darwin
+            formats: app,dmg
+            unproven: false
+
+          - name: linux-amd64
+            runner: ubuntu-24.04
+            target: x86_64-unknown-linux-gnu
+            formats: deb,appimage
+            unproven: true
+
+          - name: linux-arm64
+            runner: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+            formats: deb,appimage
+            unproven: true
+
+          # nsis rather than wix: cargo-packager downloads NSIS itself, while
+          # WiX wants a separate toolset installed first.
+          - name: windows-amd64
+            runner: windows-2022
+            target: x86_64-pc-windows-msvc
+            formats: nsis
+            unproven: true
+
+          - name: windows-arm64
+            runner: windows-11-arm
+            target: aarch64-pc-windows-msvc
+            formats: nsis
+            unproven: true
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # rust-toolchain.toml pins the channel; this only adds the cross target.
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.98"
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          # Six jobs on one key would evict each other every run.
+          key: ${{ matrix.name }}
+
+      # The same list CI builds with -- X11, Wayland, Vulkan, fonts, ALSA.
+      - uses: ./.github/actions/linux-deps
+        if: runner.os == 'Linux'
+
+      # `cargo install` rather than a prebuilt-binary action: cargo-packager is
+      # not in taiki-e/install-action's tool list, so that route would simply
+      # fail. The cache above covers the rebuild after the first run.
+      - name: Install cargo-packager
+        run: cargo install cargo-packager --locked
+
+      # Build explicitly rather than through a packager hook. Hooks run under
+      # `sh` on Unix and `cmd.exe` on Windows, so no single hook string can
+      # expand `--target` on both.
+      - name: Build
+        run: cargo build --release -p beacon --target ${{ matrix.target }}
+
+      - name: Package
+        env:
+          # linuxdeploy mounts its own AppImage to run, which needs FUSE that a
+          # runner does not have; without this it dies inside libstdc++ with a
+          # std::logic_error. Extracting instead of mounting is the documented
+          # way around it. Carried over from the sibling project -- not yet
+          # confirmed on a runner here, which is why linux stays `unproven`.
+          APPIMAGE_EXTRACT_AND_RUN: 1
+        run: >
+          cargo packager -p beacon --release
+          --target ${{ matrix.target }}
+          --formats ${{ matrix.formats }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: beacon-${{ matrix.name }}
+          # Whatever that platform produced. Naming exact files would mean
+          # writing the version down twice, and it lives in Cargo.toml.
+          path: |
+            target/${{ matrix.target }}/release/*.dmg
+            target/${{ matrix.target }}/release/*.deb
+            target/${{ matrix.target }}/release/*.AppImage
+            target/${{ matrix.target }}/release/*-setup.exe
+            target/${{ matrix.target }}/release/*.msi
+          if-no-files-found: error
+
+  # A push to main publishes a prerelease; a version tag publishes a release.
+  release:
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
+    needs: package
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - name: Describe the release
+        id: release
+        shell: bash
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            echo "tag=$GITHUB_REF_NAME" >> "$GITHUB_OUTPUT"
+            echo "name=Beacon $GITHUB_REF_NAME" >> "$GITHUB_OUTPUT"
+            echo "prerelease=false" >> "$GITHUB_OUTPUT"
+            echo "make_latest=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=main-$GITHUB_SHA" >> "$GITHUB_OUTPUT"
+            echo "name=Beacon main ${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+            echo "prerelease=true" >> "$GITHUB_OUTPUT"
+            echo "make_latest=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.release.outputs.tag }}
+          target_commitish: ${{ github.sha }}
+          name: ${{ steps.release.outputs.name }}
+          prerelease: ${{ steps.release.outputs.prerelease }}
+          make_latest: ${{ steps.release.outputs.make_latest }}
+          generate_release_notes: true
+          files: artifacts/**/*
+          # A release missing one platform's package is better published
+          # incomplete than not published -- the matrix says which one failed.
+          fail_on_unmatched_files: false
