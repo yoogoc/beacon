@@ -268,6 +268,7 @@ impl BeaconApp {
             Choice::Kind(kind) => cluster.show_kind(kind, window, cx),
             Choice::Namespace(namespace) => cluster.set_namespace(namespace, window, cx),
             Choice::Object(object) => cluster.reveal(&object, window, cx),
+            Choice::Operation(operation) => cluster.start(operation, window, cx),
             Choice::Action(palette::Action::ToggleDetails) => cluster.toggle_details(window, cx),
             Choice::Action(palette::Action::ClearFilter) => cluster.clear_filter(window, cx),
             Choice::Action(palette::Action::CopyName) => {

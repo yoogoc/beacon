@@ -21,7 +21,8 @@
 
 use std::sync::Arc;
 
-use beacon_kube::{ClusterId, Kind, ObjectRef};
+use beacon_kube::{ClusterId, Kind, ObjectRef, Operation};
+use gpui_kit::component::Disableable as _;
 use gpui_kit::component::command::{Command, CommandItem, CommandState};
 use gpui_kit::component::{ActiveTheme as _, v_flex};
 use gpui_kit::*;
@@ -132,6 +133,8 @@ pub enum Choice {
     Cluster(ClusterId),
     Object(ObjectRef),
     Action(Action),
+    /// Something that changes the cluster, aimed at the selected object.
+    Operation(Operation),
 }
 
 pub enum PaletteEvent {
@@ -152,6 +155,9 @@ pub struct Sources {
     pub namespaces: Vec<String>,
     pub clusters: Vec<ClusterId>,
     pub objects: Vec<ObjectRef>,
+    /// What can be done to the selected object, already marked with whether
+    /// this user may do it. Empty when nothing is selected.
+    pub operations: Vec<crate::actions::Choice>,
     /// The kind on screen, for the placeholder.
     pub current_kind: Option<String>,
 }
@@ -222,13 +228,41 @@ impl Palette {
                 .iter()
                 .map(|cluster| (cluster.to_string(), Choice::Cluster(cluster.clone())))
                 .collect(),
-            Section::Commands => Action::ALL
+            Section::Commands => self
+                .sources
+                .operations
                 .iter()
-                .map(|action| (action.label().to_string(), Choice::Action(*action)))
+                .map(|choice| {
+                    (
+                        choice.label.trim_end_matches('…').to_string(),
+                        Choice::Operation(choice.operation.clone()),
+                    )
+                })
+                .chain(
+                    Action::ALL
+                        .iter()
+                        .map(|action| (action.label().to_string(), Choice::Action(*action))),
+                )
                 .collect(),
         };
 
         self.matches = rank(&candidates, needle, &mut self.matcher, LIMIT);
+    }
+
+    /// Whether a choice is offered but refused, and why.
+    ///
+    /// The refusal comes from the permission preflight; see
+    /// [`crate::actions`].
+    fn blocked(&self, choice: &Choice) -> Option<&str> {
+        let Choice::Operation(operation) = choice else {
+            return None;
+        };
+        self.sources
+            .operations
+            .iter()
+            .find(|candidate| &candidate.operation == operation)
+            .filter(|candidate| !candidate.allowed)
+            .and_then(|candidate| candidate.tooltip())
     }
 
     /// The label for a choice, rebuilt rather than stored: the list is at most
@@ -241,6 +275,7 @@ impl Palette {
             Choice::Namespace(Some(namespace)) => SharedString::from(namespace.clone()),
             Choice::Cluster(cluster) => SharedString::from(cluster.to_string()),
             Choice::Action(action) => SharedString::from(action.label()),
+            Choice::Operation(operation) => SharedString::from(operation.describe()),
         }
     }
 }
@@ -296,7 +331,17 @@ impl Render for Palette {
         let items: Vec<CommandItem> = self
             .matches
             .iter()
-            .map(|choice| CommandItem::new().label(self.label(choice)))
+            .map(|choice| {
+                // A refused action is shown, disabled, with the reason -- the
+                // alternative is a menu that quietly hides what you cannot do,
+                // which tells nobody anything.
+                match self.blocked(choice) {
+                    Some(reason) => CommandItem::new()
+                        .label(format!("{} — {reason}", self.label(choice)))
+                        .disabled(true),
+                    None => CommandItem::new().label(self.label(choice)),
+                }
+            })
             .collect();
 
         let heading = self.section.heading();
@@ -332,9 +377,13 @@ impl Render for Palette {
                     })
                     .on_confirm(move |index, _, cx| {
                         let _ = on_confirm.update(cx, |palette, cx| {
-                            if let Some(choice) = palette.matches.get(index.row).cloned() {
-                                cx.emit(PaletteEvent::Chose(choice));
+                            let Some(choice) = palette.matches.get(index.row).cloned() else {
+                                return;
+                            };
+                            if palette.blocked(&choice).is_some() {
+                                return;
                             }
+                            cx.emit(PaletteEvent::Chose(choice));
                         });
                     })
                     .on_cancel(move |_, cx| {

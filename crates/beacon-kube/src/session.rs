@@ -22,7 +22,10 @@ use tokio::sync::watch as watch_channel;
 
 use crate::{
     ClusterId, Error, Result,
+    access::{Access, Rules, fetch_rules},
     discovery::{Discovery, PrinterColumns, fetch_printer_columns},
+    logs::{LogEvent, LogOptions},
+    ops::{self, Applied, Operation},
     watch::{Registry, Subscription, WatchKey},
 };
 
@@ -64,9 +67,12 @@ pub struct ClusterSession {
     /// confusingly similar names.
     server: String,
     client: Client,
+    runtime: tokio::runtime::Handle,
     discovery: Discovery,
     /// Filled in one kind at a time, as somebody opens them.
     printer_columns: Mutex<PrinterColumns>,
+    /// Filled in one namespace at a time, as somebody looks at one.
+    access: Mutex<Access>,
     registry: Arc<Registry>,
     health: Arc<HealthState>,
 }
@@ -114,9 +120,10 @@ impl ClusterSession {
             .map_err(|error| Error::connect(&id, &error))?;
 
         let health = Arc::new(HealthState::new(Health::Connected));
+        let runtime = tokio::runtime::Handle::current();
         let registry = Arc::new(Registry::new(
             client.clone(),
-            tokio::runtime::Handle::current(),
+            runtime.clone(),
             health.clone(),
         ));
 
@@ -124,11 +131,99 @@ impl ClusterSession {
             id,
             server,
             client,
+            runtime,
             discovery,
             printer_columns: Mutex::new(PrinterColumns::default()),
+            access: Mutex::new(Access::default()),
             registry,
             health,
         })
+    }
+
+    /// What this user may do in a namespace, asked once and remembered.
+    ///
+    /// `None` is the cluster scope. Never fails: a cluster that will not answer
+    /// yields a permissive answer rather than a disabled interface. See
+    /// [`crate::access`].
+    pub async fn rules(self: Arc<Self>, namespace: Option<String>) -> Arc<Rules> {
+        if let Some(known) = self
+            .access
+            .lock()
+            .expect("access cache")
+            .get(namespace.as_deref())
+        {
+            return known.clone();
+        }
+
+        let rules = Arc::new(fetch_rules(&self.client, namespace.as_deref()).await);
+        self.access
+            .lock()
+            .expect("access cache")
+            .insert(namespace, rules.clone());
+        rules
+    }
+
+    /// Runs one write operation.
+    ///
+    /// Applying returns what the API server said, including a refusal; the
+    /// others succeed or fail.
+    pub async fn run(
+        self: Arc<Self>,
+        operation: Operation,
+        resource: ApiResource,
+        namespace: Option<String>,
+        name: String,
+        object: Option<Value>,
+        force: bool,
+    ) -> Result<Applied> {
+        let namespace = namespace.as_deref();
+        match operation {
+            Operation::Delete => {
+                ops::delete(&self.client, &resource, namespace, &name).await?;
+                Ok(Applied::Ok(Box::new(DynamicObject::new(&name, &resource))))
+            }
+            Operation::Restart => {
+                let now = k8s_openapi::jiff::Timestamp::now().to_string();
+                ops::restart(&self.client, &resource, namespace, &name, &now).await?;
+                Ok(Applied::Ok(Box::new(DynamicObject::new(&name, &resource))))
+            }
+            Operation::Scale { replicas } => {
+                ops::scale(&self.client, &resource, namespace, &name, replicas).await?;
+                Ok(Applied::Ok(Box::new(DynamicObject::new(&name, &resource))))
+            }
+            Operation::Apply => {
+                let object = object.ok_or_else(|| Error::Connect {
+                    context: self.id.to_string(),
+                    diagnosis: "apply needs an object".to_string(),
+                })?;
+                ops::apply(
+                    &self.client,
+                    &resource,
+                    namespace,
+                    &name,
+                    &object,
+                    force,
+                    false,
+                )
+                .await
+            }
+        }
+    }
+
+    /// Follows a pod's logs. The returned stream is a channel, safe to poll
+    /// from the foreground thread.
+    pub fn follow_logs(
+        &self,
+        namespace: String,
+        pod: String,
+        options: LogOptions,
+    ) -> impl futures::Stream<Item = LogEvent> + use<> {
+        crate::logs::follow(self.client.clone(), namespace, pod, options, &self.runtime)
+    }
+
+    /// The underlying client, for the operations in [`crate::ops`].
+    pub fn client(&self) -> &Client {
+        &self.client
     }
 
     /// Everything this cluster can show.

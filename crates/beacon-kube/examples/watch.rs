@@ -1,5 +1,10 @@
 //! `cargo run -p beacon-kube --example watch -- [--context NAME] [--once] [Kind] [namespace]`
 //! `cargo run -p beacon-kube --example watch -- --kinds`
+//! `cargo run -p beacon-kube --example watch -- --apply-check <Kind> <namespace/name>`
+//!
+//! `--apply-check` does a **dry-run** Server-Side Apply of a one-field patch,
+//! which is how the conflict path is exercised against a real API server
+//! without writing anything.
 //!
 //! Lists and follows any kind the cluster serves, with no window at all,
 //! printing exactly the columns the table renders. The rule that `beacon-kube`
@@ -67,6 +72,45 @@ async fn main() -> anyhow::Result<()> {
 
     // A cluster-scoped kind ignores the namespace, which is also what stops the
     // table growing a Namespace column it would never fill.
+    if arguments.apply_check {
+        let target = arguments
+            .namespace
+            .clone()
+            .ok_or_else(|| anyhow::anyhow!("--apply-check needs <namespace/name>"))?;
+        let (namespace, name) = target
+            .split_once('/')
+            .ok_or_else(|| anyhow::anyhow!("expected <namespace>/<name>"))?;
+
+        let object = serde_json::json!({
+            "apiVersion": kind.resource.api_version,
+            "kind": kind.resource.kind,
+            "metadata": { "name": name, "namespace": namespace },
+            "spec": { "replicas": 3 }
+        });
+
+        let applied = beacon_kube::ops::apply(
+            session.client(),
+            &kind.resource,
+            Some(namespace),
+            name,
+            &object,
+            false,
+            true,
+        )
+        .await?;
+
+        match applied {
+            beacon_kube::Applied::Ok(_) => println!("dry run applied cleanly"),
+            beacon_kube::Applied::Conflict(conflict) => {
+                println!("summary: {}", conflict.summary());
+                println!("managers: {:?}", conflict.managers);
+                println!("fields:   {:?}", conflict.fields);
+                println!("--- raw message ---\n{}", conflict.message);
+            }
+        }
+        return Ok(());
+    }
+
     let namespace = arguments.namespace.filter(|_| kind.namespaced);
     let key = WatchKey::all(kind.resource.clone()).in_namespace(namespace);
     let show_namespace = kind.namespaced && key.namespace.is_none();
@@ -128,6 +172,8 @@ struct Arguments {
     /// Print the first list and stop, for scripting a comparison against
     /// `kubectl get`.
     once: bool,
+    /// Dry-run an apply and report what the API server said.
+    apply_check: bool,
 }
 
 impl Arguments {
@@ -136,11 +182,13 @@ impl Arguments {
         let mut positional = Vec::new();
         let mut list_kinds = false;
         let mut once = false;
+        let mut apply_check = false;
 
         let mut arguments = std::env::args().skip(1);
         while let Some(argument) = arguments.next() {
             match argument.as_str() {
                 "--kinds" => list_kinds = true,
+                "--apply-check" => apply_check = true,
                 "--once" => once = true,
                 "--context" => {
                     context = Some(
@@ -163,6 +211,7 @@ impl Arguments {
             namespace: positional.next(),
             list_kinds,
             once,
+            apply_check,
         })
     }
 }

@@ -378,7 +378,7 @@ UI 里一个"转发列表"面板管理生命周期，Pod 消失时自动关闭�
 | **M1** ✅ | kubeconfig 解析、context 切换、Pod 列表 + watch、tokio 桥 | 输出与 `kubectl get pods -A` 逐格一致；切 context/namespace 不泄漏任务。5000 pod 的 60fps 未实测，见附录 | 2w |
 | **M2** ✅ | Discovery、通用表格、列定义、CRD 支持、namespace 过滤、搜索 | 17 种资源（含 4 个 CRD）与 `kubectl get` 逐格一致；CRD 的 printer columns 运行时读取，无需改代码 | 2w |
 | **M3** ✅ | Dock 布局、详情面板（Overview/YAML 只读/Events）、命令面板 | ⌘K 覆盖了应用里**全部**四种导航（kind / namespace / cluster / 对象），详情面板三个 tab 都跑通 | 2w |
-| **M4** | 日志流、写操作（delete/scale/restart/SSA apply）、权限预检 | 无权限动作正确置灰；apply 冲突有 diff | 2w |
+| **M4** ✅ | 日志流、写操作（delete/scale/restart/SSA apply）、权限预检 | 无权限动作带原因置灰（截图验证）；apply 冲突对真实 API server 验证过（dry run，未写入） | 2w |
 | **M5** | port-forward、exec（先一次性命令）、多集群并行 | 同时连 3 个集群内存 < 400MB | 3w |
 | **M6** | 交互式终端、metrics（CPU/内存图表）、Helm release 列表 | — | 4w+ |
 
@@ -581,3 +581,75 @@ macOS 上 `./target/debug/beacon` 能开窗并正确读出 kubeconfig。
 - `>` 段目前只有四个动作（切主题、开关详情、清过滤、复制名字）——写操作（delete/scale/restart）
   要等 M4 的权限预检一起做，现在放进去就是一个点了会 403 的菜单。
 - 侧边栏的 ★ 收藏（§6.1 画了）、面板布局持久化到磁盘。
+
+
+---
+
+## 附：M4 实现记录（2026-09-23）
+
+`cargo test --workspace` 179 passed，`cargo clippy --workspace --all-targets` 干净。
+
+### 落地的东西
+
+| 位置 | 内容 |
+|---|---|
+| `beacon-kube/access.rs` | 权限预检。用 `SelfSubjectRulesReview` 一次拿到一个命名空间的全部规则，而不是每个按钮一次 `SelfSubjectAccessReview`——后者是每行每动词一个往返 |
+| `beacon-kube/ops.rs` | delete / restart / scale / apply，以及冲突消息的解析 |
+| `beacon-kube/logs.rs` | 日志流 + 环形缓冲（5 万行 / 10MB，丢最旧的），按 16ms 合批，和 watch 一样 |
+| `beacon-ui/actions.rs` | 某个 kind 上能做什么，每项标好这个用户能不能做 |
+| `beacon-ui/prompt.rs` | 删除前的确认、扩缩容的数字输入 |
+| `beacon-ui/detail.rs` | Logs tab；YAML 变成可编辑 + Apply + 冲突展示 |
+| `beacon-kube/examples/watch.rs` | `--apply-check`：**dry-run** 的 SSA，用来对真实 API server 验证冲突路径而不写入任何东西 |
+
+### 两条关于 RBAC 的事实，都很容易搞错
+
+1. **`pods` 上的规则不覆盖 `pods/log`**。子资源在 RBAC 里是分开命名的，所以"能列 pod"
+   完全没说"能看日志"。`deployments` 和 `deployments/scale` 同理——这就是截图里
+   "Scale 被置灰但 Restart 没有"那种情况存在的原因。
+2. **答案可以是"不完整"的**。webhook 授权器没法枚举自己的规则，这时 `incomplete: true`。
+   Beacon 的选择是**照常启用**：一个用户能读懂的 403，好过一个谁也解释不了的灰按钮。
+
+### 真机验证
+
+- **权限置灰**：两张截图对照。管理员身份下 `>` 里 "Delete" 正常可选；把规则换成只读后
+  变成 "Delete — You do not have delete on pods in this namespace"，灰掉且不可确认。
+- **apply 冲突**：`--apply-check Deployment default/guestbook-ui` 对本机 k3s 跑 dry-run apply，
+  真实拿到 argocd-controller 的冲突并解析出 manager 和字段；同一命令对没有冲突的对象
+  返回 "dry run applied cleanly"。**全程没有写入**（复查过 replicas 没变）。
+- **日志**：`argo-workflows-server` 的实时日志，2001 行，跟到尾部。
+
+### 踩到的坑
+
+**冲突消息有两种格式，而且哪里都没写。** 我按文档印象实现了多行的那种：
+
+```text
+Apply failed with 2 conflicts: conflicts with "kubectl-client-side-apply" using v1:
+- .spec.replicas
+- .metadata.labels.team
+```
+
+对着真集群一跑，**单个冲突是一行**，字段跟在冒号后面，而且是单数的 `conflict with`：
+
+```text
+Apply failed with 1 conflict: conflict with "argocd-controller" using apps/v1: .spec.replicas
+```
+
+只按多行格式解析的话，最常见的情况（就冲突了一个字段）会解析出空的 manager 和空的字段列表，
+界面上只剩一句"这个 apply 冲突了"。两种格式现在都有测试，用的是从真集群抓来的原文。
+
+### 与设计的分歧
+
+**冲突展示的是"字段 + 谁拥有 + 你填的值"，不是整对象的 unified diff**（§6.4 写的是"展示 diff"）。
+理由是前者才是要做的决定：`.spec.replicas` 归 argocd-controller，你想改成 3。
+整个对象的 diff 里，这一行会淹没在一百行没变的 YAML 中间。
+API server 写列表键用 `containers[name="app"]` 这种语法，`beacon-columns` 的求值器不认，
+那种字段只显示路径不显示值——还是有用的那一半。
+
+### 明确没做 / 没验的
+
+- **按键仍然没按过**（连续第三个里程碑）：这台机器上的输入自动化工具不可用。
+  用临时插桩把面板/详情/只读规则预置好截图，然后把插桩删干净（`grep BEACON_DEMO` 为空）。
+- **真正的写入没在真集群上执行过**。delete / restart / scale / 非 dry-run 的 apply 都只有
+  单测和 dry-run 覆盖——在别人的开发集群上点"删除"不是我该替他做的决定。
+- 日志的 grep 高亮和下载到文件（§6.4 列了）、`--force-conflicts` 之外的冲突合并策略。
+- 权限缓存没有失效机制：RoleBinding 改了要重连才知道。

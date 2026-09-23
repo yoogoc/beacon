@@ -4,13 +4,17 @@ A cross-platform Kubernetes client built with Rust and [GPUI](https://www.gpui.r
 in the spirit of Lens: browse any cluster, follow logs, edit manifests, forward
 ports — natively, on macOS, Linux and Windows.
 
-**Status: M3.** Beacon connects to a kubeconfig context and lists any kind the
+**Status: M4.** Beacon connects to a kubeconfig context and lists any kind the
 cluster serves — built-in or custom — following each with a watch. Tables are
 column-for-column what `kubectl get` prints, and a CRD's own
 `additionalPrinterColumns` are read from the cluster at runtime, so a CRD
 installed this morning lists correctly this afternoon. Selecting a row opens a
-detail panel with Overview, YAML and Events. Everything is reachable from the
-command palette. Writing to a cluster and following logs are still ahead; see
+detail panel with Overview, YAML, Events and (for pods) Logs. Objects can be
+deleted, restarted, scaled and applied — and Beacon asks the cluster what you
+are allowed to do before it offers, so an action that would be refused is
+greyed out with the reason rather than failing with a 403. Editing the YAML
+applies it with Server-Side Apply; when another field manager owns what you
+changed, the refusal names the fields and their owner. See
 [docs/DESIGN.md](docs/DESIGN.md) for the architecture and the milestone plan.
 
 ## The command palette
@@ -43,6 +47,7 @@ on macOS). `RUST_LOG=beacon=debug,kube=debug` turns up the volume.
 ```sh
 cargo run -p beacon-kube --example watch -- [--context NAME] [--once] [Kind] [namespace]
 cargo run -p beacon-kube --example watch -- --kinds
+cargo run -p beacon-kube --example watch -- --apply-check Deployment default/my-app
 ```
 
 Lists and follows any kind with no window at all, printing the same columns the
@@ -51,6 +56,9 @@ layer is right, and it is only possible because `beacon-kube` does not depend
 on GPUI — see below. `--once` prints the first list and exits, which is what
 makes the column code checkable against `kubectl get` in a loop; that diff is
 how it is kept honest.
+
+`--apply-check` does a **dry-run** Server-Side Apply, which is how the conflict
+path is exercised against a real API server without writing anything.
 
 Beacon differs from kubectl deliberately in two places, both documented in the
 design notes: an absent value renders as `<none>` rather than as a blank cell,

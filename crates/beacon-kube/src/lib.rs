@@ -5,15 +5,19 @@
 //! dependency on GPUI, and it must stay that way -- the UI is one consumer of
 //! this crate, a headless CLI or an integration test is another.
 
+pub mod access;
 pub mod config;
 pub mod discovery;
 pub mod error;
+pub mod logs;
+pub mod ops;
 pub mod resources;
 pub mod session;
 pub mod shell_env;
 pub mod store;
 pub mod watch;
 
+pub use access::Rules;
 pub use discovery::{Discovery, Kind};
 pub use error::{Error, Result};
 /// Re-exported so that consumers can name and build the types this crate hands
@@ -21,6 +25,8 @@ pub use error::{Error, Result};
 /// different `kube`, which is a whole class of confusing type errors.
 pub use kube::api::{ApiResource, DynamicObject};
 pub use kube::core::GroupVersionKind;
+pub use logs::{LogBuffer, LogEvent, LogOptions};
+pub use ops::{Applied, Conflict, Operation};
 pub use session::{ClusterSession, Health};
 pub use store::{Delta, DeltaBatch, ObjectRef, ResourceStore};
 pub use watch::{Subscription, WatchKey};

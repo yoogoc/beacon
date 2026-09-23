@@ -11,7 +11,10 @@
 use std::{sync::Arc, time::Duration};
 
 use beacon_columns::ColumnSet;
-use beacon_kube::{ClusterSession, Health, Kind, ObjectRef, ResourceStore, WatchKey, resources};
+use beacon_kube::{
+    Applied, ClusterSession, Health, Kind, ObjectRef, Operation, ResourceStore, Rules, WatchKey,
+    resources,
+};
 use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::component::resizable::{ResizableState, resizable_panel, v_resizable};
 use gpui_kit::component::select::{SearchableVec, Select, SelectEvent, SelectState};
@@ -25,7 +28,9 @@ use crate::bridge::{Bridge, drain_into};
 use crate::catalog::{Catalog, Entry};
 use crate::detail::{DetailClosed, DetailView};
 use crate::palette::Sources;
+use crate::prompt::{Ask, Prompt, PromptEvent};
 use crate::table::ResourceTable;
+use crate::theme::{BeaconTheme as _, Tone};
 
 /// The namespace picker's entry for "do not scope at all". A namespace cannot
 /// contain a space, so this can never collide with a real one.
@@ -34,6 +39,13 @@ const ALL_NAMESPACES: &str = "All namespaces";
 /// How often the Age column is repainted. Ages are relative, so a table that
 /// nothing is changing still has to advance.
 const CLOCK: Duration = Duration::from_secs(1);
+
+/// What the last write operation said, for the toolbar.
+enum Outcome {
+    Running(String),
+    Done(String),
+    Failed(String),
+}
 
 pub struct ClusterView {
     session: Arc<ClusterSession>,
@@ -70,11 +82,21 @@ pub struct ClusterView {
     /// reset the split the user dragged.
     split: Entity<ResizableState>,
 
+    /// What this user may do in the current namespace. `None` until the answer
+    /// arrives; see [`crate::actions`].
+    rules: Option<Arc<Rules>>,
+    /// An operation waiting on a confirmation or a number.
+    prompt: Option<Entity<Prompt>>,
+    /// What the last write said, for the toolbar.
+    outcome: Option<Outcome>,
+
     // Dropping any of these stops the work behind it.
     _health: Task<()>,
     _namespaces: Task<()>,
     _objects: Task<()>,
     _columns: Option<Task<()>>,
+    _operation: Option<Task<()>>,
+    _rules: Option<Task<()>>,
     _clock: Task<()>,
     _subscriptions: Vec<Subscription>,
 }
@@ -131,16 +153,22 @@ impl ClusterView {
             table,
             detail: None,
             split,
+            rules: None,
+            prompt: None,
+            outcome: None,
             _health: Task::ready(()),
             _namespaces: Task::ready(()),
             _objects: Task::ready(()),
             _columns: None,
+            _operation: None,
+            _rules: None,
             _clock: Task::ready(()),
             _subscriptions: Vec::new(),
             session,
         };
 
         this.listen(window, cx);
+        this.load_rules(window, cx);
         this.watch_health(window, cx);
         this.watch_namespaces(window, cx);
         this.start_clock(cx);
@@ -196,8 +224,122 @@ impl ClusterView {
             },
             clusters: Vec::new(),
             objects: self.table.read(cx).delegate().keys(),
+            operations: self.operations(cx),
             current_kind: self.kind.as_ref().map(|kind| kind.resource.kind.clone()),
         }
+    }
+
+    /// What can be done to the selected object right now.
+    ///
+    /// Empty when nothing is selected: an action with no target is a menu item
+    /// that cannot mean anything.
+    pub fn operations(&self, cx: &App) -> Vec<crate::actions::Choice> {
+        let (Some(kind), Some(selected)) = (self.kind.clone(), self.selected(cx)) else {
+            return Vec::new();
+        };
+
+        let replicas = self
+            .table
+            .read(cx)
+            .delegate()
+            .object(&selected)
+            .and_then(|object| object.data.get("spec")?.get("replicas")?.as_i64())
+            .unwrap_or(1) as i32;
+
+        crate::actions::available(&kind, self.rules.as_deref(), replicas)
+    }
+
+    /// Starts an operation, asking first when it needs asking.
+    pub fn start(&mut self, operation: Operation, window: &mut Window, cx: &mut Context<Self>) {
+        let (Some(kind), Some(target)) = (self.kind.clone(), self.selected(cx)) else {
+            return;
+        };
+
+        // Restarting is disruptive but not destructive, and it is exactly what
+        // the menu item says. Deleting has no undo; scaling needs a number.
+        if matches!(operation, Operation::Restart) {
+            self.run(operation, window, cx);
+            return;
+        }
+
+        let ask = Ask {
+            operation,
+            target,
+            kind: SharedString::from(kind.resource.kind.clone()),
+        };
+        let prompt = cx.new(|cx| Prompt::new(ask, window, cx));
+
+        cx.subscribe_in(
+            &prompt,
+            window,
+            |view, _, event: &PromptEvent, window, cx| {
+                view.prompt = None;
+                if let PromptEvent::Confirmed(operation) = event {
+                    view.run(operation.clone(), window, cx);
+                }
+                cx.notify();
+            },
+        )
+        .detach();
+
+        self.prompt = Some(prompt);
+        cx.notify();
+    }
+
+    /// Sends one operation, and reports what came back.
+    fn run(&mut self, operation: Operation, window: &mut Window, cx: &mut Context<Self>) {
+        let (Some(kind), Some(target)) = (self.kind.clone(), self.selected(cx)) else {
+            return;
+        };
+
+        let described = operation.describe();
+        self.outcome = Some(Outcome::Running(described.clone()));
+        cx.notify();
+
+        let session = self.session.clone();
+        let resource = kind.resource.clone();
+        let running = Bridge::global(cx).run(async move {
+            session
+                .run(
+                    operation,
+                    resource,
+                    target.namespace.clone(),
+                    target.name.clone(),
+                    None,
+                    false,
+                )
+                .await
+        });
+
+        self._operation = Some(cx.spawn_in(window, async move |this, cx| {
+            let result = running.await;
+            let _ = this.update(cx, |view, cx| {
+                view.outcome = Some(match result {
+                    Ok(Ok(Applied::Ok(_))) => Outcome::Done(described),
+                    Ok(Ok(Applied::Conflict(conflict))) => Outcome::Failed(conflict.summary()),
+                    Ok(Err(error)) => Outcome::Failed(error.to_string()),
+                    Err(error) => Outcome::Failed(error.to_string()),
+                });
+                cx.notify();
+            });
+        }));
+    }
+
+    /// Asks what this user may do in the namespace now on screen.
+    fn load_rules(&mut self, window: &Window, cx: &mut Context<Self>) {
+        let session = self.session.clone();
+        let namespace = self.namespace.clone();
+        self.rules = None;
+
+        let asking = Bridge::global(cx).run(async move { session.rules(namespace).await });
+
+        self._rules = Some(cx.spawn_in(window, async move |this, cx| {
+            let Ok(rules) = asking.await else { return };
+            let _ = this.update(cx, |view, cx| {
+                view.rules = Some(rules);
+                cx.notify();
+            });
+        }));
     }
 
     /// Switches to a kind, as the sidebar or the palette asks.
@@ -220,6 +362,9 @@ impl ClusterView {
         self.refresh_namespace_picker(window, cx);
         self.watch_objects(window, cx);
         self.load_columns(window, cx);
+        // Permissions are per namespace, so the answer for the last one says
+        // nothing about this one.
+        self.load_rules(window, cx);
         cx.notify();
     }
 
@@ -316,7 +461,8 @@ impl ClusterView {
         }
 
         let session = self.session.clone();
-        let detail = cx.new(|cx| DetailView::new(session, kind, object, window, cx));
+        let rules = self.rules.clone();
+        let detail = cx.new(|cx| DetailView::new(session, kind, object, rules, window, cx));
         cx.subscribe(&detail, |view, _, _: &DetailClosed, cx| {
             view.detail = None;
             cx.notify();
@@ -340,7 +486,10 @@ impl ClusterView {
             // instant something disappears.
             return;
         };
-        detail.update(cx, |detail, cx| detail.refresh(object, cx));
+        let rules = self.rules.clone();
+        detail.update(cx, |detail, cx| {
+            detail.refresh(object, rules, cx);
+        });
     }
 
     /// (Re)starts the watch for the current kind and namespace.
@@ -682,6 +831,21 @@ impl ClusterView {
                 h_flex()
                     .gap_2()
                     .items_center()
+                    // What the last write said. It lives here rather than in a
+                    // toast because the thing it is about is on screen.
+                    .children(self.outcome.as_ref().map(|outcome| {
+                        let (tone, text) = match outcome {
+                            Outcome::Running(what) => (Tone::Progressing, format!("{what}…")),
+                            Outcome::Done(what) => (Tone::Healthy, format!("{what} — done")),
+                            Outcome::Failed(why) => (Tone::Critical, why.clone()),
+                        };
+                        div()
+                            .max_w(px(360.))
+                            .truncate()
+                            .text_xs()
+                            .text_color(cx.theme().tone(tone))
+                            .child(text)
+                    }))
                     .child(
                         div()
                             .w(px(220.))
