@@ -334,10 +334,10 @@ impl DetailView {
     pub fn apply(&mut self, force: bool, window: &mut Window, cx: &mut Context<Self>) {
         let yaml = self.yaml_editor.read(cx).value().to_string();
 
-        let object: Value = match serde_saphyr::from_str(&yaml) {
+        let object = match parse(&yaml) {
             Ok(object) => object,
             Err(error) => {
-                self.apply = Apply::Failed(format!("This is not valid YAML: {error}"));
+                self.apply = Apply::Failed(error);
                 cx.notify();
                 return;
             }
@@ -382,6 +382,34 @@ impl DetailView {
                 cx.notify();
             });
         }));
+    }
+
+    /// Rewrites what is in the editor in the form the pane itself produces.
+    ///
+    /// Useful twice over. An edited or pasted manifest comes back with block
+    /// indentation instead of whatever flow style it arrived in, and because
+    /// this is the same parse that `apply` does, pressing it answers "is this
+    /// even valid YAML" without writing to the cluster to find out.
+    pub fn format(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let yaml = self.yaml_editor.read(cx).value().to_string();
+
+        match reformat(&yaml) {
+            Ok(formatted) => {
+                if formatted != yaml {
+                    self.yaml_editor
+                        .update(cx, |editor, cx| editor.set_value(formatted, window, cx));
+                }
+                // Clear a parse error this may just have fixed, but leave a
+                // conflict alone: reformatting does not change the object, so
+                // what the API server refused it would still refuse.
+                if matches!(self.apply, Apply::Failed(_)) {
+                    self.apply = Apply::Idle;
+                }
+            }
+            Err(error) => self.apply = Apply::Failed(error),
+        }
+
+        cx.notify();
     }
 
     /// Fetches the object in full and renders it as YAML.
@@ -775,6 +803,15 @@ impl DetailView {
                                 ),
                         )
                     })
+                    .child(
+                        Button::new("format-yaml")
+                            .ghost()
+                            .small()
+                            .label("Format")
+                            .tooltip("Rewrite it the way the pane does — comments are not kept")
+                            .disabled(!may_apply || running)
+                            .on_click(cx.listener(|view, _, window, cx| view.format(window, cx))),
+                    )
                     .child(
                         Button::new("apply")
                             .primary()
@@ -1377,10 +1414,64 @@ impl Render for DetailView {
     }
 }
 
+/// Reads a YAML document into the value the rest of this works with.
+fn parse(yaml: &str) -> Result<Value, String> {
+    serde_saphyr::from_str(yaml).map_err(|error| format!("This is not valid YAML: {error}"))
+}
+
+/// Rewrites a YAML document by round-tripping it through that value.
+///
+/// What this changes is shape, not content: flow style becomes block style,
+/// indentation and quoting become the serialiser's. **Key order is left as
+/// written** -- something in the dependency tree turns on
+/// `serde_json/preserve_order`, so the map is an `IndexMap` and formatting
+/// does not shuffle a document into alphabetical order behind the user's back.
+///
+/// Comments and blank lines do not survive, because there is nowhere in a
+/// `serde_json::Value` for them to live. That is worth being plain about, but
+/// it is not a new loss: applying already sends the parsed object, so anything
+/// the parse drops was never going to reach the cluster either.
+fn reformat(yaml: &str) -> Result<String, String> {
+    serde_saphyr::to_string(&parse(yaml)?)
+        .map_err(|error| format!("Could not write the YAML back out: {error}"))
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{container_state, scalars};
+    use super::{container_state, reformat, scalars};
     use serde_json::json;
+
+    /// Flow style is expanded, and the keys stay in the order they were
+    /// written -- a formatter that silently alphabetised somebody's manifest
+    /// would be worse than no formatter.
+    #[test]
+    fn formatting_expands_flow_style_and_keeps_key_order() {
+        let messy = "kind: Pod\napiVersion: v1\nmetadata: {name: web, labels: {app: web}}\n";
+        assert_eq!(
+            reformat(messy).unwrap(),
+            "kind: Pod\napiVersion: v1\nmetadata:\n  name: web\n  labels:\n    app: web\n"
+        );
+    }
+
+    #[test]
+    fn formatting_twice_changes_nothing_the_second_time() {
+        let once =
+            reformat("kind: Pod\napiVersion: v1\nspec: {containers: [{name: web}]}\n").unwrap();
+        assert_eq!(reformat(&once).unwrap(), once);
+    }
+
+    /// Pinned rather than discovered later: the tooltip says so, and a test is
+    /// what stops it quietly becoming untrue.
+    #[test]
+    fn formatting_drops_comments() {
+        assert_eq!(reformat("# the app\nkind: Pod\n").unwrap(), "kind: Pod\n");
+    }
+
+    #[test]
+    fn invalid_yaml_is_named_as_such() {
+        let error = reformat("kind: Pod\n  bad indent: yes\n").unwrap_err();
+        assert!(error.starts_with("This is not valid YAML:"), "{error}");
+    }
 
     /// `Waiting` is never the useful word; the reason is.
     #[test]

@@ -888,3 +888,29 @@ M3 起详情面板就只能从 palette 的"Show or hide the details panel"关掉
 它继承了我终端里的完整 PATH。从 `env -i` 里调 `open` 才是真的 Finder 等价物：
 打补丁前复现出一模一样的报错，打补丁后连上并 discovered 111 kinds。教训是
 **从终端发起的任何"模拟 Finder"都要先确认它真的没继承环境**，这跟前面截图那个坑是同一类错误。
+
+### 补：YAML 面板的 Format（2026-09-24）
+
+YAML 面板是可编辑的，改完直接 SSA 提交。之前编辑过、粘贴过的内容长什么样就是什么样，
+而且**只有按了 Apply 才知道它能不能解析**。现在 Apply 旁边多了一个 Format：
+把编辑器里的内容重新解析、重新序列化一遍。
+
+它顺带解决第二件事 —— 用的是 `apply` 那条完全相同的解析路径，所以按一下就等于问
+"这玩意儿到底是不是合法 YAML"，不用往集群写一次才知道。实测一段坏缩进按 Format，
+面板直接给出 `This is not valid YAML: error: line 2 column 14: mapping values are not
+allowed in this context` 加一段带 caret 的定位，文本原封不动。
+
+**key 顺序不动。** 一开始写的测试断言它会按字母序排（因为 `serde_json::Value` 默认是
+BTreeMap），结果测试挂了：依赖树里 `gpui-pre` 打开了 `serde_json/preserve_order`，
+Value 其实是 IndexMap。这反而是对的行为 —— 一个悄悄把别人 manifest 重排成字母序的
+formatter 比没有 formatter 更糟。改的只有形状：flow style 展开成 block、缩进和引号统一。
+（面板加载出来的那份顺序又是另一回事：`metadata` 走的是 `ObjectMeta` 这个强类型结构体的
+字段顺序，`spec`/`status` 才是 `data` 里那个 IndexMap。这里没有细究，因为 Format 不动顺序，
+它是哪种顺序都不影响。）
+
+注释和空行不保留，因为 `serde_json::Value` 里没有它们的位置。这不是新增的损失 ——
+Apply 本来发出去的就是解析后的对象，解析丢掉的东西本来也到不了集群。tooltip 里写明了，
+并且有一个测试把这个行为钉住，免得哪天悄悄变了。
+
+4 个单测：flow 展开且保持顺序、幂等、丢注释、非法 YAML 的报错前缀。按钮本身没有被真的
+点过（老问题），验的是 listener 里那一行往后的全部。

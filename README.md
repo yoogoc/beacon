@@ -14,9 +14,11 @@ installed this morning lists correctly this afternoon. Selecting a row opens a
 detail panel with Overview, YAML, Events and (for pods) Logs. Objects can be
 deleted, restarted, scaled and applied — and Beacon asks the cluster what you
 are allowed to do before it offers, so an action that would be refused is
-greyed out with the reason rather than failing with a 403. Editing the YAML
-applies it with Server-Side Apply; when another field manager owns what you
-changed, the refusal names the fields and their owner.
+greyed out with the reason rather than failing with a 403. The YAML pane has a
+Format button that rewrites what you typed — which also answers whether it
+parses at all, without writing to the cluster to find out. Editing it applies
+with Server-Side Apply; when another field manager owns what you changed, the
+refusal names the fields and their owner.
 
 Pods also get logs, a one-shot command runner and an interactive shell. Ports
 forward to localhost and keep running while you work elsewhere. CPU and memory
