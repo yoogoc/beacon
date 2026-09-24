@@ -850,3 +850,14 @@ kind 了。在 `render_body` 里临时打了一行 log 才确认：render 一直
 - tab 不能拖拽重排，关掉的 tab 不能撤销，tab 太多时也没有滚动或溢出菜单
   （`TabBar` 支持 `track_scroll` 和 `menu`，还没接）。
 - tab 集合不持久化：重启回到 kubeconfig 的 current-context 一个 tab。
+
+### 补：详情面板的关闭按钮（2026-09-24）
+
+M3 起详情面板就只能从 palette 的"Show or hide the details panel"关掉，鼠标根本够不着 ——
+`DetailClosed` 在 `ClusterView` 里有订阅者，却**没有任何地方 emit 它**，另一半一直没写。
+现在 tab 条右端有一个 `×`，`on_click` 就是 `cx.emit(DetailClosed)`。
+
+实测：打开面板（Overview/YAML/Events/Logs/Exec/Shell 六个 tab 加一个 `×`），
+走 emit 那条路之后面板消失、表格恢复整高，状态栏的 watch 数从 3 掉回 2 ——
+面板的 events watch 确实被释放了，不是只把它藏起来。按钮本身仍然没有被真的点过
+（输入自动化依旧不可用），验的是 listener 里那一行 emit 之后发生的全部事情。

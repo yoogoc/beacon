@@ -498,26 +498,41 @@ impl DetailView {
                     ),
             )
             .child(
-                h_flex().gap_2().items_center().child(
-                    TabBar::new("detail-tabs")
-                        .selected_index(
-                            self.tabs
-                                .iter()
-                                .position(|tab| *tab == self.tab)
-                                .unwrap_or(0),
-                        )
-                        .children(
-                            self.tabs
-                                .iter()
-                                .map(|tab| Tab::new().child(tab.label()))
-                                .collect::<Vec<_>>(),
-                        )
-                        .on_click(cx.listener(|view, index: &usize, window, cx| {
-                            if let Some(tab) = view.tabs.get(*index).copied() {
-                                view.select(tab, window, cx);
-                            }
-                        })),
-                ),
+                h_flex()
+                    .gap_2()
+                    .items_center()
+                    .child(
+                        TabBar::new("detail-tabs")
+                            .selected_index(
+                                self.tabs
+                                    .iter()
+                                    .position(|tab| *tab == self.tab)
+                                    .unwrap_or(0),
+                            )
+                            .children(
+                                self.tabs
+                                    .iter()
+                                    .map(|tab| Tab::new().child(tab.label()))
+                                    .collect::<Vec<_>>(),
+                            )
+                            .on_click(cx.listener(|view, index: &usize, window, cx| {
+                                if let Some(tab) = view.tabs.get(*index).copied() {
+                                    view.select(tab, window, cx);
+                                }
+                            })),
+                    )
+                    // The panel has been closable from the palette since M3 and
+                    // reachable by mouse not at all: `DetailClosed` had a
+                    // subscriber in ClusterView and nothing that emitted it. This
+                    // is the other half.
+                    .child(
+                        Button::new("close-detail")
+                            .xsmall()
+                            .ghost()
+                            .label("×")
+                            .tooltip("Close the details panel")
+                            .on_click(cx.listener(|_, _, _, cx| cx.emit(DetailClosed))),
+                    ),
             )
     }
 
