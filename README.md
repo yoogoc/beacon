@@ -59,10 +59,13 @@ A cluster opens on the namespace its kubeconfig context names, or on `default`
 when it names none — the same fallback `kubectl` uses, and a great deal less
 than every namespace of a busy cluster.
 
-The picker in the toolbar takes **several at once**: tick as many as you want,
-or tick "All namespaces". Unticking the last one lands on all of them rather
-than on nothing. `#` in the palette is still the fuzzy way to jump to exactly
-one; the picker is the way to hold several.
+The picker in the toolbar has two click targets per row, and the difference
+between them is the whole design: **the tick box adds and removes, the name
+picks that one and nothing else** and closes the menu. Multi-select is what
+you get for reaching for a checkbox, so the ordinary case — one namespace,
+chosen by name — stays a single click. Unticking the last one lands on all of
+them rather than on nothing. Everywhere else, `#` in the palette included, is
+single-select as it always was.
 
 Several namespaces are several watches, not one cluster-wide watch filtered
 down. That costs a connection each, and buys the thing multi-select is mostly

@@ -972,3 +972,29 @@ preflight 降级成"假定允许"——这正是它以前在"所有 namespace"�
 
 按钮和 checkbox 本身没有被真的点过（老问题），验的是 `toggle_namespace` / `set_namespace`
 往后的全部，以及 popover 强制打开后的渲染。
+
+### 补：namespace picker 的两处修正（2026-09-24）
+
+**一、列表显示不全。** namespace 一多，菜单里只看得到前面一截，也滚不动。原因是
+flexbox 的**自动最小尺寸**：flex 子项的 min-height 默认是 auto，也就是内容高度，
+而它**优先级高于 max-height**。所以那个 `max_h(360)` 的滚动容器根本没被限制住，
+撑到内容那么高、被菜单裁掉，也就没有"溢出"可滚。修法是加 `min_h_0()`
+（对应 CSS 的 `min-height: 0`），让它可以被压到 max 以下，溢出才真正成立。
+
+实测（临时塞 50 个合成 namespace，共 61 个）：菜单封顶在 420px，`ScrollHandle`
+报 `max_offset = 1579.5px`——容器确实知道下面还有 1579 像素的内容；
+把 offset 程序化设到 -260 之后截图，列表停在 `synthetic-namespace-03` 一带，
+说明后面的条目够得着。
+
+**二、点名字应该是单选。** 之前整行都是一个 `Checkbox`，点哪都是"加一个"。
+现在一行两个点击目标：**左边的方框加减，右边的名字只选它一个并关掉菜单**。
+多选是"伸手去点勾选框"换来的，所以最常见的那件事——选一个 namespace——回到单击。
+palette 的 `#` 本来就是单选，没有变。
+
+为了"选完就关"，popover 的开关改成受控的（`namespace_menu_open` + `on_open_change`）。
+确认过这条路是通的：`gpui-base` 里 `on_open_change` 只在用户操作触发的
+`toggle_open`（`announce = true`）时回调，程序化的 `sync_open` 不回调，所以不会自激；
+点空白处关闭走的是 `dismiss → toggle_open`，同样会回调，标志位跟得上。
+
+没验的还是那件事：两个点击目标本身没有被真的点过，验的是它们各自调用的
+`toggle_namespace` / `set_namespace` 往后的全部，以及强制打开后的渲染与滚动。

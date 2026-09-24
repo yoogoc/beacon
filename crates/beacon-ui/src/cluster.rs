@@ -105,6 +105,9 @@ pub struct ClusterView {
     /// namespace disappeared while the user was looking at it is exactly the
     /// kind of thing a client should notice.
     namespaces: ResourceStore,
+    /// Whether the namespace menu is open. Controlled rather than left to the
+    /// popover, because picking one namespace has to close it.
+    namespace_menu_open: bool,
     /// The names the picker offers, sorted. Recomputed from the store only
     /// when it actually changed, so a label edit on some namespace does not
     /// rebuild the menu under the user's cursor.
@@ -192,6 +195,7 @@ impl ClusterView {
             // thousands of rows nobody asked for.
             scoped_to: BTreeSet::from([namespace.unwrap_or_else(|| DEFAULT_NAMESPACE.to_string())]),
             namespaces: ResourceStore::new(),
+            namespace_menu_open: false,
             namespace_names: Vec::new(),
             sidebar_search,
             sidebar_query: String::new(),
@@ -1218,12 +1222,39 @@ impl ClusterView {
     /// There is no search box in here. The list scrolls, and `#` in the
     /// palette is the fuzzy way to jump to one namespace; this is the way to
     /// tick several.
+    /// The namespace picker.
+    ///
+    /// Two click targets per row, and the difference between them is the whole
+    /// design: **the tick box adds and removes, the name picks that one and
+    /// nothing else**. Multi-select is what you get for reaching for a
+    /// checkbox, so the ordinary case -- one namespace, chosen by name --
+    /// stays a single click that also closes the menu. Everywhere else,
+    /// including `#` in the palette, is single-select as it always was.
+    ///
+    /// Not a `Select`: that component picks one of a list, and this has to do
+    /// both. The contents are built with an `App` rather than this view's
+    /// `Context`, so the handlers go back through a weak handle -- which also
+    /// stops an open menu from keeping a closed tab's view alive.
+    ///
+    /// There is no search box. The list scrolls, and `#` in the palette is the
+    /// fuzzy way to find one by name.
     fn render_namespace_picker(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let view = cx.entity().downgrade();
         let selected = self.scoped_to.clone();
         let names = self.namespace_names.clone();
 
+        let toggling = view.clone();
+        let opening = view.clone();
+
         Popover::new("namespace-picker")
+            .open(self.namespace_menu_open)
+            .on_open_change(move |open, _, cx| {
+                let open = *open;
+                let _ = opening.update(cx, |view, cx| {
+                    view.namespace_menu_open = open;
+                    cx.notify();
+                });
+            })
             .trigger(
                 Button::new("namespace-picker-trigger")
                     .small()
@@ -1231,41 +1262,94 @@ impl ClusterView {
                     .label(self.scope_label())
                     .tooltip("Which namespaces the table shows"),
             )
-            .content(move |_, _, _| {
+            .content(move |_, _, cx| {
                 let everything = selected.is_empty();
-                let all = {
-                    let view = view.clone();
-                    Checkbox::new("ns-all")
-                        .label(ALL_NAMESPACES)
-                        .checked(everything)
-                        .on_click(move |_, window, cx| {
-                            let _ = view.update(cx, |view, cx| {
-                                view.set_namespace(None, window, cx);
-                            });
-                        })
-                };
+                let muted = cx.theme().muted_foreground;
 
                 let rows = names.iter().map(|name| {
-                    let view = view.clone();
+                    let ticked = selected.contains(name.as_ref());
+
+                    let box_view = toggling.clone();
                     let toggled = name.clone();
-                    Checkbox::new(SharedString::from(format!("ns-{name}")))
-                        .label(name.clone())
-                        .checked(selected.contains(name.as_ref()))
+                    let tick = Checkbox::new(SharedString::from(format!("ns-tick-{name}")))
+                        .checked(ticked)
+                        .tooltip("Add or remove this namespace")
                         .on_click(move |_, window, cx| {
                             let toggled = toggled.to_string();
-                            let _ = view.update(cx, |view, cx| {
+                            let _ = box_view.update(cx, |view, cx| {
                                 view.toggle_namespace(&toggled, window, cx);
                             });
-                        })
+                        });
+
+                    let name_view = toggling.clone();
+                    let only = name.clone();
+                    let label = div()
+                        .id(SharedString::from(format!("ns-only-{name}")))
+                        .flex_1()
+                        .truncate()
+                        .cursor_pointer()
+                        .child(name.clone())
+                        .on_click(move |_, window, cx| {
+                            let only = only.to_string();
+                            let _ = name_view.update(cx, |view, cx| {
+                                view.set_namespace(Some(only), window, cx);
+                                view.namespace_menu_open = false;
+                                cx.notify();
+                            });
+                        });
+
+                    h_flex()
+                        .w_full()
+                        .gap_2()
+                        .items_center()
+                        .child(tick)
+                        .child(label)
                 });
 
-                v_flex().w(px(240.)).gap_1p5().child(all).child(
-                    div()
-                        .id("namespace-list")
-                        .max_h(px(360.))
-                        .overflow_y_scroll()
-                        .child(v_flex().gap_1p5().children(rows)),
-                )
+                let all_view = toggling.clone();
+                let all = div()
+                    .id("ns-all")
+                    .w_full()
+                    .cursor_pointer()
+                    .font_weight(if everything {
+                        FontWeight::MEDIUM
+                    } else {
+                        FontWeight::NORMAL
+                    })
+                    .child(ALL_NAMESPACES)
+                    .on_click(move |_, window, cx| {
+                        let _ = all_view.update(cx, |view, cx| {
+                            view.set_namespace(None, window, cx);
+                            view.namespace_menu_open = false;
+                            cx.notify();
+                        });
+                    });
+
+                v_flex()
+                    .w(px(260.))
+                    // Bounded *and* allowed to shrink. A flex child's automatic
+                    // minimum size is its content, which beats `max_h` -- so
+                    // without `min_h_0` a long list ignores the cap, grows past
+                    // the menu and is simply clipped, with no way to scroll to
+                    // the rest of it.
+                    .min_h_0()
+                    .max_h(px(420.))
+                    .gap_1()
+                    .child(all)
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(muted)
+                            .child("Tick to add, click a name for just that one"),
+                    )
+                    .child(
+                        div()
+                            .id("namespace-list")
+                            .min_h_0()
+                            .flex_1()
+                            .overflow_y_scroll()
+                            .child(v_flex().gap_1p5().children(rows)),
+                    )
             })
     }
 
