@@ -932,3 +932,43 @@ M3 记的那条"开不了"到期了：`tree-sitter` 0.26.13 已经发布，**pin
 但既然 0.6.4 就够，就不动它 —— 升级 gpui 仍然是它自己的一件事。
 
 实测：详情面板的 YAML tab 现在 key 和字符串分色，行号槽多了折叠箭头。229 个测试照过。
+
+### 补：namespace 多选，默认 default（2026-09-24）
+
+**默认变了**：以前不指定就是"所有 namespace"，现在 context 没写 namespace 时落在
+`default` —— 跟 kubectl 的回退一致，也比一上来就把整个集群刷出来合理。
+
+**选择从 `Option<String>` 变成 `BTreeSet<String>`**，空集 = 所有 namespace。
+工具栏的 picker 从 `Select` 换成 `Popover` + 一列 `Checkbox`：`Select` 的语义是从列表里
+选一个，而这里要的是选几个。取消掉最后一个会落回"所有"，而不是落进一个只能是空的表格。
+
+**几个 namespace 就是几个 watch**，不是"cluster-wide watch 之后本地过滤"。多花的是每个
+namespace 一条连接，换来的是多选这个功能主要服务的那批人：RBAC 只授到 namespace 的用户，
+cluster-wide 的 LIST 会被直接拒绝。registry 本来就有引用计数，所以两个 tab 选了重叠的
+namespace 只有一份 watch。
+
+**`Delta::Reset` 是这里唯一真正棘手的地方。** 它的语义是"全部替换"——一个 watch 喂一张表时
+完全正确，几个 watch 喂同一张表时完全错误：第二个 namespace 列完会把第一个的行抹掉。
+解法是在表这一层把 Reset **收窄到它来自的那个 namespace**：先删掉表里属于该 namespace 的
+键，再插入快照，其余不动。cluster-wide 那条路径保持原样（只有一个 watch，Reset 就是它字面的
+意思）。两个单测钉住这两种情况。
+
+顺带：**Namespace 列的出现条件**从"没有 scope"改成"scope 不等于恰好一个"——
+一旦行可能来自多个 namespace，这一列就有意义了。
+
+**权限预检仍然只按一个 namespace 问。** 选了多个时退回 cluster-wide 请求，
+preflight 降级成"假定允许"——这正是它以前在"所有 namespace"下的行为，没有回退。
+真要做对，rules 得按对象所在的 namespace 查，那是另一件事。Helm 列表同理。
+
+### 真机验证
+
+本地 k3s，`kubectl` 的数字作对照：default 1 个 pod、argo 15、argocd 7、全集群 39。
+
+- 启动落在 `{default}`，表里 1 行 —— 默认值确认；
+- 勾上 argo → 16 行；再勾上 argocd → 23 行，按钮显示 "3 namespaces"，Namespace 列出现，
+  `active_watches` = 4（namespaces + 3 个 pod watch）；
+- 取消勾掉 default（当时是唯一一个）→ 落到所有 namespace，39 行；
+- popover 里 "All namespaces" 加每个 namespace 各一个 checkbox，勾选状态正确。
+
+按钮和 checkbox 本身没有被真的点过（老问题），验的是 `toggle_namespace` / `set_namespace`
+往后的全部，以及 popover 强制打开后的渲染。

@@ -53,6 +53,22 @@ Age clock and the ten-second metrics poll, which are a repaint and a request
 that nobody is looking at. Closing a tab drops its watches; the session stays,
 so opening that cluster again does not reconnect.
 
+## Namespaces
+
+A cluster opens on the namespace its kubeconfig context names, or on `default`
+when it names none — the same fallback `kubectl` uses, and a great deal less
+than every namespace of a busy cluster.
+
+The picker in the toolbar takes **several at once**: tick as many as you want,
+or tick "All namespaces". Unticking the last one lands on all of them rather
+than on nothing. `#` in the palette is still the fuzzy way to jump to exactly
+one; the picker is the way to hold several.
+
+Several namespaces are several watches, not one cluster-wide watch filtered
+down. That costs a connection each, and buys the thing multi-select is mostly
+for: a cluster-wide list is refused outright for anyone whose RBAC is
+namespaced, which is exactly the person picking namespaces by hand.
+
 ## The command palette
 
 `⌘K` (`Ctrl+K` off macOS). A prefix decides what the list is, so there is no
@@ -61,7 +77,7 @@ mode to be in and nothing to remember being in:
 ```
 (nothing)   objects of the kind on screen
 @           resource kinds, including CRDs
-#           namespaces
+#           namespaces — scopes to exactly that one
 ctx         clusters — its tab, or a new one
 >           commands, including the tab ones
 ```

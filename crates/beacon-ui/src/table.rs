@@ -13,7 +13,7 @@
 use beacon_columns::{
     Cell, CellValue, ColumnDef, ColumnSet, ColumnSource, ColumnWidth, Timestamp, Usage,
 };
-use beacon_kube::{DeltaBatch, DynamicObject, Metrics, ObjectRef, ResourceStore};
+use beacon_kube::{Delta, DeltaBatch, DynamicObject, Metrics, ObjectRef, ResourceStore};
 use gpui_kit::component::table::{Column, ColumnSort, TableDelegate, TableState};
 use gpui_kit::component::{ActiveTheme as _, h_flex};
 use gpui_kit::*;
@@ -101,6 +101,42 @@ impl ResourceTable {
         if self.store.apply_batch(batch) {
             self.reindex();
         }
+    }
+
+    /// Applies a batch that came from the watch on one namespace.
+    ///
+    /// `Delta::Reset` means "replace everything", which is exactly right when
+    /// one watch owns the table and exactly wrong when several do: the second
+    /// namespace to finish listing would wipe the first. So a Reset is
+    /// narrowed to the namespace it came from -- remove what the table holds
+    /// for that namespace, then add the snapshot -- and the other namespaces
+    /// are left alone.
+    pub fn apply_from(&mut self, namespace: Option<&str>, batch: DeltaBatch) {
+        let Some(namespace) = namespace else {
+            // A cluster-wide watch is the only one feeding the table, so
+            // Reset can keep meaning what it says.
+            self.apply(batch);
+            return;
+        };
+
+        let mut expanded = Vec::with_capacity(batch.len());
+        for delta in batch {
+            match delta {
+                Delta::Reset(objects) => {
+                    let stale: Vec<ObjectRef> = self
+                        .store
+                        .iter()
+                        .filter(|(key, _)| key.namespace.as_deref() == Some(namespace))
+                        .map(|(key, _)| key.clone())
+                        .collect();
+                    expanded.extend(stale.into_iter().map(Delta::Remove));
+                    expanded.extend(objects.into_iter().map(Delta::Upsert));
+                }
+                delta => expanded.push(delta),
+            }
+        }
+
+        self.apply(expanded);
     }
 
     /// Narrows the table to the rows matching a query.
@@ -520,6 +556,52 @@ mod tests {
         let mut table = ResourceTable::new(ColumnSet::for_kind("", "Pod", true));
         table.apply(vec![Delta::Reset((0..count).map(pod).collect())]);
         table
+    }
+
+    fn named(namespace: &str, name: &str) -> Arc<DynamicObject> {
+        let mut object = DynamicObject::new(name, &resources::pod())
+            .within(namespace)
+            .data(serde_json::json!({ "spec": { "containers": [{}] } }));
+        object.metadata.resource_version = Some("1".into());
+        Arc::new(object)
+    }
+
+    /// Two namespaces watched at once, each listing in its own time. The
+    /// second one's initial Reset must not take the first one's rows with it.
+    #[test]
+    fn one_namespaces_reset_leaves_the_others_alone() {
+        let mut table = ResourceTable::new(ColumnSet::for_kind("", "Pod", true));
+
+        table.apply_from(
+            Some("alpha"),
+            vec![Delta::Reset(vec![named("alpha", "one")])],
+        );
+        table.apply_from(Some("beta"), vec![Delta::Reset(vec![named("beta", "two")])]);
+
+        assert_eq!(table.total(), 2, "both namespaces are still in the table");
+
+        // A re-list of one namespace -- a watch desync, say -- replaces that
+        // namespace and nothing else.
+        table.apply_from(
+            Some("alpha"),
+            vec![Delta::Reset(vec![named("alpha", "three")])],
+        );
+
+        let names: Vec<&str> = table.rows.iter().map(|row| row.name.as_str()).collect();
+        assert_eq!(names, vec!["three", "two"]);
+    }
+
+    /// The cluster-wide watch is the only one feeding the table, so its Reset
+    /// keeps meaning "replace everything".
+    #[test]
+    fn a_cluster_wide_reset_replaces_the_table() {
+        let mut table = ResourceTable::new(ColumnSet::for_kind("", "Pod", true));
+
+        table.apply_from(None, vec![Delta::Reset(vec![named("alpha", "one")])]);
+        table.apply_from(None, vec![Delta::Reset(vec![named("beta", "two")])]);
+
+        let names: Vec<&str> = table.rows.iter().map(|row| row.name.as_str()).collect();
+        assert_eq!(names, vec!["two"]);
     }
 
     /// The natural order is what `kubectl get -A` prints: namespace, then name.

@@ -8,7 +8,7 @@
 //! are. Nothing here knows what a Pod is: picking a kind in the sidebar changes
 //! a `WatchKey` and a `ColumnSet`, and everything else follows.
 
-use std::{sync::Arc, time::Duration};
+use std::{collections::BTreeSet, sync::Arc, time::Duration};
 
 use beacon_columns::ColumnSet;
 use beacon_kube::{
@@ -16,12 +16,13 @@ use beacon_kube::{
     Rules, WatchKey, resources,
 };
 use gpui_kit::component::button::{Button, ButtonVariants as _};
+use gpui_kit::component::checkbox::Checkbox;
 use gpui_kit::component::input::{Input, InputEvent, InputState};
+use gpui_kit::component::popover::Popover;
 use gpui_kit::component::resizable::{ResizableState, resizable_panel, v_resizable};
-use gpui_kit::component::select::{SearchableVec, Select, SelectEvent, SelectState};
 use gpui_kit::component::sidebar::{Sidebar, SidebarGroup, SidebarMenu, SidebarMenuItem};
 use gpui_kit::component::table::{TableEvent, TableState};
-use gpui_kit::component::{ActiveTheme as _, IndexPath, Sizable as _, h_flex, v_flex};
+use gpui_kit::component::{ActiveTheme as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::*;
 use nucleo_matcher::Matcher;
 
@@ -36,6 +37,10 @@ use crate::theme::{BeaconTheme as _, Tone};
 /// The namespace picker's entry for "do not scope at all". A namespace cannot
 /// contain a space, so this can never collide with a real one.
 const ALL_NAMESPACES: &str = "All namespaces";
+
+/// Where a cluster opens when its context does not name a namespace. The same
+/// one `kubectl` falls back to.
+const DEFAULT_NAMESPACE: &str = "default";
 
 /// How often the Age column is repainted. Ages are relative, so a table that
 /// nothing is changing still has to advance.
@@ -93,17 +98,17 @@ pub struct ClusterView {
     kind: Option<Arc<Kind>>,
     matcher: Matcher,
 
-    /// `None` means every namespace.
-    namespace: Option<String>,
+    /// The namespaces on screen. Empty means every namespace, which is the
+    /// one case that is a single cluster-wide watch rather than a watch each.
+    scoped_to: BTreeSet<String>,
     /// The namespaces that exist, kept live by its own watch. Whether a
     /// namespace disappeared while the user was looking at it is exactly the
     /// kind of thing a client should notice.
     namespaces: ResourceStore,
-    /// The picker's current items. Kept so that a namespace merely changing --
-    /// a label edit, a status update -- does not rebuild the menu, which would
-    /// wipe whatever the user had typed into its search box.
+    /// The names the picker offers, sorted. Recomputed from the store only
+    /// when it actually changed, so a label edit on some namespace does not
+    /// rebuild the menu under the user's cursor.
     namespace_names: Vec<SharedString>,
-    namespace_picker: Entity<SelectState<SearchableVec<SharedString>>>,
 
     sidebar_search: Entity<InputState>,
     sidebar_query: String,
@@ -138,7 +143,8 @@ pub struct ClusterView {
     // Dropping any of these stops the work behind it.
     _health: Task<()>,
     _namespaces: Task<()>,
-    _objects: Task<()>,
+    /// One per watched namespace -- see [`Self::watch_scopes`].
+    _objects: Vec<Task<()>>,
     _columns: Option<Task<()>>,
     _operation: Option<Task<()>>,
     _rules: Option<Task<()>>,
@@ -158,16 +164,6 @@ impl ClusterView {
     ) -> Self {
         let catalog = Catalog::new(session.discovery().kinds());
         let kind = catalog.default_kind();
-
-        let namespace_picker = cx.new(|cx| {
-            SelectState::new(
-                SearchableVec::new(vec![SharedString::from(ALL_NAMESPACES)]),
-                Some(IndexPath::default()),
-                window,
-                cx,
-            )
-            .searchable(true)
-        });
 
         let sidebar_search = cx.new(|cx| {
             InputState::new(window, cx)
@@ -191,10 +187,12 @@ impl ClusterView {
             catalog,
             kind: None,
             matcher: crate::catalog::matcher(),
-            namespace,
+            // kubectl falls back to `default` when the context does not name
+            // a namespace, and opening on every namespace of a busy cluster is
+            // thousands of rows nobody asked for.
+            scoped_to: BTreeSet::from([namespace.unwrap_or_else(|| DEFAULT_NAMESPACE.to_string())]),
             namespaces: ResourceStore::new(),
-            namespace_names: vec![SharedString::from(ALL_NAMESPACES)],
-            namespace_picker,
+            namespace_names: Vec::new(),
             sidebar_search,
             sidebar_query: String::new(),
             row_search,
@@ -209,7 +207,7 @@ impl ClusterView {
             visible: true,
             _health: Task::ready(()),
             _namespaces: Task::ready(()),
-            _objects: Task::ready(()),
+            _objects: Vec::new(),
             _columns: None,
             _operation: None,
             _rules: None,
@@ -396,7 +394,7 @@ impl ClusterView {
     fn load_releases(&mut self, window: &Window, cx: &mut Context<Self>) {
         self.releases = Releases::Loading;
         let session = self.session.clone();
-        let namespace = self.namespace.clone();
+        let namespace = self.only_namespace();
         let listing = Bridge::global(cx).run(async move { session.helm_releases(namespace).await });
 
         self._releases = Some(cx.spawn_in(window, async move |this, cx| {
@@ -509,9 +507,14 @@ impl ClusterView {
     }
 
     /// Asks what this user may do in the namespace now on screen.
+    ///
+    /// One namespace only. With several on screen the answer would have to be
+    /// per object rather than per view, and until it is, this asks
+    /// cluster-wide and the preflight degrades to "assume allowed" -- the same
+    /// thing it has always done for "All namespaces".
     fn load_rules(&mut self, window: &Window, cx: &mut Context<Self>) {
         let session = self.session.clone();
-        let namespace = self.namespace.clone();
+        let namespace = self.only_namespace();
         self.rules = None;
 
         let asking = Bridge::global(cx).run(async move { session.rules(namespace).await });
@@ -537,15 +540,40 @@ impl ClusterView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.namespace == namespace {
+        let scope = match namespace {
+            Some(namespace) => BTreeSet::from([namespace]),
+            None => BTreeSet::new(),
+        };
+        self.rescope(scope, window, cx);
+    }
+
+    /// Adds or removes one namespace, leaving the rest of the selection alone.
+    ///
+    /// Unticking the last one lands on every namespace rather than on nothing:
+    /// a table that can only be empty is not a state worth being able to reach.
+    pub fn toggle_namespace(
+        &mut self,
+        namespace: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let mut scope = self.scoped_to.clone();
+        if !scope.remove(namespace) {
+            scope.insert(namespace.to_string());
+        }
+        self.rescope(scope, window, cx);
+    }
+
+    /// Points the view at a set of namespaces. Empty is every namespace.
+    fn rescope(&mut self, scope: BTreeSet<String>, window: &mut Window, cx: &mut Context<Self>) {
+        if self.scoped_to == scope {
             return;
         }
-        tracing::info!(namespace = ?namespace, "scoping to namespace");
-        self.namespace = namespace;
-        self.refresh_namespace_picker(window, cx);
+        tracing::info!(namespaces = ?scope, "scoping");
+        self.scoped_to = scope;
         self.watch_objects(window, cx);
         self.load_columns(window, cx);
-        // Permissions are per namespace, so the answer for the last one says
+        // Permissions are per namespace, so the answer for the last scope says
         // nothing about this one.
         self.load_rules(window, cx);
         cx.notify();
@@ -699,21 +727,31 @@ impl ClusterView {
             cx.notify();
         });
 
-        let key = WatchKey::all(kind.resource.clone()).in_namespace(self.scope(&kind));
-        let subscription = self.session.subscribe(key);
+        // Replaced wholesale: dropping the old tasks drops the old
+        // subscriptions, which is what releases watches on namespaces that are
+        // no longer on screen.
+        self._objects = self
+            .watch_scopes(&kind)
+            .into_iter()
+            .map(|namespace| {
+                let key = WatchKey::all(kind.resource.clone()).in_namespace(namespace.clone());
+                let subscription = self.session.subscribe(key);
 
-        self._objects = drain_into(
-            cx,
-            subscription,
-            |view, batch, _window, cx| {
-                view.table.update(cx, |state, cx| {
-                    state.delegate_mut().apply(batch);
-                    cx.notify();
-                });
-                view.refresh_detail(cx);
-            },
-            window,
-        );
+                drain_into(
+                    cx,
+                    subscription,
+                    move |view, batch, _window, cx| {
+                        let namespace = namespace.clone();
+                        view.table.update(cx, |state, cx| {
+                            state.delegate_mut().apply_from(namespace.as_deref(), batch);
+                            cx.notify();
+                        });
+                        view.refresh_detail(cx);
+                    },
+                    window,
+                )
+            })
+            .collect();
     }
 
     /// Asks the cluster for the kind's own printer columns, and applies them if
@@ -753,15 +791,40 @@ impl ClusterView {
     /// The namespace to watch in: none at all for a cluster-scoped kind, which
     /// is also what stops its table growing a Namespace column it can never
     /// fill.
-    fn scope(&self, kind: &Kind) -> Option<String> {
-        self.namespace.clone().filter(|_| kind.namespaced)
+    /// The watches one kind needs, one entry each.
+    ///
+    /// `None` is a cluster-wide watch, and is the only option for a
+    /// cluster-scoped kind. Several namespaces are several watches rather than
+    /// one cluster-wide watch filtered down, because multi-select exists
+    /// largely for people whose RBAC is namespaced: a cluster-wide list would
+    /// be refused outright for exactly those users.
+    fn watch_scopes(&self, kind: &Kind) -> Vec<Option<String>> {
+        if !kind.namespaced || self.scoped_to.is_empty() {
+            return vec![None];
+        }
+        self.scoped_to.iter().cloned().map(Some).collect()
+    }
+
+    /// The one namespace everything is scoped to, if there is exactly one.
+    ///
+    /// The requests that take a single namespace -- the permission preflight,
+    /// the Helm listing -- use this and fall back to cluster-wide, which is
+    /// what they already did for "All namespaces".
+    fn only_namespace(&self) -> Option<String> {
+        match self.scoped_to.len() {
+            1 => self.scoped_to.iter().next().cloned(),
+            _ => None,
+        }
     }
 
     fn columns(&self, kind: &Kind, printer_columns: Option<&serde_json::Value>) -> ColumnSet {
+        // The Namespace column earns its place as soon as the rows can come
+        // from more than one.
+        let mixed = kind.namespaced && self.scoped_to.len() != 1;
         ColumnSet::resolve(
             &kind.resource.group,
             &kind.resource.kind,
-            kind.namespaced && self.scope(kind).is_none(),
+            mixed,
             printer_columns,
         )
     }
@@ -794,9 +857,8 @@ impl ClusterView {
         self._namespaces = drain_into(
             cx,
             subscription,
-            |view, batch, window, cx| {
-                if view.namespaces.apply_batch(batch) {
-                    view.refresh_namespace_picker(window, cx);
+            |view, batch, _window, cx| {
+                if view.namespaces.apply_batch(batch) && view.refresh_namespace_names() {
                     cx.notify();
                 }
             },
@@ -858,19 +920,6 @@ impl ClusterView {
     }
 
     fn listen(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let namespace_picker = cx.subscribe_in(
-            &self.namespace_picker.clone(),
-            window,
-            |view, _, event: &SelectEvent<SearchableVec<SharedString>>, window, cx| {
-                let SelectEvent::Confirm(selected) = event;
-                let namespace = match selected.as_deref() {
-                    None | Some(ALL_NAMESPACES) => None,
-                    Some(namespace) => Some(namespace.to_string()),
-                };
-                view.set_namespace(namespace, window, cx);
-            },
-        );
-
         let table = cx.subscribe_in(
             &self.table.clone(),
             window,
@@ -910,33 +959,27 @@ impl ClusterView {
             },
         );
 
-        self._subscriptions = vec![namespace_picker, sidebar_search, row_search, table];
+        self._subscriptions = vec![sidebar_search, row_search, table];
     }
 
-    fn refresh_namespace_picker(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    /// Keeps the picker's list in step with the namespaces the cluster has.
+    ///
+    /// Returns whether it changed, so that a namespace merely being updated --
+    /// a label edit, a status tick -- does not repaint a menu the user has
+    /// open.
+    fn refresh_namespace_names(&mut self) -> bool {
         let mut names: Vec<SharedString> = self
             .namespaces
             .iter()
             .map(|(key, _)| SharedString::from(key.name.clone()))
             .collect();
         names.sort();
-        names.insert(0, SharedString::from(ALL_NAMESPACES));
 
         if names == self.namespace_names {
-            return;
+            return false;
         }
-        self.namespace_names = names.clone();
-
-        let selected = self
-            .namespace
-            .clone()
-            .map(SharedString::from)
-            .unwrap_or_else(|| SharedString::from(ALL_NAMESPACES));
-
-        self.namespace_picker.update(cx, |picker, cx| {
-            picker.set_items(SearchableVec::new(names), window, cx);
-            picker.set_selected_value(&selected, window, cx);
-        });
+        self.namespace_names = names;
+        true
     }
 
     // MARK: rendering
@@ -1155,6 +1198,77 @@ impl ClusterView {
             .into_any_element()
     }
 
+    /// What the picker's button says.
+    fn scope_label(&self) -> SharedString {
+        match self.scoped_to.len() {
+            0 => SharedString::from(ALL_NAMESPACES),
+            1 => SharedString::from(self.scoped_to.iter().next().cloned().unwrap_or_default()),
+            many => SharedString::from(format!("{many} namespaces")),
+        }
+    }
+
+    /// The namespace picker: a checkbox per namespace, and one for "all".
+    ///
+    /// Not a `Select`: that component picks one of a list, and the point here
+    /// is several. The popover builds its contents on every render with an
+    /// `App` rather than this view's `Context`, so the handlers go back
+    /// through a weak handle -- which also stops an open popover from keeping
+    /// a closed tab's view alive.
+    ///
+    /// There is no search box in here. The list scrolls, and `#` in the
+    /// palette is the fuzzy way to jump to one namespace; this is the way to
+    /// tick several.
+    fn render_namespace_picker(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let view = cx.entity().downgrade();
+        let selected = self.scoped_to.clone();
+        let names = self.namespace_names.clone();
+
+        Popover::new("namespace-picker")
+            .trigger(
+                Button::new("namespace-picker-trigger")
+                    .small()
+                    .outline()
+                    .label(self.scope_label())
+                    .tooltip("Which namespaces the table shows"),
+            )
+            .content(move |_, _, _| {
+                let everything = selected.is_empty();
+                let all = {
+                    let view = view.clone();
+                    Checkbox::new("ns-all")
+                        .label(ALL_NAMESPACES)
+                        .checked(everything)
+                        .on_click(move |_, window, cx| {
+                            let _ = view.update(cx, |view, cx| {
+                                view.set_namespace(None, window, cx);
+                            });
+                        })
+                };
+
+                let rows = names.iter().map(|name| {
+                    let view = view.clone();
+                    let toggled = name.clone();
+                    Checkbox::new(SharedString::from(format!("ns-{name}")))
+                        .label(name.clone())
+                        .checked(selected.contains(name.as_ref()))
+                        .on_click(move |_, window, cx| {
+                            let toggled = toggled.to_string();
+                            let _ = view.update(cx, |view, cx| {
+                                view.toggle_namespace(&toggled, window, cx);
+                            });
+                        })
+                });
+
+                v_flex().w(px(240.)).gap_1p5().child(all).child(
+                    div()
+                        .id("namespace-list")
+                        .max_h(px(360.))
+                        .overflow_y_scroll()
+                        .child(v_flex().gap_1p5().children(rows)),
+                )
+            })
+    }
+
     fn render_toolbar(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let (shown, total) = self.counts(cx);
         let title = match self.mode {
@@ -1230,14 +1344,12 @@ impl ClusterView {
                             .w(px(220.))
                             .child(Input::new(&self.row_search).small()),
                     )
-                    .children(self.kind.as_ref().filter(|kind| kind.namespaced).map(|_| {
-                        Select::new(&self.namespace_picker)
-                            .small()
-                            .menu_width(px(280.))
-                            .menu_max_h(px(420.))
-                            .search_placeholder("Filter namespaces")
-                            .accessibility_label("Namespace")
-                    })),
+                    .children(
+                        self.kind
+                            .as_ref()
+                            .filter(|kind| kind.namespaced)
+                            .map(|_| self.render_namespace_picker(cx)),
+                    ),
             )
     }
 }
