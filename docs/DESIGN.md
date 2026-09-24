@@ -558,9 +558,10 @@ macOS 上 `./target/debug/beacon` 能开窗并正确读出 kubeconfig。
 
 1. **用 `v_resizable` 而不是 `DockArea`**（§6.1）。现在只有一个底部面板要排，DockArea 的可序列化多面板布局
    等到真有多个面板（M5 的终端、port-forward 列表）再上。分栏位置已经跨"关掉再打开"保留。
-2. **YAML 没有语法高亮**。gpui-component 0.6.4 的 `tree-sitter-yaml` feature 依赖一个
-   **还没发布的 `tree-sitter` 版本**（要 0.26.13，crates.io 上最新 0.26.12），开不了。
+2. **YAML 当时没有语法高亮**。gpui-component 0.6.4 的 `tree-sitter-yaml` feature 依赖一个
+   **当时还没发布的 `tree-sitter` 版本**（要 0.26.13，crates.io 上最新 0.26.12），开不了。
    代码照样 `.language("yaml")`——未知语言会退化成纯文本而不是 panic——所以将来打开 feature 是改一行。
+   （2026-09-24 已补上：0.26.13 发布了，确实只改了一行，见文末。）
 3. **Overview 不是"按 Pod 强类型渲染"那么细**（§6.4 说的探针/QoS/挂载）。现在是：元数据 + Pod 的容器
    （镜像、状态、重启次数）+ `status` 的标量字段拍平一层。最后一条是通用的，Deployment 的副本数、
    Service 的 clusterIP、PVC 的 phase 都能看见，性价比比逐个 kind 写渲染器高得多。
@@ -914,3 +915,20 @@ Apply 本来发出去的就是解析后的对象，解析丢掉的东西本来�
 
 4 个单测：flow 展开且保持顺序、幂等、丢注释、非法 YAML 的报错前缀。按钮本身没有被真的
 点过（老问题），验的是 listener 里那一行往后的全部。
+
+### 补：YAML 语法高亮（2026-09-24）
+
+M3 记的那条"开不了"到期了：`tree-sitter` 0.26.13 已经发布，**pin 着的 gpui-kit 0.6.4
+直接就能解析**，不用升 gpui。改动就是 workspace Cargo.toml 的一行 feature，
+代码一个字没动 —— M3 当时留的 `.language("yaml")` 现在开始有意义了。
+
+有一个小插曲值得记：同一天早些时候试过一次，cargo 报
+`candidate versions found which didn't match: 0.26.12`，于是判断"仍然开不了"。
+那是**本地 crates.io index 缓存陈旧**，不是事实。后来 `cargo metadata` 自己
+`Updating crates.io index` 之后就解析到 0.26.13 了。教训：cargo 说某个版本不存在时，
+先确认索引是不是刚更新过 —— 一个只走缓存的命令给出的"不存在"不能当结论。
+
+也顺带确认了不需要走另一条路：gpui-kit 已经有 0.6.6，升上去也能解析（实测编译通过），
+但既然 0.6.4 就够，就不动它 —— 升级 gpui 仍然是它自己的一件事。
+
+实测：详情面板的 YAML tab 现在 key 和字符串分色，行号槽多了折叠箭头。229 个测试照过。

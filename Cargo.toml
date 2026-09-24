@@ -18,11 +18,11 @@ beacon-ui = { path = "crates/beacon-ui" }
 # gpui-component and the default icon assets, so the UI lists one dependency.
 # GPUI's API still moves between patch releases -- keep this pinned and treat
 # an upgrade as its own task.
-# The `tree-sitter-yaml` feature would syntax-highlight the YAML pane, but at
-# 0.6.4 it resolves to a `tree-sitter` version that is not published yet. The
-# pane asks for the `yaml` language regardless: an unknown language falls back
-# to plain text, so turning the feature on later is a one-line change here.
-gpui-kit = "=0.6.4"
+# `tree-sitter-yaml` syntax-highlights the YAML pane. It was off until now
+# only because it needs `tree-sitter` 0.26.13, which crates.io did not have;
+# it does now, so the pinned 0.6.4 resolves it and the `.language("yaml")` the
+# pane already asked for finally means something.
+gpui-kit = { version = "=0.6.4", features = ["tree-sitter-yaml"] }
 
 # Kubernetes. Default features already give us client + rustls-tls + ring;
 # rustls matters because it keeps the three CI targets free of an OpenSSL

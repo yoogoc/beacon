@@ -14,11 +14,11 @@ installed this morning lists correctly this afternoon. Selecting a row opens a
 detail panel with Overview, YAML, Events and (for pods) Logs. Objects can be
 deleted, restarted, scaled and applied — and Beacon asks the cluster what you
 are allowed to do before it offers, so an action that would be refused is
-greyed out with the reason rather than failing with a 403. The YAML pane has a
-Format button that rewrites what you typed — which also answers whether it
-parses at all, without writing to the cluster to find out. Editing it applies
-with Server-Side Apply; when another field manager owns what you changed, the
-refusal names the fields and their owner.
+greyed out with the reason rather than failing with a 403. The YAML is
+syntax-highlighted and has a Format button that rewrites what you typed —
+which also answers whether it parses at all, without writing to the cluster to
+find out. Editing it applies with Server-Side Apply; when another field
+manager owns what you changed, the refusal names the fields and their owner.
 
 Pods also get logs, a one-shot command runner and an interactive shell. Ports
 forward to localhost and keep running while you work elsewhere. CPU and memory
@@ -167,7 +167,8 @@ events, and one render per event would stall the frame loop for seconds.
 
 - `gpui-kit` bundles GPUI, `gpui-base`, `gpui-component` and the icon assets as
   one pinned dependency. It is pinned exactly (`=0.6.4`): the API still moves
-  between patch releases, so upgrading is its own task, not a side effect.
+  between patch releases, so upgrading is its own task, not a side effect. Its
+  `tree-sitter-yaml` feature is what highlights the YAML pane.
 - `k8s-openapi` 0.28 models timestamps with [jiff](https://docs.rs/jiff), not
   chrono.
 - `kube`'s `http-proxy` feature is on deliberately. kube reads `HTTPS_PROXY`
