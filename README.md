@@ -24,6 +24,33 @@ come from metrics-server, Helm releases are read straight out of the cluster,
 and every cluster you connect to stays connected. See
 [docs/DESIGN.md](docs/DESIGN.md) for the architecture and the milestone plan.
 
+## Tabs
+
+A tab is one view into one cluster, and several tabs can point at the same
+cluster — so "Pods here, Deployments over there, and another cluster beside
+them" is three tabs rather than three windows. Each tab keeps its own kind,
+namespace, filter, selection and detail panel.
+
+```
+⌘T          another tab on the cluster in front
+⌘W          close this tab
+ctrl-Tab    next tab, ctrl-shift-Tab the previous one
+```
+
+`⌘` is `Ctrl` off macOS. The picker in the title bar changes what *this* tab
+shows; `ctx` in the palette goes to a cluster, opening a tab only when none is
+on it. Two tabs on one cluster are something to ask for with `⌘T`, not
+something to get by picking the same cluster twice.
+
+The connection is not per tab. A `ClusterSession` — client, discovery cache,
+permission cache, port forwards — is keyed by cluster and shared, and the watch
+registry refcounts, so two tabs on the same cluster and kind are one watch. A
+background tab keeps watching: that is what makes coming back to it instant,
+and it is the reason to have the tab at all. What it stops is the one-second
+Age clock and the ten-second metrics poll, which are a repaint and a request
+that nobody is looking at. Closing a tab drops its watches; the session stays,
+so opening that cluster again does not reconnect.
+
 ## The command palette
 
 `⌘K` (`Ctrl+K` off macOS). A prefix decides what the list is, so there is no
@@ -33,8 +60,8 @@ mode to be in and nothing to remember being in:
 (nothing)   objects of the kind on screen
 @           resource kinds, including CRDs
 #           namespaces
-ctx         clusters
->           commands
+ctx         clusters — its tab, or a new one
+>           commands, including the tab ones
 ```
 
 Matching is fuzzy within a section: `@dep` finds Deployment, `#kube-sys` finds

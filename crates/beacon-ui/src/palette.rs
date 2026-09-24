@@ -12,7 +12,7 @@
 //! (nothing)   objects of the kind currently on screen
 //! @           resource kinds, including CRDs
 //! #           namespaces
-//! ctx         clusters
+//! ctx         clusters -- focuses that cluster's tab, or opens one
 //! >           commands
 //! ```
 //!
@@ -81,7 +81,7 @@ impl Section {
             },
             Self::Kinds => "Jump to a resource kind".to_string(),
             Self::Namespaces => "Scope to a namespace".to_string(),
-            Self::Clusters => "Switch cluster".to_string(),
+            Self::Clusters => "Go to a cluster".to_string(),
             Self::Commands => "Run a command".to_string(),
         }
     }
@@ -100,6 +100,8 @@ impl Section {
 /// Something the palette can do that is not navigation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Action {
+    NewTab,
+    CloseTab,
     ToggleTheme,
     ToggleDetails,
     ClearFilter,
@@ -107,7 +109,9 @@ pub enum Action {
 }
 
 impl Action {
-    const ALL: [Self; 4] = [
+    const ALL: [Self; 6] = [
+        Self::NewTab,
+        Self::CloseTab,
         Self::ToggleTheme,
         Self::ToggleDetails,
         Self::ClearFilter,
@@ -116,6 +120,8 @@ impl Action {
 
     fn label(&self) -> &'static str {
         match self {
+            Self::NewTab => "Open another tab on this cluster",
+            Self::CloseTab => "Close this tab",
             Self::ToggleTheme => "Toggle light and dark",
             Self::ToggleDetails => "Show or hide the details panel",
             Self::ClearFilter => "Clear the search filter",

@@ -775,3 +775,78 @@ API server 写列表键用 `containers[name="app"]` 这种语法，`beacon-colum
 - `.deb` 的 depends **没有在干净的 Debian 上装过**。
 - 两个 arm64 runner label（`ubuntu-24.04-arm` / `windows-11-arm`）在本机无从验证；
   拿不到 runner 时的失败长得很像构建失败。
+
+---
+
+## 附：多标签页实现记录（2026-09-24）
+
+### 落地的东西
+
+- `BeaconApp` 从"一个 `Connection`"变成 `Vec<Tab>` + `active`。一个 tab 是
+  **一个集群的一个视图**，自己的 kind、namespace、过滤、选中行和详情面板都在
+  `ClusterView` 里，所以"这边看 Pod，那边看另一个集群的 Deployment"是两个 tab。
+- tab 栏用 `gpui_kit::component::tab::{TabBar, Tab}`，每个 tab 一个 `×`，右端一个 `+`。
+- 新增按键：`⌘T` 开一个同集群的 tab、`⌘W` 关、`ctrl-tab` / `ctrl-shift-tab` 前后切。
+  palette 的 `>` 里也加了这两条命令。
+- **标题栏的 picker 和 palette 的 `ctx` 现在是两件事**：picker 换*这个* tab 指向的集群，
+  `ctx` 是"去那个集群"——有 tab 就切过去，没有才新开。同一个集群开两个 tab 要显式按 `⌘T`，
+  不会因为重复选同一个集群而莫名多出来。
+
+### 连接不跟着 tab 走
+
+`ClusterSession`（client、discovery 缓存、权限缓存、端口转发）按集群存在
+`BeaconApp::sessions` 里共享，**关掉 tab 不会关掉 session**——重连才是慢的那一步。
+watch 反过来：它属于 view，关 tab 就停。
+
+这两条加上 registry 本来就有的引用计数，意味着同一个集群的两个 tab 看同一个 kind 时
+只有一个 watch。实测：default + k3s-mirror 三个 tab（其中两个在 k3s-mirror 上，
+分别看 Pod 和 Deployment），状态栏是 `3 watches · 3 tabs · 2 clusters` ——
+3 = namespaces + Pod + Deployment，两个 tab 各自起的 namespaces watch 合并成了一个。
+
+### 后台 tab 保留 watch，停掉两个定时器
+
+§0.3 说"只 watch 正在看的东西"。有了 tab 之后这条的边界变了：**后台 tab 继续 watch**，
+因为那正是 tab 存在的意义——切回去是即时且正确的，而不是重新 LIST 一遍再等一会儿。
+用户现在显式控制着这个集合，关掉 tab 就停。
+
+停掉的是两个**纯粹为了重画**的定时器：Age 列那个 1 秒的 clock，和 10 秒一次的 metrics 轮询
+（后者是实打实的一个请求，而且没人在看答案）。这就是 `ClusterView::set_visible` 的全部内容。
+
+### tab 标签：kind 在前，集群在后
+
+第一版是 `集群 · kind`，实测立刻暴露问题：kubeconfig 里那些 EKS ARN 长到把 kind 整个挤掉，
+三个 tab 全都显示 `arn:aws:eks:us-east-1:…`，等于什么都没说。现在 kind 放在 `prefix`
+（不参与收缩），集群名做 label（超了就省略号）——`Pod · default` 和
+`Service · local-k3s-with-a…` 至少能分清谁是谁。集群全名在标题栏和状态栏里都有。
+
+### 真机验证
+
+只有 `default` 这一个本地 k3s 是能碰的，kubeconfig 里其余全是别人的生产集群。为了真正验到
+**多集群**而不是只验多 tab，把 `default` 这个 context 复制成了一份临时 kubeconfig，
+里面三个名字（`default` / `k3s-mirror` / 一个故意很长的名字）都指向同一台本地 k3s，
+用 `KUBECONFIG=` 指过去跑——三个**不同的 ClusterId**，也就是三个真的 session。
+用户的 kubeconfig 一个字没动。
+
+验到的：三个 tab 分别停在 Pod / Deployment / Service；切回 tab 0 时列表、侧边栏选中项都还在；
+关掉中间那个之后剩两个、active 落回正确的位置；`⌘T` 那条路径（`new_tab`）确实走
+"reusing the session"；palette 里 `>tab` 列出两条新命令。全部截了图。
+
+### 踩到的坑
+
+**截图截到的是过期的一帧。** 前几次截图一直显示 "Connecting"，而日志明明已经连上并且换过
+kind 了。在 `render_body` 里临时打了一行 log 才确认：render 一直在跑、状态是对的，
+`screencapture -l` 对一个**从来没被激活过、且被终端挡住**的窗口返回的是缓存的旧画面。
+之前几个里程碑没撞上，是因为那时是 `open -n Beacon.app` 启动的——`open` 会把 app 激活。
+修法是截图前先 `osascript` 把进程提到前台。这个坑值得记：它看起来完全像一个 UI 不刷新的 bug。
+
+### 明确没做 / 没验的
+
+- **按键仍然没有真的按过**（输入自动化工具依旧不可用）。`⌘T`/`⌘W`/`ctrl-tab` 是
+  `on_action` 接到 `new_tab`/`close`/`step` 上的，这三个函数本身是程序化调用并截图验过的；
+  没验的是 GPUI 把 keystroke 派发到 action 的那几行。
+- **没有连过第二个真实的远端集群**。多集群这一条是用三个指向同一台本地 k3s 的 context 验的：
+  ClusterId、session、discovery、watch 都是各自独立的真货，但"两个不同 API server"
+  这件事本身没验。
+- tab 不能拖拽重排，关掉的 tab 不能撤销，tab 太多时也没有滚动或溢出菜单
+  （`TabBar` 支持 `track_scroll` 和 `menu`，还没接）。
+- tab 集合不持久化：重启回到 kubeconfig 的 current-context 一个 tab。

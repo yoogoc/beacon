@@ -128,6 +128,13 @@ pub struct ClusterView {
     mode: Mode,
     releases: Releases,
 
+    /// Whether this view's tab is the one on screen.
+    ///
+    /// A hidden tab keeps its watches -- that is what makes coming back to it
+    /// instant, and what a tab is for -- but stops the two timers that exist
+    /// only to repaint: see [`Self::set_visible`].
+    visible: bool,
+
     // Dropping any of these stops the work behind it.
     _health: Task<()>,
     _namespaces: Task<()>,
@@ -199,6 +206,7 @@ impl ClusterView {
             outcome: None,
             mode: Mode::Objects,
             releases: Releases::Unopened,
+            visible: true,
             _health: Task::ready(()),
             _namespaces: Task::ready(()),
             _objects: Task::ready(()),
@@ -233,6 +241,42 @@ impl ClusterView {
 
     pub fn health(&self) -> &Health {
         &self.health
+    }
+
+    /// What this view is showing, for its tab's label.
+    pub fn title(&self) -> SharedString {
+        match self.mode {
+            Mode::Objects => match &self.kind {
+                Some(kind) => SharedString::from(kind.resource.kind.clone()),
+                None => SharedString::from("Objects"),
+            },
+            mode => SharedString::from(mode.label()),
+        }
+    }
+
+    /// Tells the view whether its tab is the one on screen.
+    ///
+    /// The watches keep running either way. They are the expensive thing to
+    /// rebuild and the reason a background tab is worth keeping at all -- and
+    /// because the registry refcounts them, two tabs on the same cluster and
+    /// kind share one. What stops is the pair of timers that only exist to
+    /// repaint: the one-second clock behind the Age column, and the
+    /// ten-second metrics poll, which is a request to the cluster that nobody
+    /// is looking at the answer to.
+    pub fn set_visible(&mut self, visible: bool, window: &mut Window, cx: &mut Context<Self>) {
+        if self.visible == visible {
+            return;
+        }
+        self.visible = visible;
+
+        if visible {
+            self.start_clock(cx);
+            self.watch_metrics(window, cx);
+        } else {
+            self._clock = Task::ready(());
+            self._metrics = Task::ready(());
+        }
+        cx.notify();
     }
 
     /// What the table is showing, and out of how many.
