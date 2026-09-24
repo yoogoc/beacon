@@ -861,3 +861,30 @@ M3 起详情面板就只能从 palette 的"Show or hide the details panel"关掉
 走 emit 那条路之后面板消失、表格恢复整高，状态栏的 watch 数从 3 掉回 2 ——
 面板的 events watch 确实被释放了，不是只把它藏起来。按钮本身仍然没有被真的点过
 （输入自动化依旧不可用），验的是 listener 里那一行 emit 之后发生的全部事情。
+
+### 补：从 Finder 启动时连不上 EKS（2026-09-24）
+
+**症状**：从终端 `cargo run` 一切正常，双击 app 打开就连不上 EKS ——
+`auth error: unable to run auth exec: No such file or directory`。
+
+**原因**：`shell_env` 问的是 `$SHELL -lc`，而 **`zsh -lc` 不读 `.zshrc`**。
+它只读 `.zshenv` / `.zprofile` / `.zlogin`，偏偏 `brew shellenv`、mise、asdf、nvm、pnpm、krew
+基本都装在 `.zshrc` 里。EKS 的 kubeconfig 是 `command: aws` 且没有 `env:`，
+`aws` 在 `/opt/homebrew/bin`，于是找不到。
+
+**这个 bug 为什么一直没被发现**：在终端里验 `zsh -lc 'echo $PATH'` 看起来完全正常 ——
+终端自己的交互式 shell 早就把那些目录放进 PATH 了，子进程直接继承，`-lc` 只是原样传下去。
+只有在**什么都没得继承**的时候差异才出现，而那正是这个模块存在的唯一理由。
+
+**修法**：改成**交互式 + 登录** shell（`-i -l -c`），并用一个 marker 把答案包起来 ——
+交互式 rc 文件可能往 stdout 打任何东西（banner、更新提示），所以取两个 marker 之间那段，
+其余全丢掉。退出码故意不检查：交互式 shell 因为 rc 文件最后一条命令而非零退出很常见，
+只要 marker 在，中间那段就是答案。`-l -c` 作为回退保留，而且是双重有用的：拒绝 `-i` 的 shell
+会立刻失败、不花时间；而慢到超时的 `.zshrc`，回退恰恰不读它。超时从 3s 提到 5s
+（本机交互式 ~0.5s，但带 nvm/conda 的 profile 动辄好几秒），每次尝试各一份预算。
+
+**验证时差点被 `open` 骗了。** 第一次用 `open -n Beacon.app` 测，**没打补丁也能连上**，
+差点得出"Finder 启动其实没问题"的结论。实际是 **`open` 会把调用者的环境传给被启动的 app** ——
+它继承了我终端里的完整 PATH。从 `env -i` 里调 `open` 才是真的 Finder 等价物：
+打补丁前复现出一模一样的报错，打补丁后连上并 discovered 111 kinds。教训是
+**从终端发起的任何"模拟 Finder"都要先确认它真的没继承环境**，这跟前面截图那个坑是同一类错误。
