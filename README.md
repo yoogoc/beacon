@@ -53,6 +53,17 @@ Age clock and the ten-second metrics poll, which are a repaint and a request
 that nobody is looking at. Closing a tab drops its watches; the session stays,
 so opening that cluster again does not reconnect.
 
+## Waiting
+
+A table being filled shows the skeleton rows, not an empty grid: "nothing
+here" and "not here yet" should not look the same. The first batch from any
+watched namespace ends it, so rows appear as they arrive rather than all at
+once — and so does the session going Degraded, because a watch that cannot
+start never sends a first batch and the placeholder would otherwise spin for
+as long as the app is open. Everything else that waits — connecting, fetching
+an object, looking for events, reading Helm releases — says so with a
+spinner.
+
 ## Namespaces
 
 A cluster opens on the namespace its kubeconfig context names, or on `default`

@@ -21,6 +21,7 @@ use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::component::popover::Popover;
 use gpui_kit::component::resizable::{ResizableState, resizable_panel, v_resizable};
 use gpui_kit::component::sidebar::{Sidebar, SidebarGroup, SidebarMenu, SidebarMenuItem};
+use gpui_kit::component::spinner::Spinner;
 use gpui_kit::component::table::{TableEvent, TableState};
 use gpui_kit::component::{ActiveTheme as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::*;
@@ -747,6 +748,11 @@ impl ClusterView {
                     move |view, batch, _window, cx| {
                         let namespace = namespace.clone();
                         view.table.update(cx, |state, cx| {
+                            // The first batch from *any* of the namespaces ends
+                            // the skeleton, rather than waiting for all of
+                            // them: rows that have arrived are worth more on
+                            // screen than behind a placeholder.
+                            state.delegate_mut().finish_loading();
                             state.delegate_mut().apply_from(namespace.as_deref(), batch);
                             cx.notify();
                         });
@@ -842,6 +848,18 @@ impl ClusterView {
                 let current = health.borrow_and_update().clone();
                 let updated = this.update(cx, |view, cx| {
                     if view.health != current {
+                        // A watch that cannot start never sends a first batch,
+                        // so the skeleton would spin for as long as the app is
+                        // open. Degraded health is that news arriving by
+                        // another route: stop waiting, show the empty table,
+                        // and let the status bar say why.
+                        if matches!(current, Health::Degraded { .. }) {
+                            view.table.update(cx, |state, cx| {
+                                if state.delegate_mut().finish_loading() {
+                                    cx.notify();
+                                }
+                            });
+                        }
                         view.health = current;
                         cx.notify();
                     }
@@ -1064,7 +1082,7 @@ impl ClusterView {
 
     fn render_releases(&self, cx: &mut Context<Self>) -> AnyElement {
         let rows: AnyElement = match &self.releases {
-            Releases::Unopened | Releases::Loading => self.notice("Reading releases…", cx),
+            Releases::Unopened | Releases::Loading => self.waiting("Reading releases…", cx),
             Releases::Failed(error) => self.notice(error.clone(), cx),
             Releases::Ready(releases) if releases.is_empty() => {
                 self.notice("No Helm releases in this scope.", cx)
@@ -1187,6 +1205,27 @@ impl ClusterView {
                             )
                     })),
             )
+            .into_any_element()
+    }
+
+    /// A notice for something that has not finished yet. Same shape as
+    /// [`Self::notice`] with a spinner, because static text cannot say whether
+    /// anything is still happening.
+    fn waiting(&self, message: impl Into<SharedString>, cx: &mut Context<Self>) -> AnyElement {
+        h_flex()
+            .size_full()
+            .p_6()
+            .gap_2()
+            .items_center()
+            .justify_center()
+            .text_sm()
+            .text_color(cx.theme().tone(Tone::Progressing))
+            .child(
+                Spinner::new()
+                    .small()
+                    .color(cx.theme().tone(Tone::Progressing)),
+            )
+            .child(message.into())
             .into_any_element()
     }
 
@@ -1369,6 +1408,9 @@ impl ClusterView {
         // their own rows -- showing the pod count above a list of Helm
         // releases is worse than showing nothing.
         let count = match self.mode {
+            // A count of zero beside a skeleton is a number that is not true
+            // yet.
+            Mode::Objects if self.table.read(cx).delegate().is_loading() => String::new(),
             Mode::Objects if shown == total => total.to_string(),
             Mode::Objects => format!("{shown} of {total}"),
             Mode::Releases => match &self.releases {

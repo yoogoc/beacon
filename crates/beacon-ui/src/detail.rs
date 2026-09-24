@@ -16,6 +16,7 @@ use beacon_kube::{
 };
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::{Editor, EditorState, Input, InputState};
+use gpui_kit::component::spinner::Spinner;
 use gpui_kit::component::tab::{Tab, TabBar};
 use gpui_kit::component::{ActiveTheme as _, Disableable as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
@@ -1254,13 +1255,22 @@ impl DetailView {
         tone: Tone,
         cx: &mut Context<Self>,
     ) -> AnyElement {
+        let waiting = tone == Tone::Progressing;
+
         h_flex()
             .size_full()
             .p_6()
+            .gap_2()
             .items_center()
             .justify_center()
             .text_sm()
             .text_color(cx.theme().tone(tone))
+            // A Progressing notice is by definition a wait, and a line of
+            // static text is the one thing that cannot say whether anything is
+            // still happening.
+            .when(waiting, |this| {
+                this.child(Spinner::new().small().color(cx.theme().tone(tone)))
+            })
             .child(message.into())
             .into_any_element()
     }

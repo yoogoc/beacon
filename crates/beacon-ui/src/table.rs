@@ -46,6 +46,12 @@ pub struct ResourceTable {
     /// What "now" means for the whole frame, so that every Age in a render
     /// agrees and so that tests can pin it.
     now: Timestamp,
+    /// Whether the first list is still on its way.
+    ///
+    /// An empty table and a table that has not been filled yet look identical,
+    /// and the difference matters: one means "this kind has nothing in it" and
+    /// the other means "wait".
+    loading: bool,
     /// CPU and memory, refreshed on its own timer. Empty on a cluster with no
     /// metrics-server, which the columns render as `<none>`.
     metrics: Metrics,
@@ -73,7 +79,18 @@ impl ResourceTable {
             matcher: crate::catalog::matcher(),
             now: Timestamp::now(),
             metrics: Metrics::default(),
+            loading: false,
         }
+    }
+
+    /// Whether the first list is still on its way.
+    pub fn is_loading(&self) -> bool {
+        self.loading
+    }
+
+    /// Says the first list has arrived. Returns whether that was news.
+    pub fn finish_loading(&mut self) -> bool {
+        std::mem::replace(&mut self.loading, false)
     }
 
     /// Replaces the usage figures. Returns whether anything changed, so a
@@ -204,6 +221,9 @@ impl ResourceTable {
         self.store = ResourceStore::new();
         self.rows.clear();
         self.sort = Sort::Natural;
+        // Every reset is followed by a new subscription, so from here until
+        // that watch says something the table is waiting rather than empty.
+        self.loading = true;
     }
 
     /// Swaps the columns without disturbing the rows.
@@ -396,6 +416,13 @@ impl SortKey {
 impl TableDelegate for ResourceTable {
     fn columns_count(&self, _: &App) -> usize {
         self.columns.len()
+    }
+
+    /// Draws the component's skeleton rows instead of an empty table. The
+    /// alternative is an empty grid that reads as "nothing here" for as long
+    /// as the first list takes.
+    fn loading(&self, _: &App) -> bool {
+        self.loading
     }
 
     fn rows_count(&self, _: &App) -> usize {

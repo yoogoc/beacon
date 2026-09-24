@@ -16,6 +16,7 @@ use std::{collections::HashMap, sync::Arc};
 use beacon_kube::{ClusterId, ClusterSession, config::Contexts};
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::select::{SearchableVec, Select, SelectEvent, SelectState};
+use gpui_kit::component::spinner::Spinner;
 use gpui_kit::component::tab::{Tab as TabItem, TabBar};
 use gpui_kit::component::{ActiveTheme as _, IndexPath, Sizable as _, TitleBar, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
@@ -716,13 +717,21 @@ impl BeaconApp {
             .gap_3()
             .p_8()
             .child(
-                div()
+                h_flex()
                     .px_3()
                     .py_1()
+                    .gap_2()
+                    .items_center()
                     .rounded_md()
                     .bg(cx.theme().tone_surface(tone))
                     .text_color(cx.theme().tone(tone))
                     .text_sm()
+                    // Connecting can take a few seconds against a cloud API
+                    // server, and a static line cannot say whether it is still
+                    // trying or has quietly given up.
+                    .when(tone == Tone::Progressing, |this| {
+                        this.child(Spinner::new().small().color(cx.theme().tone(tone)))
+                    })
                     .child(headline),
             )
             .child(
