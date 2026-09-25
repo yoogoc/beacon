@@ -385,6 +385,17 @@ impl DetailView {
         }));
     }
 
+    /// Whether the shell inside this panel is what has focus.
+    ///
+    /// Escape belongs to a terminal while the terminal is being typed into --
+    /// a shell that swallowed it would be no shell at all -- so this is the
+    /// one case where closing the panel is the wrong thing to do.
+    pub fn shell_has_focus(&self, window: &Window, cx: &App) -> bool {
+        self.shell
+            .as_ref()
+            .is_some_and(|shell| shell.read(cx).focus_handle(cx).is_focused(window))
+    }
+
     /// Rewrites what is in the editor in the form the pane itself produces.
     ///
     /// Useful twice over. An edited or pasted manifest comes back with block

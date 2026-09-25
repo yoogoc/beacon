@@ -1025,3 +1025,34 @@ tone 为 `Progressing` 的 notice（取对象、找 events）、Helm 列表的"R
 
 实测：临时让 `finish_loading` 不生效，截到骨架屏（表头加五行灰块在闪）；
 临时给 Helm 请求加 30 秒延迟，截到"Reading releases…"前面的 spinner。插桩已删干净。
+
+### 补：Esc 关闭详情面板（2026-09-24）
+
+一个 `CloseDetail` action，绑在 Escape 上，handler 在 `ClusterView` 上。唯一需要想清楚的
+是**终端**：Shell tab 里 Escape 是给 shell 的（vim 用户每秒都在按），绝不能顺手把面板关掉。
+
+本来想用 key context 表达（binding 限定在 `ClusterView`，让 `BeaconTerminal` 把事件吃掉），
+写法更漂亮。**改成在 handler 里问面板"shell 是不是正被聚焦"**，理由是：前者依赖
+GPUI 的 context predicate 与 `stop_propagation` 的相互作用，而这恰恰是我**在这台机器上
+验不了**的那部分；后者是读代码就能确认的。押错的代价是有人正在 vim 里按 Esc、面板却没了。
+
+### 这次没验成，以及为什么值得写下来
+
+按键仍然按不了（老问题），于是试着用 `window.dispatch_keystroke` 程序化注入 —— **四个探针，
+四个都在说谎**，值得记下来免得下次重走：
+
+1. `dispatch_keystroke("escape")` 返回 `handled=false`，面板没关。
+2. 换成全局 binding（去掉 context），仍然 false。
+3. 换一个键（f8）绑同一个 action，仍然 false。
+4. **控制组**：`cmd-k` —— 手按明明能开 palette —— 通过同一条路注入，`handled` 也是 false，
+   截图确认 palette 没开。
+
+第 4 条说明**注入这条路本身就不通**，前三条什么也证明不了。后来用
+`window.is_action_available` 也一样：对已知能用的 `TogglePalette` 也返回 false。
+只有 `bindings_for_action` 区分出了东西（palette 1 条、CloseDetail 0 条），但它查的是
+`rendered_frame.context_stack`（一帧结束时的上下文栈），不是聚焦路径的栈，
+所以"0 条"也不能证明 binding 没接上 —— 它只是在说那个栈里没有 `ClusterView`。
+
+结论：**这条实现路径无法在本机验证**。所以选了不依赖不确定语义的那种写法，
+并且明确记下来：Esc 这条**没有被真的按过**。搜索框的 `clean_on_escape` 与它是否会同时生效，
+同样没验。

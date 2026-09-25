@@ -59,6 +59,13 @@ pub fn init(cx: &mut App) {
         // the same thing on all three platforms.
         KeyBinding::new("ctrl-tab", NextTab, None),
         KeyBinding::new("ctrl-shift-tab", PreviousTab, None),
+        // The one key here that is *not* global. Escape belongs to whatever
+        // has focus -- a shell, a search box -- and only reaches the cluster
+        // view when nothing nearer wanted it.
+        // Escape closes the detail panel. Bound without a context like the
+        // rest of these; which key events it should ignore is decided in the
+        // handler, where it can be read.
+        KeyBinding::new("escape", crate::cluster::CloseDetail, None),
     ]);
 }
 

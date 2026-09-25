@@ -39,7 +39,8 @@ namespace, filter, selection and detail panel.
 ctrl-Tab    next tab, ctrl-shift-Tab the previous one
 ```
 
-`⌘` is `Ctrl` off macOS. The picker in the title bar changes what *this* tab
+`Esc` closes the detail panel, except while the shell inside it has focus —
+there Escape belongs to the shell. `⌘` is `Ctrl` off macOS. The picker in the title bar changes what *this* tab
 shows; `ctx` in the palette goes to a cluster, opening a tab only when none is
 on it. Two tabs on one cluster are something to ask for with `⌘T`, not
 something to get by picking the same cluster twice.

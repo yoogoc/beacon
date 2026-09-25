@@ -35,6 +35,8 @@ use crate::prompt::{Ask, Prompt, PromptEvent};
 use crate::table::ResourceTable;
 use crate::theme::{BeaconTheme as _, Tone};
 
+gpui_kit::actions!(beacon, [CloseDetail]);
+
 /// The namespace picker's entry for "do not scope at all". A namespace cannot
 /// contain a space, so this can never collide with a real one.
 const ALL_NAMESPACES: &str = "All namespaces";
@@ -1524,6 +1526,27 @@ impl Render for ClusterView {
         h_flex()
             .size_full()
             .items_start()
+            // Escape closes the detail panel -- except while the shell has
+            // focus, where Escape is the shell's key and nothing else's.
+            //
+            // The guard is in the handler rather than in the key binding's
+            // context. A context predicate would be the tidier way to say it,
+            // but it is also the way I could not verify from here, and the
+            // cost of getting it wrong is Escape killing the panel out from
+            // under somebody in vim. Asking the panel directly is checkable by
+            // reading it.
+            .on_action(cx.listener(|view, _: &CloseDetail, window, cx| {
+                let in_shell = view
+                    .detail
+                    .as_ref()
+                    .is_some_and(|detail| detail.read(cx).shell_has_focus(window, cx));
+                if in_shell {
+                    return;
+                }
+                if view.detail.take().is_some() {
+                    cx.notify();
+                }
+            }))
             .child(self.render_sidebar(cx))
             .child(
                 v_flex()
