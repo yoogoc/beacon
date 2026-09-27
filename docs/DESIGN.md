@@ -1036,7 +1036,7 @@ tone 为 `Progressing` 的 notice（取对象、找 events）、Helm 列表的"R
 GPUI 的 context predicate 与 `stop_propagation` 的相互作用，而这恰恰是我**在这台机器上
 验不了**的那部分；后者是读代码就能确认的。押错的代价是有人正在 vim 里按 Esc、面板却没了。
 
-### 这次没验成，以及为什么值得写下来
+### 这次没验成，以及为什么值得写下来（**下一条推翻了本节的结论**）
 
 按键仍然按不了（老问题），于是试着用 `window.dispatch_keystroke` 程序化注入 —— **四个探针，
 四个都在说谎**，值得记下来免得下次重走：
@@ -1056,3 +1056,47 @@ GPUI 的 context predicate 与 `stop_propagation` 的相互作用，而这恰恰
 结论：**这条实现路径无法在本机验证**。所以选了不依赖不确定语义的那种写法，
 并且明确记下来：Esc 这条**没有被真的按过**。搜索框的 `clean_on_escape` 与它是否会同时生效，
 同样没验。
+
+### 补：快捷键一个都没生效过，根因是没有任何东西被聚焦（2026-09-25）
+
+用户反馈"快捷键还是不生效"。查下来不是 Esc 一个键的问题 —— **这个应用里的键盘快捷键
+从来就没有生效过，⌘K 也一样**。
+
+GPUI 把按键沿着**从被聚焦节点向上到根**的路径派发。而 Beacon 里没有任何东西持有焦点：
+`TableState` 虽然有 focus handle，却**从不在自己的 render 里 `track_focus`**
+（gpui-component 里只有另一个组件 `DataTable` 这么做），所以点一行不会聚焦任何东西。
+没有被聚焦节点时，派发路径只有窗口根节点一个，而 `on_action` 都挂在内层 div 上 ——
+全都在路径之外，一个都不会触发。
+
+之所以一直没被发现：palette 在 M3 是用插桩打开并截图的，**从来没有人真的按过 ⌘K**。
+
+**修法两步。** 一是 `BeaconApp` 拿一个 focus handle，根节点 `track_focus`，
+窗口打开时聚焦它；二是把 `CloseDetail` 的 handler 从 `ClusterView` **挪到 `BeaconApp`**
+—— action 是往上走的，而 `ClusterView` 是被聚焦节点的**子**节点，不是祖先。
+ClusterView 只保留 `close_detail()` 这个方法（终端聚焦时不关的判断在里面），由上面转发。
+
+### 上一条记录错了，在此更正
+
+上一节写的是"注入这条路本身不通，探针在说谎"。**不对 —— 探针一直在说实话。**
+`cmd-k` 注入返回 `handled=false`，正是因为 ⌘K 真的没生效；我把一个正确的观测当成了
+工具故障，于是绕过它、凭设计推理提交了一个不工作的实现。
+
+教训很具体：**控制组返回"坏"的时候，第一反应不该是"工具坏了"，而是"被控制的那个东西
+可能真的坏了"。** 上一次截图那个坑是工具坏了，这一次长得很像，但恰恰相反。
+
+### 这次的真机验证
+
+同一个 `dispatch_keystroke` 探针，修完之后：
+
+| 场景 | 结果 |
+| --- | --- |
+| 修之前，焦点在表格 | escape `handled=false`，面板没关；**控制组 cmd-k 也是 false** |
+| 加根焦点之后 | cmd-k `handled=true`；escape 仍 false（handler 挂在子节点上） |
+| handler 上移之后 | escape `handled=true`，`open_after=false` —— 面板关了 |
+| 终端被聚焦时按 escape | `handled=false`，面板**没关** —— 正是要的行为 |
+| ⌘T | `handled=true`，日志出现 `reusing the session`，确实开了新 tab |
+
+顺带测到：终端被聚焦时 **⌘K 也被吃掉**（`handled=false`）。那是终端 `on_key_down` 里
+`stop_propagation` 的既有行为，不是这次引入的；也说明 `close_detail` 里那道
+"shell 是否聚焦"的判断实际上是第二道防线 —— 事件根本到不了它。保留它，因为它不依赖
+`stop_propagation` 将来继续存在。

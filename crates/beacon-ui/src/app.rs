@@ -29,7 +29,14 @@ use crate::theme::{BeaconTheme as _, Tone, toggle_mode};
 
 gpui_kit::actions!(
     beacon,
-    [TogglePalette, NewTab, CloseTab, NextTab, PreviousTab]
+    [
+        TogglePalette,
+        NewTab,
+        CloseTab,
+        NextTab,
+        PreviousTab,
+        CloseDetail
+    ]
 );
 
 /// How wide a tab is allowed to get before its label ellipsizes.
@@ -65,7 +72,7 @@ pub fn init(cx: &mut App) {
         // Escape closes the detail panel. Bound without a context like the
         // rest of these; which key events it should ignore is decided in the
         // handler, where it can be read.
-        KeyBinding::new("escape", crate::cluster::CloseDetail, None),
+        KeyBinding::new("escape", CloseDetail, None),
     ]);
 }
 
@@ -91,6 +98,16 @@ enum TabState {
 }
 
 pub struct BeaconApp {
+    /// The window's baseline focus.
+    ///
+    /// Without this nothing in Beacon is ever focused: `TableState` holds a
+    /// focus handle but never tracks it, so clicking a row focuses nothing,
+    /// and GPUI dispatches a keystroke down the path from the *focused* node.
+    /// With no focused node that path is the window root alone, every
+    /// `on_action` in this file and in ClusterView sits outside it, and not
+    /// one keyboard shortcut fires -- ⌘K included, which is why the palette
+    /// could only ever be opened from instrumentation.
+    focus: FocusHandle,
     contexts: Result<Contexts, String>,
     context_picker: Option<Entity<SelectState<SearchableVec<SharedString>>>>,
 
@@ -166,6 +183,7 @@ impl BeaconApp {
         );
 
         let mut this = Self {
+            focus: cx.focus_handle(),
             contexts,
             context_picker,
             sessions: HashMap::new(),
@@ -192,6 +210,11 @@ impl BeaconApp {
             )
             .detach();
         }
+
+        // Something has to hold focus before any binding can resolve. The
+        // root is the honest place for it: keys that mean the same thing
+        // wherever you are should work wherever you are.
+        this.focus.focus(window, cx);
 
         // Start on whatever `kubectl` would have used. Opening to an empty
         // window and making the user pick the context they already picked is
@@ -821,6 +844,7 @@ impl Render for BeaconApp {
         div()
             .relative()
             .size_full()
+            .track_focus(&self.focus)
             .bg(cx.theme().background)
             .text_color(cx.theme().foreground)
             .on_action(
@@ -834,6 +858,15 @@ impl Render for BeaconApp {
             .on_action(
                 cx.listener(|view, _: &PreviousTab, window, cx| view.step(false, window, cx)),
             )
+            // Handled here rather than in ClusterView, which is where it
+            // belongs and where it does not work: an action travels from the
+            // focused node *upwards*, and ClusterView is a child of the node
+            // that holds focus, not an ancestor of it.
+            .on_action(cx.listener(|view, _: &CloseDetail, window, cx| {
+                if let Some(cluster) = view.cluster() {
+                    cluster.update(cx, |cluster, cx| cluster.close_detail(window, cx));
+                }
+            }))
             .child(
                 v_flex()
                     .size_full()

@@ -40,7 +40,14 @@ ctrl-Tab    next tab, ctrl-shift-Tab the previous one
 ```
 
 `Esc` closes the detail panel, except while the shell inside it has focus —
-there Escape belongs to the shell. `⌘` is `Ctrl` off macOS. The picker in the title bar changes what *this* tab
+there Escape belongs to the shell, and the terminal swallows every key it is
+given, `⌘K` included. `⌘` is `Ctrl` off macOS.
+
+Keyboard shortcuts need something to be focused: GPUI dispatches a key along
+the path from the focused node upwards, so `BeaconApp` holds a focus handle
+on its root and takes focus when the window opens, and every `on_action` lives
+on that same root. An action handler on a child of it — `ClusterView`, say —
+is below the focused node and never runs. The picker in the title bar changes what *this* tab
 shows; `ctx` in the palette goes to a cluster, opening a tab only when none is
 on it. Two tabs on one cluster are something to ask for with `⌘T`, not
 something to get by picking the same cluster twice.
