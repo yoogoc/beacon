@@ -5,8 +5,8 @@
 //! replacing one entity with another rather than unwinding state by hand.
 //!
 //! The view is generic over resource kinds in the same way the layers under it
-//! are. Nothing here knows what a Pod is: picking a kind in the sidebar changes
-//! a `WatchKey` and a `ColumnSet`, and everything else follows.
+//! are. Nothing here knows what a Pod is: each view watches one selected kind,
+//! and the window opens another view when a sidebar resource is chosen.
 
 use std::{collections::BTreeSet, sync::Arc, time::Duration};
 
@@ -165,15 +165,26 @@ pub(crate) struct NavigationChanged;
 
 impl EventEmitter<NavigationChanged> for ClusterView {}
 
+/// A resource chosen in the sidebar needs its own tab in the window, with the
+/// same namespace scope as the tab from which it was opened.
+pub(crate) struct OpenResource {
+    pub kind: Arc<Kind>,
+    pub scope: BTreeSet<String>,
+}
+
+impl EventEmitter<OpenResource> for ClusterView {}
+
 impl ClusterView {
     pub fn new(
         session: Arc<ClusterSession>,
         namespace: Option<String>,
+        initial_kind: Option<Arc<Kind>>,
+        initial_scope: Option<BTreeSet<String>>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
         let catalog = Catalog::new(session.discovery().kinds());
-        let kind = catalog.default_kind();
+        let kind = initial_kind.or_else(|| catalog.default_kind());
 
         let sidebar_search = cx.new(|cx| {
             InputState::new(window, cx)
@@ -200,7 +211,9 @@ impl ClusterView {
             // kubectl falls back to `default` when the context does not name
             // a namespace, and opening on every namespace of a busy cluster is
             // thousands of rows nobody asked for.
-            scoped_to: BTreeSet::from([namespace.unwrap_or_else(|| DEFAULT_NAMESPACE.to_string())]),
+            scoped_to: initial_scope.unwrap_or_else(|| {
+                BTreeSet::from([namespace.unwrap_or_else(|| DEFAULT_NAMESPACE.to_string())])
+            }),
             namespaces: ResourceStore::new(),
             namespace_menu_open: false,
             namespace_names: Vec::new(),
@@ -540,9 +553,12 @@ impl ClusterView {
         }));
     }
 
-    /// Switches to a kind, as the sidebar or the palette asks.
-    pub fn show_kind(&mut self, kind: Arc<Kind>, window: &mut Window, cx: &mut Context<Self>) {
-        self.show(kind, window, cx);
+    /// Opens a kind in another tab, whether chosen in the sidebar or palette.
+    pub(crate) fn open_resource(&self, kind: Arc<Kind>, cx: &mut Context<Self>) {
+        cx.emit(OpenResource {
+            kind,
+            scope: self.scoped_to.clone(),
+        });
     }
 
     /// Scopes to a namespace, or to all of them with `None`.
@@ -1044,8 +1060,8 @@ impl ClusterView {
     }
 
     /// Resource navigation for the expanded cluster in the app's sidebar.
-    /// Each tab still owns its search and selected kind; only the chrome has
-    /// moved out of the tab's content area.
+    /// Each tab still owns its search and selected kind; selecting a resource
+    /// asks the window to open another tab.
     pub(crate) fn sidebar_items(&mut self, cx: &mut Context<Self>) -> Vec<SidebarMenuItem> {
         let current = self.kind.as_ref().map(|kind| kind.gvk());
 
@@ -1098,8 +1114,8 @@ impl ClusterView {
                             let selected = current.as_ref() == Some(&entry.kind.gvk());
                             let kind = entry.kind.clone();
                             SidebarMenuItem::new(entry.label).active(selected).on_click(
-                                cx.listener(move |view, _, window, cx| {
-                                    view.show(kind.clone(), window, cx);
+                                cx.listener(move |view, _, _, cx| {
+                                    view.open_resource(kind.clone(), cx)
                                 }),
                             )
                         }))

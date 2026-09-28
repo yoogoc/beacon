@@ -47,7 +47,9 @@ cluster — so "Pods here, Deployments over there, and another cluster beside
 them" is three tabs rather than three windows. Each tab keeps its own kind,
 namespace, filter, selection and detail panel. The cluster tree stays on the
 left of the tabs; selecting a cluster opens its existing tab or a new one, and
-the active cluster expands to show its resource navigation.
+the active cluster expands to show its resource navigation. Selecting a resource
+in the sidebar or command palette opens a new tab with the current namespace
+scope, leaving the previous tab as it was.
 
 The `+` sits just after the last tab while the tabs still fit, and moves to
 the right edge once they do not — a button inside a scrolling row can be
@@ -70,9 +72,9 @@ the path from the focused node upwards, so `BeaconApp` holds a focus handle
 on its root and takes focus when the window opens, and every `on_action` lives
 on that same root. An action handler on a child of it — `ClusterView`, say —
 is below the focused node and never runs. The cluster tree and `ctx` in the
-palette go to a cluster, opening a tab only when none is on it. Two tabs on one
-cluster are something to ask for with `⌘T`, not something to get by selecting
-the same cluster twice.
+palette go to a cluster, opening a tab only when none is on it. `⌘T` or a
+sidebar resource click opens another tab on that cluster; selecting the cluster
+itself does not duplicate a tab.
 
 The connection is not per tab. A `ClusterSession` — client, discovery cache,
 permission cache, port forwards — is keyed by cluster and shared, and the watch
