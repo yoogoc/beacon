@@ -45,7 +45,9 @@ and every cluster you connect to stays connected. See
 A tab is one view into one cluster, and several tabs can point at the same
 cluster — so "Pods here, Deployments over there, and another cluster beside
 them" is three tabs rather than three windows. Each tab keeps its own kind,
-namespace, filter, selection and detail panel.
+namespace, filter, selection and detail panel. The cluster tree stays on the
+left of the tabs; selecting a cluster opens its existing tab or a new one, and
+the active cluster expands to show its resource navigation.
 
 The `+` sits just after the last tab while the tabs still fit, and moves to
 the right edge once they do not — a button inside a scrolling row can be
@@ -67,10 +69,10 @@ Keyboard shortcuts need something to be focused: GPUI dispatches a key along
 the path from the focused node upwards, so `BeaconApp` holds a focus handle
 on its root and takes focus when the window opens, and every `on_action` lives
 on that same root. An action handler on a child of it — `ClusterView`, say —
-is below the focused node and never runs. The picker in the title bar changes what *this* tab
-shows; `ctx` in the palette goes to a cluster, opening a tab only when none is
-on it. Two tabs on one cluster are something to ask for with `⌘T`, not
-something to get by picking the same cluster twice.
+is below the focused node and never runs. The cluster tree and `ctx` in the
+palette go to a cluster, opening a tab only when none is on it. Two tabs on one
+cluster are something to ask for with `⌘T`, not something to get by selecting
+the same cluster twice.
 
 The connection is not per tab. A `ClusterSession` — client, discovery cache,
 permission cache, port forwards — is keyed by cluster and shared, and the watch
@@ -142,6 +144,9 @@ a table, not a rule.
 
 Everything the table does not name is filed under **its own API group**, one
 collapsed heading each: `argoproj.io`, `traefik.io`, `flowcontrol.apiserver.k8s.io`.
+The active cluster expands in the window's sidebar. Built-in sections appear
+directly under it, while extension groups are gathered under **Custom
+resources**; less common Kubernetes API groups stay with the built-in sections.
 The group is the one piece of structure the cluster really gives us, and the
 one people already use. Rows drop the group from their label, since the
 heading above them has just said it — but search still matches and shows the

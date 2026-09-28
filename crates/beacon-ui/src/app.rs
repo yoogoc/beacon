@@ -15,16 +15,19 @@ use std::{collections::HashMap, sync::Arc};
 
 use beacon_kube::{ClusterId, ClusterSession, config::Contexts};
 use gpui_kit::component::button::{Button, ButtonVariants as _};
+use gpui_kit::component::input::Input;
 use gpui_kit::component::popover::Popover;
-use gpui_kit::component::select::{SearchableVec, Select, SelectEvent, SelectState};
+use gpui_kit::component::sidebar::{Sidebar, SidebarGroup, SidebarMenu, SidebarMenuItem};
 use gpui_kit::component::spinner::Spinner;
 use gpui_kit::component::tab::{Tab as TabItem, TabBar};
-use gpui_kit::component::{ActiveTheme as _, IndexPath, Sizable as _, TitleBar, h_flex, v_flex};
+use gpui_kit::component::{
+    ActiveTheme as _, Icon, IconName, Sizable as _, TitleBar, h_flex, v_flex,
+};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
 use crate::bridge::Bridge;
-use crate::cluster::ClusterView;
+use crate::cluster::{ClusterView, NavigationChanged};
 use crate::palette::{self, Choice, Palette, PaletteEvent};
 use crate::theme::{BeaconTheme as _, Tone, toggle_mode};
 
@@ -40,12 +43,8 @@ gpui_kit::actions!(
     ]
 );
 
-/// How wide a tab is allowed to get before its label ellipsizes.
-///
-/// Context names are usually short. The ones that are not -- an EKS ARN, say --
-/// would otherwise push every other tab off the bar, and the title bar and the
-/// status bar both show the full name anyway.
-const TAB_WIDTH: Pixels = px(240.);
+/// The sidebar carries the cluster names, leaving room for more resource tabs.
+const TAB_WIDTH: Pixels = px(190.);
 
 /// Installs the keys everything else is reachable from.
 ///
@@ -90,6 +89,8 @@ struct Tab {
     state: TabState,
     /// Dropped with the tab, which abandons a connection nobody is waiting on.
     _connect: Option<Task<()>>,
+    /// Keep the app's sidebar and tab label in sync with this view's selection.
+    _navigation: Option<Subscription>,
 }
 
 enum TabState {
@@ -119,7 +120,6 @@ pub struct BeaconApp {
     /// says its tabs no longer fit. See [`Self::render_tabs`].
     tab_scroll: ScrollHandle,
     contexts: Result<Contexts, String>,
-    context_picker: Option<Entity<SelectState<SearchableVec<SharedString>>>>,
 
     /// Every cluster connected in this session, shared by every tab on it.
     ///
@@ -155,29 +155,6 @@ impl BeaconApp {
             Err(err) => tracing::warn!(%err, "no usable kubeconfig"),
         }
 
-        let context_picker = contexts.as_ref().ok().filter(|c| !c.is_empty()).map(|c| {
-            let names: Vec<SharedString> = c
-                .entries()
-                .iter()
-                .map(|entry| SharedString::from(entry.id.to_string()))
-                .collect();
-            let current = c
-                .entries()
-                .iter()
-                .position(|entry| entry.is_current)
-                .unwrap_or(0);
-
-            cx.new(|cx| {
-                SelectState::new(
-                    SearchableVec::new(names),
-                    Some(IndexPath::default().row(current)),
-                    window,
-                    cx,
-                )
-                .searchable(true)
-            })
-        });
-
         let palette = cx.new(|cx| Palette::new(window, cx));
         let palette_events = cx.subscribe_in(
             &palette,
@@ -198,7 +175,6 @@ impl BeaconApp {
             focus: cx.focus_handle(),
             tab_scroll: ScrollHandle::new(),
             contexts,
-            context_picker,
             sessions: HashMap::new(),
             tabs: Vec::new(),
             active: 0,
@@ -209,22 +185,6 @@ impl BeaconApp {
             activity_refresh: None,
             _subscriptions: vec![palette_events],
         };
-
-        if let Some(picker) = this.context_picker.clone() {
-            cx.subscribe_in(
-                &picker,
-                window,
-                |view, _, event: &SelectEvent<SearchableVec<SharedString>>, window, cx| {
-                    let SelectEvent::Confirm(Some(name)) = event else {
-                        return;
-                    };
-                    // The picker changes what *this* tab shows. Opening another
-                    // cluster beside it is `ctx` in the palette, or ⌘T.
-                    view.retarget(ClusterId::new(name.to_string()), window, cx);
-                },
-            )
-            .detach();
-        }
 
         // Something has to hold focus before any binding can resolve. The
         // root is the honest place for it: keys that mean the same thing
@@ -286,6 +246,7 @@ impl BeaconApp {
             namespace,
             state: TabState::Connecting,
             _connect: None,
+            _navigation: None,
         });
 
         let index = self.tabs.len() - 1;
@@ -298,30 +259,17 @@ impl BeaconApp {
     /// Two tabs on one cluster are a deliberate thing to ask for -- ⌘T -- not
     /// something to get by mistake from picking the same cluster twice.
     fn go_to(&mut self, cluster: ClusterId, window: &mut Window, cx: &mut Context<Self>) {
+        if self
+            .tabs
+            .get(self.active)
+            .is_some_and(|tab| tab.cluster == cluster)
+        {
+            return;
+        }
         match self.tabs.iter().position(|tab| tab.cluster == cluster) {
             Some(index) => self.activate(index, window, cx),
             None => self.open(cluster, window, cx),
         }
-    }
-
-    /// Points the tab on screen at a different cluster, in place.
-    fn retarget(&mut self, cluster: ClusterId, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(index) = (!self.tabs.is_empty()).then_some(self.active) else {
-            self.open(cluster, window, cx);
-            return;
-        };
-        if self.tabs[index].cluster == cluster {
-            return;
-        }
-
-        let namespace = self.namespace_for(&cluster);
-        let tab = &mut self.tabs[index];
-        tab.cluster = cluster;
-        tab.namespace = namespace;
-        tab.state = TabState::Connecting;
-        tab._connect = None;
-
-        self.connect(index, window, cx);
     }
 
     /// Gives tab `index` a view, connecting first if this cluster is new.
@@ -412,7 +360,9 @@ impl BeaconApp {
             view.update(cx, |view, cx| view.set_visible(false, window, cx));
         }
 
+        let navigation = cx.subscribe(&view, |_, _, _: &NavigationChanged, cx| cx.notify());
         self.tabs[index].state = TabState::Connected(view);
+        self.tabs[index]._navigation = Some(navigation);
         cx.notify();
     }
 
@@ -434,7 +384,6 @@ impl BeaconApp {
             view.update(cx, |view, cx| view.set_visible(true, window, cx));
         }
 
-        self.sync_picker(window, cx);
         cx.notify();
     }
 
@@ -471,7 +420,6 @@ impl BeaconApp {
             view.update(cx, |view, cx| view.set_visible(true, window, cx));
         }
 
-        self.sync_picker(window, cx);
         cx.notify();
     }
 
@@ -504,21 +452,6 @@ impl BeaconApp {
             (false, index) => index - 1,
         };
         self.activate(next, window, cx);
-    }
-
-    /// Keeps the title bar's picker showing the tab that is in front.
-    ///
-    /// Setting the value does not emit `Confirm`, so this cannot loop back
-    /// into [`Self::retarget`].
-    fn sync_picker(&self, window: &mut Window, cx: &mut App) {
-        let (Some(picker), Some(tab)) = (self.context_picker.clone(), self.tabs.get(self.active))
-        else {
-            return;
-        };
-        let value = SharedString::from(tab.cluster.to_string());
-        picker.update(cx, |state, cx| {
-            state.set_selected_value(&value, window, cx);
-        });
     }
 
     /// Opens the palette, or closes it if it is already open.
@@ -641,20 +574,7 @@ impl BeaconApp {
                 .justify_between()
                 .px_2()
                 .gap_3()
-                .child(
-                    h_flex()
-                        .gap_3()
-                        .items_center()
-                        .child(div().font_weight(FontWeight::SEMIBOLD).child("Beacon"))
-                        .children(self.context_picker.as_ref().map(|picker| {
-                            Select::new(picker)
-                                .small()
-                                .menu_width(px(420.))
-                                .menu_max_h(px(420.))
-                                .search_placeholder("Filter contexts")
-                                .accessibility_label("Cluster")
-                        })),
-                )
+                .child(div().font_weight(FontWeight::SEMIBOLD).child("Beacon"))
                 .child(
                     Button::new("toggle-theme")
                         .ghost()
@@ -665,25 +585,126 @@ impl BeaconApp {
         )
     }
 
+    /// Stable cluster colours tie each tab to its row in the sidebar.
+    fn cluster_color(&self, id: &ClusterId, cx: &App) -> Hsla {
+        let index = self
+            .contexts
+            .as_ref()
+            .ok()
+            .and_then(|contexts| contexts.entries().iter().position(|entry| &entry.id == id))
+            .unwrap_or(0);
+        match index % 4 {
+            0 => cx.theme().danger,
+            1 => cx.theme().success,
+            2 => cx.theme().warning,
+            _ => cx.theme().primary,
+        }
+    }
+
+    /// The cluster tree belongs to the window, not to a tab. The expanded
+    /// cluster borrows only its resource navigation from the active view.
+    fn render_sidebar(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let active = self.tabs.get(self.active).map(|tab| tab.cluster.clone());
+        let (search, mut resources, searching) = self
+            .cluster()
+            .map(|cluster| {
+                cluster.update(cx, |view, cx| {
+                    (
+                        Some(view.sidebar_search()),
+                        view.sidebar_items(cx),
+                        view.sidebar_search_active(),
+                    )
+                })
+            })
+            .unwrap_or((None, Vec::new(), false));
+        let ids: Vec<ClusterId> = self
+            .contexts
+            .as_ref()
+            .map(|contexts| {
+                contexts
+                    .entries()
+                    .iter()
+                    .map(|entry| entry.id.clone())
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        let rows = ids.into_iter().map(|id| {
+            let selected = active.as_ref() == Some(&id);
+            let color = self.cluster_color(&id, cx);
+            let connected = self.sessions.contains_key(&id);
+            let target = id.clone();
+            SidebarMenuItem::new(id.to_string())
+                .icon(Icon::new(IconName::Globe).text_color(color))
+                .active(selected)
+                .click_to_open(true)
+                .default_open(selected)
+                .children(if selected {
+                    std::mem::take(&mut resources)
+                } else {
+                    Vec::new()
+                })
+                .suffix(move |_, cx| {
+                    if connected {
+                        div()
+                            .size(px(7.))
+                            .rounded_full()
+                            .bg(cx.theme().tone(Tone::Healthy))
+                            .into_any_element()
+                    } else {
+                        div()
+                            .text_color(cx.theme().muted_foreground)
+                            .child("›")
+                            .into_any_element()
+                    }
+                })
+                .on_click(cx.listener(move |view, _, window, cx| {
+                    view.go_to(target.clone(), window, cx);
+                }))
+        });
+
+        // Search replaces the section list. Give it separate keyed expansion
+        // state, or its "Matches" row could inherit a different category's
+        // open state and pass that state back when the query is cleared.
+        Sidebar::new(if searching {
+            "cluster-tree-search"
+        } else {
+            "cluster-tree"
+        })
+        .collapsible(false)
+        .w(px(248.))
+        .when_some(search, |sidebar, search| {
+            sidebar.header(
+                div()
+                    .w_full()
+                    .px_2()
+                    .py_1()
+                    .child(Input::new(&search).small()),
+            )
+        })
+        .child(SidebarGroup::new("Clusters").child(SidebarMenu::new().children(rows)))
+    }
+
     /// The tab bar, always present so that `+` is always somewhere to click.
     fn render_tabs(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let tabs = self.tabs.iter().enumerate().map(|(index, tab)| {
             let id = tab.id;
+            let color = self.cluster_color(&tab.cluster, cx);
             let what = match &tab.state {
                 TabState::Connected(view) => view.read(cx).title(),
                 TabState::Connecting => SharedString::from("connecting"),
                 TabState::Failed(_) => SharedString::from("unreachable"),
             };
+            let accessible_name = format!("{what} · {}", tab.cluster);
 
             TabItem::new()
-                // What, then where. The prefix holds its size and the label is
-                // the part that ellipsizes, and this is the way round that
-                // survives a long context name: two tabs both reading
-                // `arn:aws:eks:us-east-1:…` say nothing, whereas `Pod` and
-                // `Service` beside a truncated cluster still say which is
-                // which. The full name is in the title bar and the status bar.
-                .prefix(div().pl_2().child(format!("{what} ·")))
-                .label(tab.cluster.to_string())
+                .prefix(
+                    div()
+                        .pl_2()
+                        .child(div().size(px(7.)).rounded_full().bg(color)),
+                )
+                .label(what)
+                .aria_label(accessible_name)
                 .on_click(cx.listener(move |view, _, window, cx| {
                     view.activate(index, window, cx);
                 }))
@@ -1096,8 +1117,27 @@ impl Render for BeaconApp {
                 v_flex()
                     .size_full()
                     .child(self.render_title_bar(cx))
-                    .child(self.render_tabs(cx))
-                    .child(div().flex_1().overflow_hidden().child(self.render_body(cx)))
+                    .child(
+                        h_flex()
+                            .flex_1()
+                            .min_h_0()
+                            .overflow_hidden()
+                            .child(self.render_sidebar(cx))
+                            .child(
+                                v_flex()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .h_full()
+                                    .overflow_hidden()
+                                    .child(self.render_tabs(cx))
+                                    .child(
+                                        div()
+                                            .flex_1()
+                                            .overflow_hidden()
+                                            .child(self.render_body(cx)),
+                                    ),
+                            ),
+                    )
                     .child(self.render_status_bar(cx)),
             )
             .when(self.palette_open, |this| {

@@ -20,7 +20,7 @@ use gpui_kit::component::checkbox::Checkbox;
 use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::component::popover::Popover;
 use gpui_kit::component::resizable::{ResizableState, resizable_panel, v_resizable};
-use gpui_kit::component::sidebar::{Sidebar, SidebarGroup, SidebarMenu, SidebarMenuItem};
+use gpui_kit::component::sidebar::SidebarMenuItem;
 use gpui_kit::component::spinner::Spinner;
 use gpui_kit::component::table::{TableEvent, TableState};
 use gpui_kit::component::{ActiveTheme as _, Sizable as _, h_flex, v_flex};
@@ -158,6 +158,12 @@ pub struct ClusterView {
     _clock: Task<()>,
     _subscriptions: Vec<Subscription>,
 }
+
+/// Only navigation changes need to repaint the window-level cluster tree and
+/// tab labels. Table ticks and watch updates stay within the cluster view.
+pub(crate) struct NavigationChanged;
+
+impl EventEmitter<NavigationChanged> for ClusterView {}
 
 impl ClusterView {
     pub fn new(
@@ -393,6 +399,7 @@ impl ClusterView {
         if mode == Mode::Releases {
             self.load_releases(window, cx);
         }
+        cx.emit(NavigationChanged);
         cx.notify();
     }
 
@@ -657,10 +664,11 @@ impl ClusterView {
     /// asking the cluster; a kind that publishes its own gets them a moment
     /// later, without re-listing.
     fn show(&mut self, kind: Arc<Kind>, window: &mut Window, cx: &mut Context<Self>) {
-        if self
-            .kind
-            .as_ref()
-            .is_some_and(|current| current.gvk() == kind.gvk())
+        if self.mode == Mode::Objects
+            && self
+                .kind
+                .as_ref()
+                .is_some_and(|current| current.gvk() == kind.gvk())
         {
             return;
         }
@@ -672,6 +680,7 @@ impl ClusterView {
         self.detail = None;
         self.watch_objects(window, cx);
         self.load_columns(window, cx);
+        cx.emit(NavigationChanged);
         cx.notify();
     }
 
@@ -978,6 +987,7 @@ impl ClusterView {
             |view, state, event: &InputEvent, cx| {
                 if matches!(event, InputEvent::Change) {
                     view.sidebar_query = state.read(cx).value().to_string();
+                    cx.emit(NavigationChanged);
                     cx.notify();
                 }
             },
@@ -1025,78 +1035,103 @@ impl ClusterView {
 
     // MARK: rendering
 
-    fn render_sidebar(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
+    pub(crate) fn sidebar_search(&self) -> Entity<InputState> {
+        self.sidebar_search.clone()
+    }
+
+    pub(crate) fn sidebar_search_active(&self) -> bool {
+        !self.sidebar_query.is_empty()
+    }
+
+    /// Resource navigation for the expanded cluster in the app's sidebar.
+    /// Each tab still owns its search and selected kind; only the chrome has
+    /// moved out of the tab's content area.
+    pub(crate) fn sidebar_items(&mut self, cx: &mut Context<Self>) -> Vec<SidebarMenuItem> {
         let current = self.kind.as_ref().map(|kind| kind.gvk());
 
         // A query replaces the sections with a flat ranked list: with a hundred
         // kinds, the answer to "where is it" should not be "in one of seven
         // collapsed groups".
-        let sections: Vec<(SharedString, Vec<Entry>)> = if self.sidebar_query.is_empty() {
-            self.catalog
-                .sections()
-                .iter()
-                .map(|(section, entries)| (section.label(), entries.clone()))
-                .collect()
-        } else {
-            let matches = self.catalog.search(&self.sidebar_query, &mut self.matcher);
-            vec![(SharedString::from("Matches"), matches)]
-        };
-
-        let open_by_default: Vec<bool> = if !self.sidebar_query.is_empty() {
-            vec![true]
-        } else {
+        let sections: Vec<(SharedString, Vec<Entry>, bool, bool)> = if self.sidebar_query.is_empty()
+        {
             self.catalog
                 .sections()
                 .iter()
                 .map(|(section, entries)| {
-                    // A section also opens when it holds what is on screen, so
-                    // that the selection is never hidden inside a closed group.
-                    section.starts_open()
+                    let open = section.starts_open()
                         || entries
                             .iter()
-                            .any(|entry| current.as_ref() == Some(&entry.kind.gvk()))
+                            .any(|entry| current.as_ref() == Some(&entry.kind.gvk()));
+                    (
+                        section.label(),
+                        entries.clone(),
+                        open,
+                        section.is_custom_group(),
+                    )
                 })
                 .collect()
+        } else {
+            let matches = self.catalog.search(&self.sidebar_query, &mut self.matcher);
+            vec![(SharedString::from("Matches"), matches, true, false)]
         };
 
+        let (cluster_sections, custom_sections): (Vec<_>, Vec<_>) =
+            sections.into_iter().partition(|(_, _, _, custom)| !custom);
+
         let mode = self.mode;
-        let tools = SidebarMenu::new().children([Mode::Releases, Mode::Forwards].map(|item| {
+        let tools = [Mode::Releases, Mode::Forwards].map(|item| {
             SidebarMenuItem::new(item.label())
                 .active(mode == item)
                 .on_click(cx.listener(move |view, _, window, cx| {
                     view.show_mode(item, window, cx);
                 }))
-        }));
+        });
 
-        let menu = SidebarMenu::new().children(sections.into_iter().zip(open_by_default).map(
-            |((label, entries), open)| {
-                SidebarMenuItem::new(label)
+        let menu = |sections: Vec<(SharedString, Vec<Entry>, bool, bool)>| {
+            sections
+                .into_iter()
+                .map(|(label, entries, open, _)| {
+                    SidebarMenuItem::new(label)
+                        .click_to_toggle(true)
+                        .default_open(open)
+                        .children(entries.into_iter().map(|entry| {
+                            let selected = current.as_ref() == Some(&entry.kind.gvk());
+                            let kind = entry.kind.clone();
+                            SidebarMenuItem::new(entry.label).active(selected).on_click(
+                                cx.listener(move |view, _, window, cx| {
+                                    view.show(kind.clone(), window, cx);
+                                }),
+                            )
+                        }))
+                })
+                .collect::<Vec<_>>()
+        };
+
+        let custom_open = custom_sections.iter().any(|(_, entries, _, _)| {
+            entries
+                .iter()
+                .any(|entry| current.as_ref() == Some(&entry.kind.gvk()))
+        });
+
+        // Keep the common sections directly under the cluster, as in a tree.
+        // Only extensions get an extra heading, so the distinction is visible
+        // without making Workloads and Config three levels deep.
+        let mut items = menu(cluster_sections);
+        if !custom_sections.is_empty() {
+            items.push(
+                SidebarMenuItem::new("Custom resources")
                     .click_to_toggle(true)
-                    .default_open(open)
-                    .children(entries.into_iter().map(|entry| {
-                        let selected = current.as_ref() == Some(&entry.kind.gvk());
-                        let kind = entry.kind.clone();
-                        SidebarMenuItem::new(entry.label)
-                            .active(selected)
-                            .on_click(cx.listener(move |view, _, window, cx| {
-                                view.show(kind.clone(), window, cx);
-                            }))
-                    }))
-            },
-        ));
-
-        Sidebar::new("resources")
-            .collapsible(false)
-            .w(px(232.))
-            .header(
-                div()
-                    .w_full()
-                    .px_2()
-                    .py_1()
-                    .child(Input::new(&self.sidebar_search).small()),
-            )
-            .child(SidebarGroup::new("Cluster tools").child(tools))
-            .child(SidebarGroup::new("").child(menu))
+                    .default_open(custom_open)
+                    .children(menu(custom_sections)),
+            );
+        }
+        items.push(
+            SidebarMenuItem::new("Cluster tools")
+                .click_to_toggle(true)
+                .default_open(mode != Mode::Objects)
+                .children(tools),
+        );
+        items
     }
 
     fn render_releases(&self, cx: &mut Context<Self>) -> AnyElement {
@@ -1540,19 +1575,10 @@ impl Render for ClusterView {
                 .into_any_element(),
         };
 
-        h_flex()
+        v_flex()
             .size_full()
-            .items_start()
-            .child(self.render_sidebar(cx))
-            .child(
-                v_flex()
-                    .flex_1()
-                    .h_full()
-                    .overflow_hidden()
-                    .border_l_1()
-                    .border_color(cx.theme().border)
-                    .child(self.render_toolbar(cx))
-                    .child(div().flex_1().overflow_hidden().child(body)),
-            )
+            .overflow_hidden()
+            .child(self.render_toolbar(cx))
+            .child(div().flex_1().overflow_hidden().child(body))
     }
 }

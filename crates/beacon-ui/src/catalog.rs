@@ -8,15 +8,12 @@
 //!
 //! The grouping is a table rather than a rule, because there isn't a rule: a
 //! `Lease` is a coordination primitive, an `Endpoint` is networking, and
-//! nothing in the API says so. Everything the table does not name is a custom
-//! resource, which is the honest default -- on most clusters that is the
-//! majority, and it is where the interesting things live.
+//! nothing in the API says so. Everything the table does not name is filed by
+//! API group; this catches custom resources and less common built-in kinds.
 //!
-//! Custom resources are then split again, by API group. One "Custom
-//! Resources" heading over two hundred kinds is a list, not a grouping; the
-//! group is the one piece of structure the cluster actually gives us, and it
-//! is the one people already use -- everything under `argoproj.io` arrived
-//! together, is documented together and is reasoned about together.
+//! The sidebar puts Kubernetes API groups with cluster resources and extension
+//! groups under "Custom resources". Each group keeps its own collapsible
+//! heading, so a large cluster does not become one long custom-resource list.
 
 use std::sync::Arc;
 
@@ -144,7 +141,8 @@ fn placement(kind: &Kind) -> (Category, u8) {
 pub enum Section {
     /// One of the curated groupings above.
     Builtin(Category),
-    /// One API group's custom resources, headed by the group itself.
+    /// One discovered API group not covered by the curated categories, headed
+    /// by the group itself. Some of these are Kubernetes built-ins.
     Group(SharedString),
 }
 
@@ -157,9 +155,15 @@ impl Section {
     }
 
     /// Whether the section starts expanded. Only the one people open first --
-    /// and never a custom group, of which there can be dozens.
+    /// and never an API group, of which there can be dozens.
     pub fn starts_open(&self) -> bool {
         matches!(self, Self::Builtin(category) if category.starts_open())
+    }
+
+    /// Discovered API groups also contain less common Kubernetes built-ins.
+    /// Keep those with the cluster resources; the other groups are extensions.
+    pub fn is_custom_group(&self) -> bool {
+        matches!(self, Self::Group(group) if !is_builtin_api_group(group))
     }
 
     /// Built-ins in the order of [`Category::ALL`], then groups by name.
@@ -176,6 +180,34 @@ impl Section {
             Self::Group(group) => (1, 0, group.clone()),
         }
     }
+}
+
+fn is_builtin_api_group(group: &str) -> bool {
+    matches!(
+        group,
+        "admissionregistration.k8s.io"
+            | "apiextensions.k8s.io"
+            | "apiregistration.k8s.io"
+            | "apps"
+            | "authentication.k8s.io"
+            | "authorization.k8s.io"
+            | "autoscaling"
+            | "batch"
+            | "certificates.k8s.io"
+            | "coordination.k8s.io"
+            | "discovery.k8s.io"
+            | "events.k8s.io"
+            | "flowcontrol.apiserver.k8s.io"
+            | "internal.apiserver.k8s.io"
+            | "networking.k8s.io"
+            | "node.k8s.io"
+            | "policy"
+            | "rbac.authorization.k8s.io"
+            | "resource.k8s.io"
+            | "scheduling.k8s.io"
+            | "storage.k8s.io"
+            | "storagemigration.k8s.io"
+    )
 }
 
 /// One entry in the sidebar.
@@ -426,6 +458,25 @@ mod tests {
                 "k3s.cattle.io",
             ]
         );
+    }
+
+    #[test]
+    fn discovered_builtin_groups_stay_with_cluster_resources() {
+        let catalog = Catalog::new(&[
+            kind("flowcontrol.apiserver.k8s.io", "FlowSchema"),
+            kind("argoproj.io", "Application"),
+        ]);
+        let section = |group: &str| {
+            catalog
+                .sections()
+                .iter()
+                .find(|(section, _)| section.label() == group)
+                .unwrap()
+                .0
+                .is_custom_group()
+        };
+        assert!(!section("flowcontrol.apiserver.k8s.io"));
+        assert!(section("argoproj.io"));
     }
 
     /// Typing a group is how you get everything that came with it.
