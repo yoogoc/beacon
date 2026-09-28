@@ -15,6 +15,7 @@ use std::{collections::HashMap, sync::Arc};
 
 use beacon_kube::{ClusterId, ClusterSession, config::Contexts};
 use gpui_kit::component::button::{Button, ButtonVariants as _};
+use gpui_kit::component::popover::Popover;
 use gpui_kit::component::select::{SearchableVec, Select, SelectEvent, SelectState};
 use gpui_kit::component::spinner::Spinner;
 use gpui_kit::component::tab::{Tab as TabItem, TabBar};
@@ -97,6 +98,12 @@ enum TabState {
     Failed(String),
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ActivityMenu {
+    Watches,
+    Clusters,
+}
+
 pub struct BeaconApp {
     /// The window's baseline focus.
     ///
@@ -130,6 +137,8 @@ pub struct BeaconApp {
 
     palette: Entity<Palette>,
     palette_open: bool,
+    activity_open: Option<ActivityMenu>,
+    activity_refresh: Option<Task<()>>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -196,6 +205,8 @@ impl BeaconApp {
             next_tab: 0,
             palette,
             palette_open: false,
+            activity_open: None,
+            activity_refresh: None,
             _subscriptions: vec![palette_events],
         };
 
@@ -806,50 +817,212 @@ impl BeaconApp {
             .into_any_element()
     }
 
+    fn set_activity_open(
+        &mut self,
+        menu: ActivityMenu,
+        open: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !open && self.activity_open != Some(menu) {
+            return;
+        }
+        self.activity_open = open.then_some(menu);
+        self.activity_refresh = None;
+        if open {
+            // Only refresh the inspector while it is visible. This reads the
+            // existing registry; it never lists resources or adds watches.
+            self.activity_refresh = Some(cx.spawn_in(window, async |this, cx| {
+                loop {
+                    cx.background_executor()
+                        .timer(std::time::Duration::from_secs(1))
+                        .await;
+                    if this.update(cx, |_, cx| cx.notify()).is_err() {
+                        break;
+                    }
+                }
+            }));
+        }
+        cx.notify();
+    }
+
+    fn render_activity_menu(
+        &self,
+        menu: ActivityMenu,
+        count: usize,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let opening = cx.entity().downgrade();
+        let view = opening.clone();
+        let (id, label, tooltip) = match menu {
+            ActivityMenu::Watches => (
+                "status-watches",
+                "watches",
+                "View watches in the current cluster",
+            ),
+            ActivityMenu::Clusters => ("status-clusters", "clusters", "View connected clusters"),
+        };
+        Popover::new(id)
+            .anchor(Anchor::BottomRight)
+            .open(self.activity_open == Some(menu))
+            .on_open_change(move |open, window, cx| {
+                let _ = opening.update(cx, |view, cx| {
+                    view.set_activity_open(menu, *open, window, cx)
+                });
+            })
+            .trigger(
+                Button::new((id, 0usize))
+                    .ghost()
+                    .xsmall()
+                    .h(px(20.))
+                    .label(format!("{count} {label}"))
+                    .tooltip(tooltip),
+            )
+            .content(move |_, _, cx| {
+                let Some(app) = view.upgrade() else {
+                    return div().into_any_element();
+                };
+                let app = app.read(cx);
+                match menu {
+                    ActivityMenu::Watches => match app.cluster() {
+                        Some(cluster) => crate::activity::watches(cluster.read(cx).session(), cx),
+                        None => crate::activity::panel(
+                            "Watches (0)".into(),
+                            "No connected cluster in the active tab.",
+                            cx,
+                        )
+                        .into_any_element(),
+                    },
+                    ActivityMenu::Clusters => app.render_clusters(view.clone(), cx),
+                }
+            })
+    }
+
+    fn render_clusters(&self, view: WeakEntity<Self>, cx: &App) -> AnyElement {
+        let mut sessions: Vec<_> = self.sessions.values().collect();
+        sessions.sort_by_key(|session| session.id());
+        let active = self.tabs.get(self.active).map(|tab| &tab.cluster);
+        let rows = sessions.iter().map(|session| {
+            let id = session.id().clone();
+            let current = active == Some(&id);
+            let tabs = self.tabs.iter().filter(|tab| tab.cluster == id).count();
+            let health = session.health().borrow().clone();
+            let target = id.clone();
+            let view = view.clone();
+            v_flex()
+                .id(SharedString::from(format!("activity-cluster-{id}")))
+                .gap_1()
+                .p_2()
+                .rounded_md()
+                .cursor_pointer()
+                .hover(|row| row.bg(cx.theme().muted))
+                .when(current, |row| row.bg(cx.theme().muted))
+                .child(
+                    h_flex()
+                        .gap_2()
+                        .items_center()
+                        .child(
+                            div()
+                                .flex_shrink_0()
+                                .size(px(7.))
+                                .rounded_full()
+                                .bg(cx.theme().tone(crate::activity::health_tone(&health))),
+                        )
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w_0()
+                                .font_weight(FontWeight::MEDIUM)
+                                .child(id.to_string()),
+                        )
+                        .when(current, |row| {
+                            row.child(
+                                div()
+                                    .flex_shrink_0()
+                                    .text_xs()
+                                    .text_color(cx.theme().primary)
+                                    .child("Current"),
+                            )
+                        }),
+                )
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(cx.theme().muted_foreground)
+                        .child(session.server().to_string()),
+                )
+                .child(div().text_xs().child(format!(
+                    "{} · {tabs} tabs · {} watches · {} forwarding",
+                    health.label(),
+                    session.active_watches(),
+                    session.forwards().len(),
+                )))
+                .when_some(health.reason(), |row, reason| {
+                    row.child(
+                        div()
+                            .text_xs()
+                            .text_color(cx.theme().tone(Tone::Warning))
+                            .child(reason.to_string()),
+                    )
+                })
+                .on_click(move |_, window, cx| {
+                    let _ = view.update(cx, |app, cx| {
+                        app.activity_open = None;
+                        app.activity_refresh = None;
+                        app.go_to(target.clone(), window, cx);
+                    });
+                })
+        });
+        crate::activity::panel(
+            format!("Clusters ({})", sessions.len()),
+            "Connected sessions · click a cluster to open its tab",
+            cx,
+        )
+        .child(
+            div()
+                .id("cluster-activity-list")
+                .min_h_0()
+                .overflow_y_scroll()
+                .child(v_flex().gap_1().children(rows))
+                .when(sessions.is_empty(), |list| {
+                    list.child("No connected clusters yet.")
+                }),
+        )
+        .into_any_element()
+    }
+
     fn render_status_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let (tone, status) = match self.tabs.get(self.active).map(|tab| &tab.state) {
-            None => (Tone::Unknown, "no tab open".to_string()),
-            Some(TabState::Connecting) => (Tone::Progressing, "connecting".to_string()),
-            Some(TabState::Failed(_)) => (Tone::Critical, "disconnected".to_string()),
+        let (tone, status, watches) = match self.tabs.get(self.active).map(|tab| &tab.state) {
+            None => (Tone::Unknown, "no tab open".to_string(), 0),
+            Some(TabState::Connecting) => (Tone::Progressing, "connecting".to_string(), 0),
+            Some(TabState::Failed(_)) => (Tone::Critical, "disconnected".to_string(), 0),
             Some(TabState::Connected(cluster)) => {
                 let cluster = cluster.read(cx);
                 let health = cluster.health();
-                let tone = match health {
-                    beacon_kube::Health::Connected => Tone::Healthy,
-                    beacon_kube::Health::Connecting => Tone::Progressing,
-                    beacon_kube::Health::Degraded { .. } => Tone::Warning,
-                };
-                // The reason, not just the word: "Degraded" alone sends people
-                // to the log file for something we already know.
                 let detail = health
                     .reason()
                     .map(|reason| format!("{} — {reason}", health.label()))
                     .unwrap_or_else(|| health.label().to_string());
-
-                let forwards = cluster.session().forwards().len();
-                let mut status = format!(
-                    "{} · {} · {} watches",
-                    cluster.session().server(),
-                    detail,
-                    cluster.session().active_watches()
-                );
+                let mut status = format!("{} · {detail}", cluster.session().server());
                 if self.tabs.len() > 1 {
                     status.push_str(&format!(" · {} tabs", self.tabs.len()));
                 }
-                if self.sessions.len() > 1 {
-                    status.push_str(&format!(" · {} clusters", self.sessions.len()));
-                }
+                let forwards = cluster.session().forwards().len();
                 if forwards > 0 {
                     status.push_str(&format!(" · {forwards} forwarding"));
                 }
-
-                (tone, status)
+                (
+                    crate::activity::health_tone(health),
+                    status,
+                    cluster.session().active_watches(),
+                )
             }
         };
 
         h_flex()
             .w_full()
             .h(px(24.))
+            .flex_shrink_0()
             .px_3()
             .gap_2()
             .items_center()
@@ -859,13 +1032,34 @@ impl BeaconApp {
             .bg(cx.theme().table_header())
             .text_xs()
             .text_color(cx.theme().muted_foreground)
-            .child(format!("Beacon {}", env!("CARGO_PKG_VERSION")))
+            .child(
+                div()
+                    .flex_shrink_0()
+                    .child(format!("Beacon {}", env!("CARGO_PKG_VERSION"))),
+            )
             .child(
                 h_flex()
+                    .min_w_0()
                     .gap_1p5()
                     .items_center()
-                    .child(div().size(px(7.)).rounded_full().bg(cx.theme().tone(tone)))
-                    .child(status),
+                    .child(
+                        div()
+                            .flex_shrink_0()
+                            .size(px(7.))
+                            .rounded_full()
+                            .bg(cx.theme().tone(tone)),
+                    )
+                    .child(div().min_w_0().truncate().child(status))
+                    .child(div().flex_shrink_0().child(self.render_activity_menu(
+                        ActivityMenu::Watches,
+                        watches,
+                        cx,
+                    )))
+                    .child(div().flex_shrink_0().child(self.render_activity_menu(
+                        ActivityMenu::Clusters,
+                        self.sessions.len(),
+                        cx,
+                    ))),
             )
     }
 }

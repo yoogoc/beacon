@@ -4,6 +4,7 @@
 //! network work belongs to [`bridge::Bridge`], which owns the tokio runtime.
 
 pub mod actions;
+mod activity;
 pub mod app;
 pub mod bridge;
 pub mod catalog;

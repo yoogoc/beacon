@@ -42,7 +42,7 @@ pub use ops::{Applied, Conflict, Operation};
 pub use session::{ClusterSession, Health};
 pub use store::{Delta, DeltaBatch, ObjectRef, ResourceStore};
 pub use terminal::{Terminal, TerminalEvent};
-pub use watch::{Subscription, WatchKey};
+pub use watch::{Subscription, WatchKey, WatchSummary};
 
 use std::fmt;
 

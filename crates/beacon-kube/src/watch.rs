@@ -69,6 +69,16 @@ pub struct WatchKey {
     pub fields: Option<String>,
 }
 
+/// A read-only view of an existing watch. Inspecting it adds no subscriber
+/// and does not extend the idle watch's lifetime.
+#[derive(Debug, Clone)]
+pub struct WatchSummary {
+    pub key: WatchKey,
+    pub subscribers: usize,
+    /// None until the initial list has completed.
+    pub objects: Option<usize>,
+}
+
 impl WatchKey {
     /// Every object of a kind, across all namespaces.
     pub fn all(resource: ApiResource) -> Self {
@@ -284,6 +294,36 @@ impl Registry {
     /// on it.
     pub(crate) fn active(&self) -> usize {
         self.lock_watches().len()
+    }
+
+    pub(crate) fn summaries(&self) -> Vec<WatchSummary> {
+        let mut summaries: Vec<_> = self
+            .lock_watches()
+            .iter()
+            .map(|(key, handle)| {
+                // Keep the same lock order as subscribe and flush.
+                let subscribers = lock(&handle.subscribers);
+                WatchSummary {
+                    key: key.clone(),
+                    subscribers: subscribers.len(),
+                    objects: handle
+                        .listed
+                        .load(Ordering::Acquire)
+                        .then(|| lock(&handle.store).len()),
+                }
+            })
+            .collect();
+        summaries.sort_by(|a, b| {
+            a.key
+                .resource
+                .kind
+                .cmp(&b.key.resource.kind)
+                .then_with(|| a.key.resource.api_version.cmp(&b.key.resource.api_version))
+                .then_with(|| a.key.namespace.cmp(&b.key.namespace))
+                .then_with(|| a.key.labels.cmp(&b.key.labels))
+                .then_with(|| a.key.fields.cmp(&b.key.fields))
+        });
+        summaries
     }
 
     fn start(&self, key: &WatchKey) -> WatchHandle {

@@ -375,6 +375,11 @@ impl ClusterSession {
     pub fn active_watches(&self) -> usize {
         self.registry.active()
     }
+
+    /// Details behind the status bar count, without creating any watches.
+    pub fn watches(&self) -> Vec<crate::watch::WatchSummary> {
+        self.registry.summaries()
+    }
 }
 
 impl Drop for ClusterSession {

@@ -81,6 +81,14 @@ Age clock and the ten-second metrics poll, which are a repaint and a request
 that nobody is looking at. Closing a tab drops its watches; the session stays,
 so opening that cluster again does not reconnect.
 
+Click **watches** in the bottom-right status bar to inspect the current
+cluster's watches: resource kind, namespace, selectors, cached object count,
+and subscriber count. Idle watches stay visible until their 30-second grace
+period ends. Click **clusters** to see connected sessions, health, API server,
+tab and watch counts, and port forwards; click a session to switch to it.
+Both lists refresh while open and inspect existing state without starting
+additional watches.
+
 ## Waiting
 
 A table being filled shows the skeleton rows, not an empty grid: "nothing
