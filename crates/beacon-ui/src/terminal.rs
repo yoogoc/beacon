@@ -26,7 +26,8 @@ use alacritty_terminal::{
 };
 use beacon_kube::{ClusterSession, Terminal as Session, TerminalEvent};
 use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::{ActiveTheme as _, h_flex, v_flex};
+use gpui_kit::component::input::{Input, InputState};
+use gpui_kit::component::{ActiveTheme as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
@@ -73,6 +74,12 @@ pub struct TerminalView {
     /// with nothing attached, so it is absent rather than a placeholder.
     shell: Option<Session>,
     state: State,
+    /// What to run. Empty means the fallback chain, which is what a container
+    /// with only `sh` needs and what one with `bash` prefers. It is here
+    /// because neither is always right: a distroless image has neither, a
+    /// busybox one has `/bin/ash`, and sometimes the thing worth attaching to
+    /// is not a shell at all.
+    command: Entity<InputState>,
     focus: FocusHandle,
     /// The pane size measured during the last prepaint, applied at the start
     /// of the next render.
@@ -134,6 +141,8 @@ impl TerminalView {
             parser: Processor::new(),
             shell: None,
             state: State::Idle,
+            command: cx
+                .new(|cx| InputState::new(window, cx).placeholder("bash, falling back to sh")),
             focus: cx.focus_handle(),
             measured: Rc::new(StdCell::new(None)),
             _output: None,
@@ -142,10 +151,37 @@ impl TerminalView {
         this
     }
 
-    /// Opens a shell.
+    /// What to exec: whatever was typed, or the fallback chain.
     ///
-    /// The shell is chosen by trying the list in [`beacon_kube::terminal::SHELLS`]
-    /// -- a container may have bash, or only sh, or neither.
+    /// `exec` runs one command, so the fallback is done inside the command
+    /// rather than by connecting three times and seeing which one survives.
+    /// Anything typed is split the way a shell splits a command line --
+    /// quoting only, no expansion -- because the argv goes to the container
+    /// as it is.
+    fn command(&self, cx: &App) -> Vec<String> {
+        let typed = self.command.read(cx).value();
+        let typed = typed.trim();
+        if typed.is_empty() {
+            return vec![
+                "/bin/sh".to_string(),
+                "-c".to_string(),
+                "exec /bin/bash || exec /bin/sh".to_string(),
+            ];
+        }
+
+        let split = beacon_kube::exec::split(typed);
+        // All quotes and no words. Falling back beats exec-ing nothing.
+        match split.is_empty() {
+            true => vec!["/bin/sh".to_string()],
+            false => split,
+        }
+    }
+
+    /// Opens a shell, or opens another one over the top of the last.
+    ///
+    /// Replacing `shell` drops the previous session, which closes its
+    /// WebSocket -- so this doubles as "try a different shell", which is the
+    /// whole reason the command is editable.
     pub fn start(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.term = Term::new(
             Config {
@@ -161,13 +197,8 @@ impl TerminalView {
         self.parser = Processor::new();
         self.state = State::Running;
 
-        // `exec` runs one command, so falling back between shells is done in
-        // the command itself rather than by reconnecting three times.
-        let command = vec![
-            "/bin/sh".to_string(),
-            "-c".to_string(),
-            "exec /bin/bash || exec /bin/sh".to_string(),
-        ];
+        let command = self.command(cx);
+        tracing::info!(pod = %self.pod, ?command, "opening a shell");
 
         let handle = crate::bridge::Bridge::global(cx).handle();
         let (shell, output) = beacon_kube::terminal::attach(
@@ -500,6 +531,26 @@ impl Focusable for TerminalView {
     }
 }
 
+impl TerminalView {
+    /// The command box and the button that runs it.
+    ///
+    /// Empty means the fallback chain, so the common case stays one click and
+    /// the placeholder says what that click will do.
+    fn render_launcher(&self, label: &'static str, cx: &mut Context<Self>) -> impl IntoElement {
+        h_flex()
+            .gap_2()
+            .items_center()
+            .child(div().w(px(260.)).child(Input::new(&self.command).small()))
+            .child(
+                Button::new("start-shell")
+                    .primary()
+                    .small()
+                    .label(label)
+                    .on_click(cx.listener(|view, _, window, cx| view.start(window, cx))),
+            )
+    }
+}
+
 impl Render for TerminalView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         // Apply whatever the last prepaint measured. One more frame at the old
@@ -522,12 +573,7 @@ impl Render for TerminalView {
                         .text_color(cx.theme().muted_foreground)
                         .child("An interactive shell in this container."),
                 )
-                .child(
-                    Button::new("start-shell")
-                        .primary()
-                        .label("Open a shell")
-                        .on_click(cx.listener(|view, _, window, cx| view.start(window, cx))),
-                )
+                .child(self.render_launcher("Open a shell", cx))
                 .into_any_element();
         }
 
@@ -542,7 +588,14 @@ impl Render for TerminalView {
             .size_full()
             .track_focus(&self.focus)
             .key_context("BeaconTerminal")
-            .on_key_down(cx.listener(|view, event: &KeyDownEvent, _, cx| {
+            .on_key_down(cx.listener(|view, event: &KeyDownEvent, window, cx| {
+                // The command box lives inside this element, so its keys
+                // bubble up to here after it has handled them. Without this
+                // every character typed into it would also be sent to the
+                // shell.
+                if view.command.read(cx).focus_handle(cx).is_focused(window) {
+                    return;
+                }
                 view.key(&event.keystroke, cx);
                 cx.stop_propagation();
             }))
@@ -596,15 +649,28 @@ impl Render for TerminalView {
                     ),
             )
             .children(status.map(|(tone, message)| {
-                div()
+                h_flex()
                     .w_full()
                     .px_3()
-                    .py_1()
-                    .text_xs()
+                    .py_1p5()
+                    .gap_3()
+                    .items_center()
+                    .justify_between()
                     .border_t_1()
                     .border_color(cx.theme().border)
-                    .text_color(cx.theme().tone(tone))
-                    .child(message)
+                    .child(
+                        div()
+                            .flex_1()
+                            .truncate()
+                            .text_xs()
+                            .text_color(cx.theme().tone(tone))
+                            .child(message),
+                    )
+                    // "No such file or directory" is the commonest way a shell
+                    // ends, and the answer to it is a different shell. Putting
+                    // the box here means trying one is where the failure is,
+                    // rather than somewhere else.
+                    .child(self.render_launcher("Restart", cx))
             }))
             .into_any_element()
     }

@@ -20,7 +20,9 @@ which also answers whether it parses at all, without writing to the cluster to
 find out. Editing it applies with Server-Side Apply; when another field
 manager owns what you changed, the refusal names the fields and their owner.
 
-Pods also get logs, a one-shot command runner and an interactive shell. Ports
+Pods also get logs, a one-shot command runner and an interactive shell — the
+shell's command is a box you can change, empty meaning bash falling back to
+sh, and it sits beside the error when one did not exist. Ports
 forward to localhost and keep running while you work elsewhere. CPU and memory
 come from metrics-server, Helm releases are read straight out of the cluster,
 and every cluster you connect to stays connected. See

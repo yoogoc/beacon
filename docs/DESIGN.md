@@ -1189,3 +1189,35 @@ Beacon 说 8 字节，kubectl 说 5 —— 8 正是 5 字节 base64 之后的长
 
 **真机验证**：3 个 tab 时 `overflow=0`，+ 紧跟最后一个 tab；13 个 tab 时 `overflow=380px`，
 + 钉在右边缘。两种都截了图。tab 是用 `⌘T` 开的 —— 顺带再确认了一次快捷键真的通了。
+
+### 补：开 pod shell 时可以改命令（2026-09-28）
+
+原来写死 `/bin/sh -c 'exec /bin/bash || exec /bin/sh'`，两个都没有就只能干瞪眼。
+现在 Shell 页上多一个命令框：**空着就是原来那条回退链**（常见情况仍然是一键），
+填了就按填的来 —— `/bin/ash`（busybox）、`/bin/zsh`、甚至根本不是 shell 的东西。
+
+填进去的内容用 `beacon_kube::exec::split` 切成 argv（只处理引号，不做展开 ——
+argv 是直接交给容器的，这一点和 Exec 页一致）。全是引号、切不出词时退回 `/bin/sh`，
+总比 exec 一个空命令强。
+
+**命令框也出现在失败/退出那条状态栏里。** "no such file or directory" 是 shell 最常见的
+死法，而它的答案就是换一个 shell —— 所以重试的入口就摆在报错旁边，而不是别的地方。
+`start()` 现在可以重复调用：换掉 `shell` 会让上一个 session 析构、WebSocket 关掉。
+
+**一个不加就会咬人的地方**：命令框在终端那棵元素树里，而终端根节点的 `on_key_down`
+会 `stop_propagation` 并把按键喂给 shell。输入框自己处理完按键之后事件继续往上冒泡，
+不拦住的话，**往框里敲的每个字符都会同时被送进 shell**。所以 handler 开头先问一句
+"命令框是不是正被聚焦"，是就直接返回。
+
+### 真机验证
+
+argocd 的 `argocd-application-controller-0`（容器里 bash 和 sh 都有）：
+
+- 空命令框 → 解析成那条回退链，状态 `running`，界面上是 bash 的提示符（截图）；
+- 填 `/bin/zsh` → 解析成 `["/bin/zsh"]`，状态 `failed`，容器运行时原话
+  `exec: "/bin/zsh": stat /bin/zsh: no such file or directory`，命令框和 Restart
+  就在这条错误旁边（截图）；
+- 在此基础上改成 `/bin/sh` 再 Restart → 状态回到 `running`。
+
+按钮和输入框本身没有被真的点过/敲过（老问题），验的是它们调用的 `demo_run` → `start()`
+往后的全部，以及三种状态下的渲染。
