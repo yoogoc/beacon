@@ -123,6 +123,13 @@ down. That costs a connection each, and buys the thing multi-select is mostly
 for: a cluster-wide list is refused outright for anyone whose RBAC is
 namespaced, which is exactly the person picking namespaces by hand.
 
+Right-click an object row for actions specific to its kind. Pods offer logs,
+exec, shell and declared ports; workloads offer restart or scale where the API
+supports them; ConfigMaps and Secrets open directly to their Data tab. YAML,
+copying the name and applicable write actions remain available across kinds.
+Write actions respect the current RBAC answer, and a menu action stays bound
+to the object that was right-clicked.
+
 ## ConfigMaps and Secrets
 
 Both get a **Data** tab: one text box per key, instead of the YAML pane. That

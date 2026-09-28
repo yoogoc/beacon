@@ -29,7 +29,7 @@ use nucleo_matcher::Matcher;
 
 use crate::bridge::{Bridge, drain_into};
 use crate::catalog::{Catalog, Entry};
-use crate::detail::{DetailClosed, DetailView};
+use crate::detail::{DetailClosed, DetailTab, DetailView};
 use crate::palette::Sources;
 use crate::prompt::{Ask, Prompt, PromptEvent};
 use crate::table::ResourceTable;
@@ -311,6 +311,11 @@ impl ClusterView {
         self.kind.as_deref()
     }
 
+    /// Snapshot used to build a row's menu without borrowing its table again.
+    pub(crate) fn menu_context(&self) -> Option<(Arc<Kind>, Option<Arc<Rules>>)> {
+        Some((self.kind.clone()?, self.rules.clone()))
+    }
+
     /// Everything the command palette can offer about this cluster.
     ///
     /// A snapshot: the palette is open for seconds, and a list that shifted
@@ -368,7 +373,17 @@ impl ClusterView {
         let Some(selected) = self.selected(cx) else {
             return;
         };
-        let Some(namespace) = selected.namespace.clone() else {
+        self.start_forward_for(selected, remote_port, window, cx);
+    }
+
+    pub(crate) fn start_forward_for(
+        &mut self,
+        target: ObjectRef,
+        remote_port: u16,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(namespace) = target.namespace.clone() else {
             return;
         };
 
@@ -377,7 +392,7 @@ impl ClusterView {
         cx.notify();
 
         let session = self.session.clone();
-        let pod = selected.name.clone();
+        let pod = target.name.clone();
         // A local port of 0 asks the operating system for a free one. Picking
         // a number ourselves means a clash with whatever is already listening.
         let opening = Bridge::global(cx)
@@ -457,20 +472,35 @@ impl ClusterView {
 
     /// Starts an operation, asking first when it needs asking.
     pub fn start(&mut self, operation: Operation, window: &mut Window, cx: &mut Context<Self>) {
-        let (Some(kind), Some(target)) = (self.kind.clone(), self.selected(cx)) else {
+        let Some(target) = self.selected(cx) else {
+            return;
+        };
+        self.start_for(target, operation, window, cx);
+    }
+
+    /// Runs a row action against the object that was right-clicked, even if
+    /// selection or sort order changes while a confirmation prompt is open.
+    pub(crate) fn start_for(
+        &mut self,
+        target: ObjectRef,
+        operation: Operation,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(kind) = self.kind.clone() else {
             return;
         };
 
         // Restarting is disruptive but not destructive, and it is exactly what
         // the menu item says. Deleting has no undo; scaling needs a number.
         if matches!(operation, Operation::Restart) {
-            self.run(operation, window, cx);
+            self.run_for(target, operation, window, cx);
             return;
         }
 
         let ask = Ask {
             operation,
-            target,
+            target: target.clone(),
             kind: SharedString::from(kind.resource.kind.clone()),
         };
         let prompt = cx.new(|cx| Prompt::new(ask, window, cx));
@@ -478,10 +508,10 @@ impl ClusterView {
         cx.subscribe_in(
             &prompt,
             window,
-            |view, _, event: &PromptEvent, window, cx| {
+            move |view, _, event: &PromptEvent, window, cx| {
                 view.prompt = None;
                 if let PromptEvent::Confirmed(operation) = event {
-                    view.run(operation.clone(), window, cx);
+                    view.run_for(target.clone(), operation.clone(), window, cx);
                 }
                 cx.notify();
             },
@@ -493,8 +523,14 @@ impl ClusterView {
     }
 
     /// Sends one operation, and reports what came back.
-    fn run(&mut self, operation: Operation, window: &mut Window, cx: &mut Context<Self>) {
-        let (Some(kind), Some(target)) = (self.kind.clone(), self.selected(cx)) else {
+    fn run_for(
+        &mut self,
+        target: ObjectRef,
+        operation: Operation,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(kind) = self.kind.clone() else {
             return;
         };
 
@@ -612,6 +648,17 @@ impl ClusterView {
     pub fn reveal(&mut self, key: &ObjectRef, window: &mut Window, cx: &mut Context<Self>) {
         self.clear_filter(window, cx);
 
+        self.open_target(key, DetailTab::Overview, window, cx);
+    }
+
+    /// Opens the exact row and detail section chosen from its context menu.
+    pub(crate) fn open_target(
+        &mut self,
+        key: &ObjectRef,
+        tab: DetailTab,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let row = self.table.read(cx).delegate().row_of(key);
         let Some(row) = row else {
             // The palette searched the whole store, so this means the object
@@ -625,6 +672,9 @@ impl ClusterView {
             state.scroll_to_row(row, cx);
         });
         self.open_detail(row, window, cx);
+        if let Some(detail) = self.detail.clone() {
+            detail.update(cx, |detail, cx| detail.select(tab, window, cx));
+        }
     }
 
     /// Closes the detail panel, unless Escape belongs to something inside it.
@@ -986,6 +1036,10 @@ impl ClusterView {
     }
 
     fn listen(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let view = cx.entity().downgrade();
+        self.table.update(cx, move |table, _| {
+            table.delegate_mut().set_context_view(view);
+        });
         let table = cx.subscribe_in(
             &self.table.clone(),
             window,

@@ -264,7 +264,10 @@ impl DetailView {
         cx.notify();
     }
 
-    fn select(&mut self, tab: DetailTab, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn select(&mut self, tab: DetailTab, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.tabs.contains(&tab) {
+            return;
+        }
         if self.tab == tab {
             return;
         }

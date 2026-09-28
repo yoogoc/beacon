@@ -13,7 +13,8 @@
 use beacon_columns::{
     Cell, CellValue, ColumnDef, ColumnSet, ColumnSource, ColumnWidth, Timestamp, Usage,
 };
-use beacon_kube::{Delta, DeltaBatch, DynamicObject, Metrics, ObjectRef, ResourceStore};
+use beacon_kube::{Delta, DeltaBatch, DynamicObject, Metrics, ObjectRef, ResourceStore, data};
+use gpui_kit::component::menu::{PopupMenu, PopupMenuItem};
 use gpui_kit::component::table::{Column, ColumnSort, TableDelegate, TableState};
 use gpui_kit::component::{ActiveTheme as _, h_flex};
 use gpui_kit::*;
@@ -23,6 +24,9 @@ use nucleo_matcher::{
 };
 use std::sync::Arc;
 
+use crate::actions;
+use crate::cluster::ClusterView;
+use crate::detail::DetailTab;
 use crate::status;
 use crate::theme::BeaconTheme as _;
 
@@ -32,6 +36,7 @@ use crate::theme::BeaconTheme as _;
 const FLEX_UNIT: f32 = 140.0;
 
 pub struct ResourceTable {
+    context_view: Option<WeakEntity<ClusterView>>,
     columns: ColumnSet,
     store: ResourceStore,
     /// The store in display order. Rebuilt whenever the store or the sort
@@ -71,6 +76,7 @@ enum Sort {
 impl ResourceTable {
     pub fn new(columns: ColumnSet) -> Self {
         Self {
+            context_view: None,
             columns,
             store: ResourceStore::new(),
             rows: Vec::new(),
@@ -81,6 +87,11 @@ impl ResourceTable {
             metrics: Metrics::default(),
             loading: false,
         }
+    }
+
+    /// The containing cluster handles actions on the row under the pointer.
+    pub fn set_context_view(&mut self, view: WeakEntity<ClusterView>) {
+        self.context_view = Some(view);
     }
 
     /// Whether the first list is still on its way.
@@ -470,6 +481,102 @@ impl TableDelegate for ResourceTable {
         cx.notify();
     }
 
+    fn context_menu(
+        &mut self,
+        row: usize,
+        mut menu: PopupMenu,
+        _window: &mut Window,
+        cx: &mut Context<TableState<Self>>,
+    ) -> PopupMenu {
+        let (Some(target), Some(view)) = (self.key_at(row).cloned(), self.context_view.clone())
+        else {
+            return menu;
+        };
+        let Some(cluster) = view.upgrade() else {
+            return menu;
+        };
+        let Some((kind, rules)) = cluster.read(cx).menu_context() else {
+            return menu;
+        };
+        let Some(object) = self.object(&target) else {
+            return menu;
+        };
+        let replicas = object
+            .data
+            .get("spec")
+            .and_then(|spec| spec.get("replicas"))
+            .and_then(serde_json::Value::as_i64)
+            .unwrap_or(1) as i32;
+        let group = kind.resource.group.as_str();
+        let name = kind.resource.kind.as_str();
+        let is_pod = group.is_empty() && name == "Pod";
+
+        menu = menu
+            .label(format!("{name} · {}", target.name))
+            .item(detail_item(
+                "Open details",
+                &view,
+                &target,
+                DetailTab::Overview,
+            ));
+
+        if data::is_keyed(group, name) {
+            menu = menu.item(detail_item("View data", &view, &target, DetailTab::Data));
+        }
+        if is_pod {
+            menu = menu.item(detail_item("View logs", &view, &target, DetailTab::Logs));
+            let may_exec = actions::may_exec(rules.as_deref());
+            menu = menu
+                .item(
+                    detail_item("Run command", &view, &target, DetailTab::Exec).disabled(!may_exec),
+                )
+                .item(
+                    detail_item("Open shell", &view, &target, DetailTab::Shell).disabled(!may_exec),
+                );
+
+            let ports = actions::ports(&object.data);
+            if !ports.is_empty() && target.namespace.is_some() {
+                for port in ports {
+                    let forward_view = view.clone();
+                    let forward_target = target.clone();
+                    menu = menu.item(PopupMenuItem::new(format!("Forward port {port}")).on_click(
+                        move |_, window, cx| {
+                            let _ = forward_view.update(cx, |cluster, cx| {
+                                cluster.start_forward_for(forward_target.clone(), port, window, cx);
+                            });
+                        },
+                    ));
+                }
+            }
+        }
+        menu = menu.item(detail_item("View YAML", &view, &target, DetailTab::Yaml));
+
+        let choices = actions::available(&kind, rules.as_deref(), replicas);
+        if !choices.is_empty() {
+            menu = menu.separator();
+        }
+        for choice in choices {
+            let action_view = view.clone();
+            let action_target = target.clone();
+            let operation = choice.operation;
+            menu = menu.item(
+                PopupMenuItem::new(choice.label)
+                    .disabled(!choice.allowed)
+                    .on_click(move |_, window, cx| {
+                        let _ = action_view.update(cx, |cluster, cx| {
+                            cluster.start_for(action_target.clone(), operation.clone(), window, cx);
+                        });
+                    }),
+            );
+        }
+
+        let copy_name = target.name.clone();
+        menu.separator()
+            .item(PopupMenuItem::new("Copy name").on_click(move |_, _, cx| {
+                cx.write_to_clipboard(ClipboardItem::new_string(copy_name.clone()));
+            }))
+    }
+
     fn render_td(
         &mut self,
         row: usize,
@@ -519,6 +626,21 @@ impl TableDelegate for ResourceTable {
             .map(|(_, value)| value.display().to_string())
             .unwrap_or_default()
     }
+}
+
+fn detail_item(
+    label: &'static str,
+    view: &WeakEntity<ClusterView>,
+    target: &ObjectRef,
+    tab: DetailTab,
+) -> PopupMenuItem {
+    let view = view.clone();
+    let target = target.clone();
+    PopupMenuItem::new(label).on_click(move |_, window, cx| {
+        let _ = view.update(cx, |cluster, cx| {
+            cluster.open_target(&target, tab, window, cx);
+        });
+    })
 }
 
 #[cfg(test)]
