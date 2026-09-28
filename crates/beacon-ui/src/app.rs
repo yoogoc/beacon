@@ -108,6 +108,9 @@ pub struct BeaconApp {
     /// one keyboard shortcut fires -- ⌘K included, which is why the palette
     /// could only ever be opened from instrumentation.
     focus: FocusHandle,
+    /// The tab bar's scroll, kept for one thing: `max_offset` is how the bar
+    /// says its tabs no longer fit. See [`Self::render_tabs`].
+    tab_scroll: ScrollHandle,
     contexts: Result<Contexts, String>,
     context_picker: Option<Entity<SelectState<SearchableVec<SharedString>>>>,
 
@@ -184,6 +187,7 @@ impl BeaconApp {
 
         let mut this = Self {
             focus: cx.focus_handle(),
+            tab_scroll: ScrollHandle::new(),
             contexts,
             context_picker,
             sessions: HashMap::new(),
@@ -687,19 +691,46 @@ impl BeaconApp {
                 )
         });
 
+        let new_tab = div().pl_1().child(
+            Button::new("new-tab")
+                .xsmall()
+                .ghost()
+                .label("+")
+                .tooltip("Open another tab on this cluster")
+                .on_click(cx.listener(|view, _, window, cx| view.new_tab(window, cx))),
+        );
+
+        // Where + goes depends on whether the tabs still fit.
+        //
+        // `last_empty_space` is inside the bar's scroll area, just after the
+        // last tab, which is where it belongs while there is room. `suffix`
+        // is outside it, pinned to the right edge. Once the tabs overflow,
+        // anything inside the scroll area can be scrolled out of reach, and a
+        // button you cannot find is worse than one that is not where you
+        // expected -- so at that point + moves to the edge and stays put.
+        //
+        // The bar reports the overflow itself, through the scroll handle's
+        // `max_offset`, measured on the frame just drawn. That makes the
+        // switch one frame late, which nobody can see, and costs no
+        // measurement of our own. The few pixels of slack are hysteresis:
+        // moving + out of the scroll area makes the content narrower, and
+        // without them the two states could trade places forever.
+        let overflowing = self.tab_scroll.max_offset().x > px(8.);
+
         TabBar::new("cluster-tabs")
+            .track_scroll(&self.tab_scroll)
             .small()
             .max_width(TAB_WIDTH)
             .selected_index(self.active)
             .children(tabs)
-            .suffix(
-                Button::new("new-tab")
-                    .xsmall()
-                    .ghost()
-                    .label("+")
-                    .tooltip("Open another tab on this cluster")
-                    .on_click(cx.listener(|view, _, window, cx| view.new_tab(window, cx))),
-            )
+            // Every tab by name, for when there are more of them than fit.
+            // It also satisfies the component's rule that `last_empty_space`
+            // is only drawn when there is a suffix or a menu.
+            .menu(true)
+            .map(|bar| match overflowing {
+                true => bar.suffix(new_tab),
+                false => bar.last_empty_space(new_tab),
+            })
     }
 
     fn render_body(&self, cx: &mut Context<Self>) -> AnyElement {

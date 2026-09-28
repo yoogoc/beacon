@@ -33,6 +33,12 @@ cluster — so "Pods here, Deployments over there, and another cluster beside
 them" is three tabs rather than three windows. Each tab keeps its own kind,
 namespace, filter, selection and detail panel.
 
+The `+` sits just after the last tab while the tabs still fit, and moves to
+the right edge once they do not — a button inside a scrolling row can be
+scrolled out of reach, and one you cannot find is worse than one that is not
+where you expected. The bar says which case it is in through its own scroll
+offset.
+
 ```
 ⌘T          another tab on the cluster in front
 ⌘W          close this tab
