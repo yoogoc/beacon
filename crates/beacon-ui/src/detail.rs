@@ -11,11 +11,11 @@ use std::sync::Arc;
 
 use beacon_columns::{EventSummary, Timestamp, format_age, format_duration};
 use beacon_kube::{
-    Applied, ClusterSession, Conflict, DynamicObject, Kind, LogBuffer, LogEvent, LogOptions,
-    ObjectRef, Operation, ResourceStore, Rules, WatchKey,
+    Applied, ClusterSession, Conflict, DataEntry, DynamicObject, Kind, LogBuffer, LogEvent,
+    LogOptions, ObjectRef, Operation, ResourceStore, Rules, WatchKey, data,
 };
 use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::input::{Editor, EditorState, Input, InputState};
+use gpui_kit::component::input::{Editor, EditorState, Input, InputState, Textarea, TextareaState};
 use gpui_kit::component::spinner::Spinner;
 use gpui_kit::component::tab::{Tab, TabBar};
 use gpui_kit::component::{ActiveTheme as _, Disableable as _, Sizable as _, h_flex, v_flex};
@@ -29,6 +29,8 @@ use crate::theme::{BeaconTheme as _, Tone};
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DetailTab {
     Overview,
+    /// A ConfigMap's or Secret's keys, one editor each.
+    Data,
     Yaml,
     Events,
     Logs,
@@ -40,7 +42,11 @@ impl DetailTab {
     /// The tabs for a kind. Logs are a Pod idea; offering them on a ConfigMap
     /// would be a tab that can only ever say "not applicable".
     fn for_kind(kind: &Kind) -> Vec<Self> {
-        let mut tabs = vec![Self::Overview, Self::Yaml, Self::Events];
+        let mut tabs = vec![Self::Overview];
+        if data::is_keyed(&kind.resource.group, &kind.resource.kind) {
+            tabs.push(Self::Data);
+        }
+        tabs.extend([Self::Yaml, Self::Events]);
         if kind.resource.kind == "Pod" && kind.resource.group.is_empty() {
             tabs.push(Self::Logs);
             tabs.push(Self::Exec);
@@ -52,6 +58,7 @@ impl DetailTab {
     fn label(&self) -> &'static str {
         match self {
             Self::Overview => "Overview",
+            Self::Data => "Data",
             Self::Yaml => "YAML",
             Self::Events => "Events",
             Self::Logs => "Logs",
@@ -59,6 +66,21 @@ impl DetailTab {
             Self::Shell => "Shell",
         }
     }
+}
+
+/// One key of a ConfigMap or Secret, and the box its value is edited in.
+struct DataKey {
+    entry: DataEntry,
+    /// `None` for a value that is not text. It is described, not edited:
+    /// putting a TLS key through a text box would corrupt it on save.
+    editor: Option<Entity<TextareaState>>,
+}
+
+/// What the Data tab has to show.
+enum Data {
+    /// Nobody has opened the tab yet, so no editors have been built.
+    Unopened,
+    Ready(Vec<DataKey>),
 }
 
 /// What the YAML tab has to show.
@@ -92,6 +114,12 @@ pub struct DetailView {
     tab: DetailTab,
 
     yaml: Yaml,
+    /// The Data tab's editors, built when it is first opened.
+    data: Data,
+    /// A Secret's values start covered. They are the one thing in this
+    /// application that somebody might not want on screen while a colleague
+    /// walks past, and an editor is not a place to keep them by default.
+    revealed: bool,
     yaml_editor: Entity<EditorState>,
     apply: Apply,
 
@@ -171,6 +199,8 @@ impl DetailView {
             object,
             tab: DetailTab::Overview,
             yaml: Yaml::Unopened,
+            data: Data::Unopened,
+            revealed: false,
             yaml_editor,
             apply: Apply::Idle,
             events: ResourceStore::new(),
@@ -240,6 +270,7 @@ impl DetailView {
         }
         self.tab = tab;
         match tab {
+            DetailTab::Data if matches!(self.data, Data::Unopened) => self.load_data(window, cx),
             DetailTab::Yaml if matches!(self.yaml, Yaml::Unopened) => self.load_yaml(window, cx),
             DetailTab::Logs if self.log_status == LogStatus::Unopened => {
                 self.follow_logs(window, cx)
@@ -344,6 +375,14 @@ impl DetailView {
             }
         };
 
+        self.send(object, force, window, cx);
+    }
+
+    /// Applies one object and reports what came back.
+    ///
+    /// Shared by the YAML tab and the Data tab so that a conflict, a refusal
+    /// and a webhook's rewrite all read the same whichever one you edited in.
+    fn send(&mut self, object: Value, force: bool, window: &mut Window, cx: &mut Context<Self>) {
         self.apply = Apply::Running;
         cx.notify();
 
@@ -373,7 +412,11 @@ impl DetailView {
                         // Re-read rather than trust the echo: defaulting and
                         // admission webhooks both change what was sent.
                         view.yaml = Yaml::Unopened;
-                        view.load_yaml(window, cx);
+                        view.data = Data::Unopened;
+                        match view.tab {
+                            DetailTab::Data => view.load_data(window, cx),
+                            _ => view.load_yaml(window, cx),
+                        }
                         Apply::Done
                     }
                     Ok(Ok(Applied::Conflict(conflict))) => Apply::Refused(Box::new(conflict)),
@@ -422,6 +465,66 @@ impl DetailView {
         }
 
         cx.notify();
+    }
+
+    /// Builds an editor per key from the object the table already holds.
+    ///
+    /// No fetch: unlike the YAML tab, nothing here was slimmed away -- `data`
+    /// survives the store untouched, and the only thing stripped is
+    /// `managedFields`.
+    fn load_data(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let keys = data::read(&self.object, self.kind.resource.kind == "Secret")
+            .into_iter()
+            .map(|entry| {
+                let editor = entry.text.clone().map(|text| {
+                    cx.new(|cx| {
+                        let mut state = TextareaState::new(window, cx).auto_grow(1, 12);
+                        state.set_value(text, window, cx);
+                        state
+                    })
+                });
+                DataKey { entry, editor }
+            })
+            .collect();
+
+        self.data = Data::Ready(keys);
+        cx.notify();
+    }
+
+    /// Writes the edited values back into the object and applies it.
+    ///
+    /// The whole object goes, not a `data`-only patch. That is what the YAML
+    /// tab does, it keeps the two paths on one set of Server-Side Apply
+    /// semantics, and it means the values nobody edited -- a binary key, a
+    /// label -- travel back exactly as they arrived rather than depending on
+    /// which fields this field manager happens to own.
+    pub fn apply_data(&mut self, force: bool, window: &mut Window, cx: &mut Context<Self>) {
+        let Data::Ready(keys) = &self.data else {
+            return;
+        };
+
+        let secret = self.kind.resource.kind == "Secret";
+        let mut object = (*self.object).clone();
+
+        for key in keys {
+            let Some(editor) = &key.editor else {
+                continue;
+            };
+            let text = editor.read(cx).value().to_string();
+            let encoded = data::encode(key.entry.field, secret, &text);
+            object.data[key.entry.field.name()][&key.entry.key] = Value::String(encoded);
+        }
+
+        let object = match serde_json::to_value(&object) {
+            Ok(object) => object,
+            Err(error) => {
+                self.apply = Apply::Failed(error.to_string());
+                cx.notify();
+                return;
+            }
+        };
+
+        self.send(object, force, window, cx);
     }
 
     /// Fetches the object in full and renders it as YAML.
@@ -758,6 +861,168 @@ impl DetailView {
                             .child(container.image),
                     )
             }))
+    }
+
+    /// One editor per key, and one Save for all of them.
+    ///
+    /// The point of the tab: a Secret read through YAML is base64, which is
+    /// not something a person can edit, and a ConfigMap's values are folded
+    /// into a YAML block scalar where indentation is part of the syntax. Here
+    /// each value is just its own text.
+    fn render_data(&self, cx: &mut Context<Self>) -> AnyElement {
+        let Data::Ready(keys) = &self.data else {
+            return self.notice("Reading the data…", Tone::Progressing, cx);
+        };
+        if keys.is_empty() {
+            return self.notice("This one has no data.", Tone::Unknown, cx);
+        }
+
+        let may_apply = crate::actions::may_apply(&self.kind, self.rules.as_deref());
+        let secret = self.kind.resource.kind == "Secret";
+        let covered = secret && !self.revealed;
+
+        let rows = keys.iter().map(|key| {
+            let bytes = format!("{} bytes", key.entry.bytes);
+            let field = if key.entry.field == beacon_kube::DataField::BinaryData {
+                "binaryData"
+            } else {
+                ""
+            };
+
+            v_flex()
+                .w_full()
+                .gap_1()
+                .child(
+                    h_flex()
+                        .w_full()
+                        .gap_2()
+                        .items_baseline()
+                        .child(
+                            div()
+                                .font_family("monospace")
+                                .text_sm()
+                                .font_weight(FontWeight::MEDIUM)
+                                .child(key.entry.key.clone()),
+                        )
+                        .child(
+                            div()
+                                .text_xs()
+                                .text_color(cx.theme().muted_foreground)
+                                .child(bytes),
+                        )
+                        .when(!field.is_empty(), |this| {
+                            this.child(
+                                div()
+                                    .text_xs()
+                                    .text_color(cx.theme().muted_foreground)
+                                    .child(field),
+                            )
+                        }),
+                )
+                .child(match (&key.editor, covered) {
+                    // Hidden rather than masked: a masked box still invites
+                    // typing into something you cannot read.
+                    (Some(_), true) => div()
+                        .w_full()
+                        .px_2()
+                        .py_1p5()
+                        .rounded_md()
+                        .bg(cx.theme().muted.opacity(0.5))
+                        .text_xs()
+                        .text_color(cx.theme().muted_foreground)
+                        .child("Hidden. Reveal to read or edit it.")
+                        .into_any_element(),
+                    (Some(editor), false) => Textarea::new(editor)
+                        .readonly(!may_apply)
+                        .into_any_element(),
+                    (None, _) => div()
+                        .w_full()
+                        .px_2()
+                        .py_1p5()
+                        .rounded_md()
+                        .bg(cx.theme().muted.opacity(0.5))
+                        .text_xs()
+                        .text_color(cx.theme().muted_foreground)
+                        .child("Not text. Editing it here would corrupt it.")
+                        .into_any_element(),
+                })
+        });
+
+        v_flex()
+            .size_full()
+            .child(
+                div()
+                    .id("data-keys")
+                    .flex_1()
+                    .min_h_0()
+                    .overflow_y_scroll()
+                    .p_3()
+                    .child(v_flex().w_full().gap_4().children(rows)),
+            )
+            .child(self.render_data_bar(secret, may_apply, cx))
+            .into_any_element()
+    }
+
+    /// The bar under the keys: the same status line the YAML tab has, a
+    /// reveal for Secrets, and Save.
+    fn render_data_bar(
+        &self,
+        secret: bool,
+        may_apply: bool,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let running = matches!(self.apply, Apply::Running);
+        let revealed = self.revealed;
+
+        h_flex()
+            .w_full()
+            .px_3()
+            .py_2()
+            .gap_3()
+            .items_start()
+            .justify_between()
+            .border_t_1()
+            .border_color(cx.theme().border)
+            .child(div().flex_1().child(self.render_apply_status(cx)))
+            .child(
+                h_flex()
+                    .gap_2()
+                    .items_center()
+                    .flex_shrink_0()
+                    .when(matches!(self.apply, Apply::Refused(_)), |this| {
+                        this.child(
+                            Button::new("force-apply-data")
+                                .danger()
+                                .small()
+                                .label("Save anyway")
+                                .on_click(cx.listener(|view, _, window, cx| {
+                                    view.apply_data(true, window, cx)
+                                })),
+                        )
+                    })
+                    .when(secret, |this| {
+                        this.child(
+                            Button::new("reveal")
+                                .ghost()
+                                .small()
+                                .label(if revealed { "Hide" } else { "Reveal" })
+                                .on_click(cx.listener(|view, _, _, cx| {
+                                    view.revealed = !view.revealed;
+                                    cx.notify();
+                                })),
+                        )
+                    })
+                    .child(
+                        Button::new("save-data")
+                            .primary()
+                            .small()
+                            .label(if running { "Saving…" } else { "Save" })
+                            .disabled(!may_apply || running || (secret && !revealed))
+                            .on_click(cx.listener(|view, _, window, cx| {
+                                view.apply_data(false, window, cx)
+                            })),
+                    ),
+            )
     }
 
     fn render_yaml(&self, cx: &mut Context<Self>) -> AnyElement {
@@ -1419,6 +1684,7 @@ impl Render for DetailView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let body = match self.tab {
             DetailTab::Overview => self.render_overview(cx),
+            DetailTab::Data => self.render_data(cx),
             DetailTab::Yaml => self.render_yaml(cx),
             DetailTab::Events => self.render_events(cx),
             DetailTab::Logs => self.render_logs(cx),

@@ -7,6 +7,7 @@
 
 pub mod access;
 pub mod config;
+pub mod data;
 pub mod discovery;
 pub mod error;
 pub mod exec;
@@ -23,6 +24,7 @@ pub mod terminal;
 pub mod watch;
 
 pub use access::Rules;
+pub use data::{Entry as DataEntry, Field as DataField};
 pub use discovery::{Discovery, Kind};
 pub use error::{Error, Result};
 pub use exec::Output;

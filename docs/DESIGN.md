@@ -1137,3 +1137,35 @@ ClusterView 只保留 `close_detail()` 这个方法（终端聚焦时不关的�
 
 小瑕疵，没改：侧栏宽 232px，`flowcontrol.apiserver.k8s.io` 这种长名字会截断成
 `flowcontrol.apiserver.k8s`。本机这些 group 名字都能靠前缀区分，所以没为它加宽侧栏。
+
+### 补：ConfigMap / Secret 按 key 编辑（2026-09-28）
+
+这两个 kind 的 `data` 之前只能在 YAML 页里改，而那正是最难改的地方：Secret 的每个值都是
+base64，人根本没法直接编辑；ConfigMap 的多行值折进 YAML 的块标量里，缩进成了语法的一部分。
+现在多一个 **Data** 页，一个 key 一个文本框。
+
+编解码放在 `beacon-kube::data`（纯函数、有单测），不在 UI 里：ConfigMap 的 `data` 是明文、
+`binaryData` 是 base64，Secret 的 `data` 全是 base64 —— 这是领域知识，不是绘制逻辑。
+
+- **不是文本的值不给编辑**（TLS 私钥、keystore）。只显示字节数，说明理由。放进文本框再存回去
+  就毁了。
+- **Secret 默认盖住**，要按 Reveal 才能读和改，Save 在盖住时是禁用的。名字和字节数照常显示 ——
+  那部分不敏感，而且是定位用的。
+- **保存发的是整个对象**，不是只发 `data` 的补丁。跟 YAML 页同一条 SSA 路径（`send` 现在是
+  两者共用的），冲突、拒绝、webhook 改写的提示完全一致；而且没人动过的值——二进制 key、
+  标签——原样回去，不用琢磨这个 field manager 到底拥有哪些字段。
+
+**真机上抓到一个 bug，只有真集群会暴露。** 第一版靠 `object.types.kind == "Secret"` 判断要不
+要解码。**从 watch 来的对象没有 `apiVersion`/`kind`** —— 那是列表头上带一次、给全体用的 ——
+于是每个 Secret 都被当成 ConfigMap，编辑框里显示的是 base64。对照 `kubectl` 的解码长度才发现：
+Beacon 说 8 字节，kubectl 说 5 —— 8 正是 5 字节 base64 之后的长度。改成由调用方传
+`secret: bool`（它本来就知道 kind），并补了一个把 `types` 置空的回归测试。
+
+**真机验证**：ConfigMap `kube-root-ca.crt` 的 Data 页列出 `ca.crt`、570 字节，与 `kubectl`
+一致，PEM 在可编辑的文本框里（截图）。Secret `argo-s3` 两个 key 默认盖住、Save 禁用（截图）；
+修完之后日志里的解码长度 5 / 8 字节与 `kubectl base64 -d` 的长度一致 —— **只记长度，不记值**，
+那是真凭据，不进日志也不进截图。
+
+**没做**：Data 页不能新增或删除 key（改现有值 + 保存）。需要的话是另一件事。
+**没验**：Save 没有真的按过（真集群上的写操作一律只跑到 dry-run 为止，见 M4 记录）——
+`apply_data` 走的是 `apply` 完全相同的 `send`，验过的是它之前那段把值写回对象的代码。

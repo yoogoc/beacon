@@ -91,6 +91,20 @@ down. That costs a connection each, and buys the thing multi-select is mostly
 for: a cluster-wide list is refused outright for anyone whose RBAC is
 namespaced, which is exactly the person picking namespaces by hand.
 
+## ConfigMaps and Secrets
+
+Both get a **Data** tab: one text box per key, instead of the YAML pane. That
+is the whole point — every value of a Secret is base64, which is not
+something a person can edit, and a ConfigMap's multi-line values are folded
+into a YAML block scalar where the indentation is syntax.
+
+A value that is not text — a TLS key, a keystore — is described and not
+offered for editing, because putting it through a text box would corrupt it
+on save. A Secret's values start covered, and Save is disabled until they are
+revealed. Saving sends the whole object through the same Server-Side Apply
+path the YAML tab uses, so a conflict reads the same either way and the
+values nobody touched travel back exactly as they arrived.
+
 ## The sidebar
 
 Built-in kinds are filed under the seven headings people already think in —
