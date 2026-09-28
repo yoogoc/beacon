@@ -20,6 +20,14 @@ which also answers whether it parses at all, without writing to the cluster to
 find out. Editing it applies with Server-Side Apply; when another field
 manager owns what you changed, the refusal names the fields and their owner.
 
+Pod exec has its own permissions: WebSocket exec uses `get` on `pods/exec`,
+while SPDY uses `create` (newer API servers also require `create` for
+WebSockets). When an upgrade is refused, Shell and Exec fall back to a local
+`kubectl` using the selected context, namespace and container. Install
+`kubectl` on Beacon's PATH to use this compatibility path. Shell keeps a real
+PTY for interactive input and resizing, and closing the pane ends the child.
+Permission preflight is a hint; EKS webhook rules can be incomplete.
+
 Pods also get logs, a one-shot command runner and an interactive shell — the
 shell's command is a box you can change, empty meaning bash falling back to
 sh, and it sits beside the error when one did not exist. The shell is in

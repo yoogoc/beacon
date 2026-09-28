@@ -10,6 +10,12 @@
 //! What lives here is the plumbing, which is a stream in one direction and two
 //! channels in the other.
 
+use std::{
+    pin::Pin,
+    task::{Context, Poll},
+    time::Duration,
+};
+
 use futures::{Sink, SinkExt as _, Stream, channel::mpsc};
 use k8s_openapi::api::core::v1::Pod;
 use kube::{
@@ -21,10 +27,40 @@ use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 /// What the container wrote, and what became of the session.
 #[derive(Debug)]
 pub enum TerminalEvent {
+    Connected,
     Output(Vec<u8>),
     /// The shell exited, which ends the session.
     Closed,
     Failed(String),
+}
+
+struct Events {
+    receiver: mpsc::UnboundedReceiver<TerminalEvent>,
+    task: tokio::task::JoinHandle<()>,
+}
+
+impl Stream for Events {
+    type Item = TerminalEvent;
+
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        Pin::new(&mut self.receiver).poll_next(cx)
+    }
+}
+
+impl Drop for Events {
+    fn drop(&mut self) {
+        self.task.abort();
+    }
+}
+
+/// Upgrade failures happen before the remote command starts, so retrying
+/// those through kubectl cannot execute the command twice. Never retry a
+/// running process, an authentication failure, or a network timeout.
+pub(crate) fn can_fallback(error: &kube::Error) -> bool {
+    matches!(error,
+        kube::Error::UpgradeConnection(kube::client::UpgradeConnectionError::ProtocolSwitch(status))
+        if matches!(status.as_u16(), 400 | 403 | 404 | 405 | 426 | 501)
+    )
 }
 
 /// The writing end of a session.
@@ -68,6 +104,7 @@ pub const SHELLS: [&str; 3] = ["/bin/bash", "/bin/sh", "sh"];
 pub fn attach(
     client: kube::Client,
     runtime: &tokio::runtime::Handle,
+    context: String,
     namespace: String,
     pod: String,
     container: Option<String>,
@@ -77,18 +114,32 @@ pub fn attach(
     let (resize_tx, mut resize_rx) = mpsc::unbounded::<(u16, u16)>();
     let (events_tx, events_rx) = mpsc::unbounded();
 
-    runtime.spawn(async move {
+    let task = runtime.spawn(async move {
         let api: Api<Pod> = Api::namespaced(client, &namespace);
 
         let mut params = AttachParams::interactive_tty();
-        if let Some(container) = container {
+        if let Some(container) = &container {
             params = params.container(container);
         }
 
-        let mut process = match api.exec(&pod, command, &params).await {
-            Ok(process) => process,
-            Err(error) => {
-                let _ = events_tx.unbounded_send(TerminalEvent::Failed(error.to_string()));
+        let mut process = match tokio::time::timeout(Duration::from_secs(30), api.exec(&pod, command.clone(), &params)).await {
+            Ok(Ok(process)) => process,
+            Ok(Err(error)) if can_fallback(&error) => {
+                tracing::info!(%context, %namespace, %pod, %error, "WebSocket exec refused; falling back to kubectl/SPDY");
+                let target = crate::kubectl::Target {
+                    context: &context, namespace: &namespace, pod: &pod, container: container.as_deref(),
+                };
+                if let Err(error) = crate::kubectl::attach(target, &command, &mut input_rx, &mut resize_rx, &events_tx).await {
+                    let _ = events_tx.unbounded_send(TerminalEvent::Failed(error));
+                }
+                return;
+            }
+            Ok(Err(error)) => {
+                let _ = events_tx.unbounded_send(TerminalEvent::Failed(crate::error::diagnose(&error)));
+                return;
+            }
+            Err(_) => {
+                let _ = events_tx.unbounded_send(TerminalEvent::Failed("Timed out after 30s while connecting to the container. Check the cluster connection and try again.".into()));
                 return;
             }
         };
@@ -104,12 +155,19 @@ pub fn attach(
         // reported. Without it a distroless container -- which has no shell at
         // all -- produces a pane that opens and closes with nothing said.
         let status = process.take_status();
+        if events_tx.unbounded_send(TerminalEvent::Connected).is_err() {
+            return;
+        }
 
         let mut chunk = [0u8; 8192];
         loop {
             tokio::select! {
                 read = stdout.read(&mut chunk) => match read {
-                    Ok(0) | Err(_) => break,
+                    Ok(0) => break,
+                    Err(error) => {
+                        let _ = events_tx.unbounded_send(TerminalEvent::Failed(error.to_string()));
+                        return;
+                    }
                     Ok(read) => {
                         if events_tx
                             .unbounded_send(TerminalEvent::Output(chunk[..read].to_vec()))
@@ -123,16 +181,19 @@ pub fn attach(
                 },
                 typed = futures::StreamExt::next(&mut input_rx) => match typed {
                     Some(bytes) => {
-                        if stdin.write_all(&bytes).await.is_err() {
-                            break;
+                        if let Err(error) = stdin.write_all(&bytes).await {
+                            let _ = events_tx.unbounded_send(TerminalEvent::Failed(error.to_string()));
+                            return;
                         }
                         let _ = stdin.flush().await;
                     }
-                    None => break,
+                    None => return,
                 },
                 size = futures::StreamExt::next(&mut resize_rx) => {
-                    if let (Some((columns, rows)), Some(sizes)) = (size, sizes.as_mut()) {
-                        let _ = send_size(sizes, columns, rows).await;
+                    match (size, sizes.as_mut()) {
+                        (Some((columns, rows)), Some(sizes)) => { let _ = send_size(sizes, columns, rows).await; }
+                        (None, _) => return,
+                        _ => {},
                     }
                 }
             }
@@ -142,8 +203,9 @@ pub fn attach(
             Some(status) => status.await.and_then(failure_message),
             None => None,
         };
+        let transport_failure = process.join().await.err().map(|error| crate::error::diagnose(&error));
 
-        let _ = events_tx.unbounded_send(match failure {
+        let _ = events_tx.unbounded_send(match failure.or(transport_failure) {
             Some(failure) => TerminalEvent::Failed(failure),
             None => TerminalEvent::Closed,
         });
@@ -154,7 +216,10 @@ pub fn attach(
             input: input_tx,
             resize: resize_tx,
         },
-        events_rx,
+        Events {
+            receiver: events_rx,
+            task,
+        },
     )
 }
 
@@ -189,6 +254,54 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_rejected_upgrades_can_be_retried() {
+        for code in [400, 403, 404, 405, 426, 501] {
+            let error = kube::Error::UpgradeConnection(
+                kube::client::UpgradeConnectionError::ProtocolSwitch(code.try_into().unwrap()),
+            );
+            assert!(can_fallback(&error));
+        }
+        for code in [401, 429, 500, 503] {
+            let error = kube::Error::UpgradeConnection(
+                kube::client::UpgradeConnectionError::ProtocolSwitch(code.try_into().unwrap()),
+            );
+            assert!(!can_fallback(&error));
+        }
+    }
+
+    #[tokio::test]
+    async fn closing_a_pane_cancels_an_unfinished_handshake() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let config = kube::Config::new(
+            format!("http://{}", listener.local_addr().unwrap())
+                .parse()
+                .unwrap(),
+        );
+        let client = kube::Client::try_from(config).unwrap();
+        let (terminal, events) = attach(
+            client,
+            &tokio::runtime::Handle::current(),
+            "unused".into(),
+            "default".into(),
+            "test".into(),
+            None,
+            vec!["sh".into()],
+        );
+        let (_connection, _) = tokio::time::timeout(Duration::from_secs(2), listener.accept())
+            .await
+            .unwrap()
+            .unwrap();
+        drop(events);
+        tokio::time::timeout(Duration::from_secs(2), async {
+            while !terminal.input.is_closed() {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("dropping the pane must abort the network task");
+    }
 
     /// A session that nobody is reading has to end, or the WebSocket and the
     /// shell behind it live until the process does.

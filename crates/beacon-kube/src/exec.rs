@@ -19,10 +19,10 @@ use crate::{Error, Result};
 ///
 /// Without this, `cat /dev/zero` or a command waiting on stdin holds a
 /// WebSocket open until the window closes.
-const TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+pub(crate) const TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
 
 /// Beyond this the pane is not showing output any more, it is showing a wall.
-const MAX_OUTPUT: usize = 1024 * 1024;
+pub(crate) const MAX_OUTPUT: usize = 1024 * 1024;
 
 /// What a command produced.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -89,6 +89,7 @@ pub fn split(command: &str) -> Vec<String> {
 /// Runs a command in a container and collects what it wrote.
 pub async fn run(
     client: &kube::Client,
+    context: &str,
     namespace: &str,
     pod: &str,
     container: Option<&str>,
@@ -110,15 +111,38 @@ pub async fn run(
         params = params.container(container);
     }
 
-    let mut process = api.exec(pod, command.to_vec(), &params).await?;
+    let mut process = match tokio::time::timeout(TIMEOUT, api.exec(pod, command.to_vec(), &params))
+        .await
+    {
+        Ok(Ok(process)) => process,
+        Ok(Err(error)) if crate::terminal::can_fallback(&error) => {
+            tracing::info!(%context, %namespace, %pod, %error, "WebSocket exec refused; falling back to kubectl/SPDY");
+            return crate::kubectl::run(
+                crate::kubectl::Target {
+                    context,
+                    namespace,
+                    pod,
+                    container,
+                },
+                command,
+            )
+            .await;
+        }
+        Ok(Err(error)) => return Err(error.into()),
+        Err(_) => {
+            return Err(Error::Forward {
+                what: "could not start command".into(),
+                cause: "timed out after 30s while connecting to the container".into(),
+            });
+        }
+    };
 
     let stdout = process.stdout();
     let stderr = process.stderr();
     let status = process.take_status();
 
     let collected = tokio::time::timeout(TIMEOUT, async move {
-        let out = read(stdout).await;
-        let err = read(stderr).await;
+        let (out, err) = tokio::join!(read(stdout), read(stderr));
 
         // The exec status arrives on its own channel, and it is the only place
         // a command that could not *start* is reported. Without it, `ls` in a
@@ -177,7 +201,7 @@ fn failure_message(
     status.message.filter(|message| !message.is_empty())
 }
 
-async fn read(stream: Option<impl tokio::io::AsyncRead + Unpin>) -> String {
+pub(crate) async fn read(stream: Option<impl tokio::io::AsyncRead + Unpin>) -> String {
     let Some(mut stream) = stream else {
         return String::new();
     };
@@ -185,10 +209,13 @@ async fn read(stream: Option<impl tokio::io::AsyncRead + Unpin>) -> String {
     let mut collected = Vec::new();
     let mut chunk = [0u8; 8192];
 
-    while collected.len() < MAX_OUTPUT {
+    loop {
         match stream.read(&mut chunk).await {
             Ok(0) | Err(_) => break,
-            Ok(read) => collected.extend_from_slice(&chunk[..read]),
+            Ok(read) => {
+                let keep = read.min(MAX_OUTPUT - collected.len());
+                collected.extend_from_slice(&chunk[..keep]);
+            }
         }
     }
 

@@ -62,6 +62,12 @@ pub fn diagnose(source: &(dyn std::error::Error + 'static)) -> String {
 
     let mut diagnosis = chain.join(": ");
 
+    if is_upgrade_refused(&diagnosis) {
+        diagnosis.push_str(
+            "\nWebSocket exec uses GET: check `get` on `pods/exec` in the pod's namespace, as well as `create` (required by newer API servers and SPDY exec). Use `kubectl auth can-i get pods --subresource=exec -n <namespace>` and repeat with `create`. A proxy configured through HTTPS_PROXY or kubeconfig can also refuse the upgrade. An incomplete permission preflight does not rule out a permission failure.",
+        );
+    }
+
     if is_exec_plugin_failure(source) {
         diagnosis.push_str(&format!(
             "\nthis context authenticates with an exec credential plugin, \
@@ -71,6 +77,15 @@ pub fn diagnose(source: &(dyn std::error::Error + 'static)) -> String {
     }
 
     diagnosis
+}
+
+/// Whether the failure was a WebSocket upgrade the other end refused.
+///
+/// Matched on the text because that is where it is: the upgrade failure
+/// arrives as a string from the HTTP layer, with no typed variant to look
+/// for.
+fn is_upgrade_refused(diagnosis: &str) -> bool {
+    diagnosis.contains("switch protocol") && diagnosis.contains("403")
 }
 
 /// Whether the failure was a kubeconfig `exec` plugin that could not be run.
@@ -95,6 +110,25 @@ fn is_exec_plugin_failure(source: &(dyn std::error::Error + 'static)) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The message a refused upgrade actually produces, and the thing it is
+    /// worth saying back.
+    #[test]
+    fn a_refused_upgrade_says_what_to_check() {
+        let hint = diagnose(&layer(
+            "failed to upgrade a WebSocket connection: failed to switch protocol: 403 Forbidden",
+            None,
+        ));
+        assert!(hint.contains("pods/exec"), "{hint}");
+        assert!(hint.contains("HTTPS_PROXY"), "{hint}");
+    }
+
+    /// An ordinary 403 is not an upgrade, and does not get the hint.
+    #[test]
+    fn a_plain_forbidden_is_left_alone() {
+        let plain = diagnose(&layer("pods is forbidden: 403", None));
+        assert!(!plain.contains("pods/exec"), "{plain}");
+    }
 
     #[derive(Debug, thiserror::Error)]
     #[error("{message}")]

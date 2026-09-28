@@ -263,6 +263,7 @@ impl ClusterSession {
     ) -> Result<exec::Output> {
         exec::run(
             &self.client,
+            self.id.as_str(),
             &namespace,
             &pod,
             container.as_deref(),

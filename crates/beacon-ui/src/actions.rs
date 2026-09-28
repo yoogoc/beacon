@@ -81,6 +81,20 @@ pub fn may_apply(kind: &Kind, rules: Option<&Rules>) -> bool {
     })
 }
 
+/// Whether this user may open a shell or run a command in a pod.
+///
+/// `pods/exec` is a subresource with its own rule, so being able to read a
+/// pod says nothing about it -- which is exactly why a refusal arrives as a
+/// WebSocket that will not upgrade rather than as anything legible.
+pub fn may_exec(rules: Option<&Rules>) -> bool {
+    // Older API servers accept GET alone for WebSocket exec; SPDY uses
+    // CREATE. This is only a hint: incomplete EKS webhook rules cannot prove
+    // permission, and the API server remains authoritative.
+    rules.is_none_or(|rules| {
+        rules.allows("get", "", "pods/exec") || rules.allows("create", "", "pods/exec")
+    })
+}
+
 /// The container ports a pod declares, deduplicated and in order.
 ///
 /// Read from the spec rather than asked for, because the pod already said.
@@ -193,6 +207,22 @@ mod tests {
     fn actions_that_cannot_apply_are_not_offered() {
         let choices = available(&kind("", "ConfigMap", "configmaps"), None, 0);
         assert_eq!(labels(&choices), ["Delete"]);
+    }
+
+    /// The same subresource trap as scaling: reading pods is not exec-ing
+    /// into them, and the cluster only says so when the connection fails.
+    #[test]
+    fn exec_needs_its_own_rule() {
+        let reader = rules(&[("get", "", "pods"), ("list", "", "pods")]);
+        assert!(!super::may_exec(Some(&reader)));
+
+        let allowed = rules(&[("create", "", "pods/exec")]);
+        assert!(super::may_exec(Some(&allowed)));
+        let websocket = rules(&[("get", "", "pods/exec")]);
+        assert!(super::may_exec(Some(&websocket)));
+
+        // Unknown until the answer arrives, and unknown means offer it.
+        assert!(super::may_exec(None));
     }
 
     /// Scaling is a subresource, so patching a Deployment does not grant it.

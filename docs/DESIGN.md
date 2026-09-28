@@ -1258,3 +1258,37 @@ argocd 的 controller 容器里跑 `ls --color=always /etc`：网格上出现 4 
 
 顺带又踩了一次那个老坑：前两张截图分别是空白和"面板还没打开"的旧帧。窗口没被激活时
 `screencapture -l` 返回的是缓存画面；激活之后再等一下重画，才是真的。
+
+### 补：web-dev-cluster 的 exec 403 与空白终端（2026-09-28）
+
+实际检查 `default/duckdb-analysis-84fcc7ff69-sdxvh`：
+
+- `kubectl auth can-i get pods --subresource=exec -n default` 返回 no，create 返回 yes。
+  必须显式写 `--subresource=exec`；本机 kubectl 把 `pods/exec` 解读成名字为 exec 的 Pod，
+  因而先前的检查并没有检查到 exec 子资源。
+- kube-rs 的 WebSocket 握手使用 GET。读到的 403 正文明确是不能 get `pods/exec`。
+- `kubectl -v=6 exec` 同样先收到 GET 403，然后回退 POST/SPDY，得到 101；
+  `duckdb --version` 成功。它没有绕过权限，走的是账号已被授权的 create 路径。
+- EKS 的 SelfSubjectRulesReview 返回 incomplete（webhook authorizer 无法枚举权限），
+  所以 UI 预检放行并不证明用户拥有 GET 权限。原来的“预检过了就查代理”推断不成立。
+- 这个镜像是 `duckdb/duckdb`，没有 `/bin/sh`。空命令启动默认 shell 会失败；
+  应在命令框输入 `duckdb`。
+
+修复：
+
+- 只有握手被拒、命令尚未启动时，Shell / Exec 才回退本机 kubectl/SPDY；
+  不对运行中断线或超时重试，避免重复执行命令。始终显式传入原会话的 context、namespace、container。
+- 交互回退使用 portable-pty，支持 stdin、TTY 与 resize；关闭面板或重启会取消任务并终止子进程。
+- 连接阶段显示状态，握手 30 秒超时，kubectl 无输出启动等待 40 秒超时；启动失败显示错误和重试入口。
+- VT 解析器的 PtyWrite、颜色和窗口尺寸查询应答送回 stdin；颜色按当前终端主题回答。
+  DuckDB 启动时会查询背景色（OSC 11）和设备属性，丢弃这些事件会导致提示符迟迟不出现。
+- 尺寸测量通过下一帧应用，避免 prepaint 中更新正被借用的实体失败；不再用延迟的旧尺寸覆盖新尺寸。
+- 删除临时自动打开首个 Pod 并启动 shell 的演示代码。
+
+验证覆盖本地 PTY 输入、缩放和退出输出，关闭面板时取消未完成握手，拒绝握手的回退范围，
+以及跨输出分片的光标位置查询和 OSC 11 背景色应答。workspace 的 255 个测试、Clippy
+（所有 target、警告视为错误）和构建全部通过。
+
+在独立测试应用中实际点击 Shell、输入 `duckdb` 并启动，立即看到 DuckDB v1.5.5 提示符；
+通过 GUI 输入 `select 42 as beacon_gui;`，正常显示结果 42 并返回提示符。
+同一 Pod 的一次性 Exec 也验证成功。关闭详情面板后，回退的 kubectl 子进程随会话退出。

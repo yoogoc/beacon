@@ -34,12 +34,13 @@ k8s-openapi = { version = "0.28", features = ["latest"] }
 
 # Async. kube/hyper need a tokio reactor; GPUI has its own executor. These two
 # never mix -- see crates/beacon-ui/src/bridge.rs.
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "net", "io-util"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "net", "io-util", "process"] }
 futures = "0.3"
 
 # The VT parser and grid behind the interactive shell. The same one Alacritty
 # and Zed use; writing one is a project, not a feature.
 alacritty_terminal = "0.25"
+portable-pty = "0.9"
 
 # Fuzzy matching, for the sidebar and the table filter. This is the matcher
 # out of `nucleo` without its threaded incremental frontend: the lists here are

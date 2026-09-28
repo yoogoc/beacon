@@ -1427,7 +1427,7 @@ impl DetailView {
             let _ = this.update(cx, |view, cx| {
                 view.ran = match result {
                     Ok(Ok(output)) => Exec::Done(Box::new(output)),
-                    Ok(Err(error)) => Exec::Failed(error.to_string()),
+                    Ok(Err(error)) => Exec::Failed(beacon_kube::error::diagnose(&error)),
                     Err(error) => Exec::Failed(error.to_string()),
                 };
                 cx.notify();
@@ -1441,7 +1441,6 @@ impl DetailView {
         let Some(namespace) = self.target.namespace.clone() else {
             return;
         };
-
         let session = self.session.clone();
         let pod = self.target.name.clone();
         let container = self.log_options.container.clone();
@@ -1452,6 +1451,17 @@ impl DetailView {
     }
 
     fn render_shell(&self, cx: &mut Context<Self>) -> AnyElement {
+        // Said here rather than let the connection fail: a refusal arrives as
+        // "failed to switch protocol: 403 Forbidden", which names neither the
+        // permission nor the namespace it is missing in.
+        if !crate::actions::may_exec(self.rules.as_deref()) {
+            return self.notice(
+                "You may not exec into pods in this namespace: check `get` and `create` on `pods/exec`.",
+                Tone::Warning,
+                cx,
+            );
+        }
+
         match self.shell.clone() {
             Some(shell) => div().size_full().child(shell).into_any_element(),
             None => self.notice("A pod outside a namespace has no shell.", Tone::Unknown, cx),
@@ -1459,6 +1469,14 @@ impl DetailView {
     }
 
     fn render_exec(&self, cx: &mut Context<Self>) -> AnyElement {
+        if !crate::actions::may_exec(self.rules.as_deref()) {
+            return self.notice(
+                "You may not run commands in pods here: check `get` and `create` on `pods/exec`.",
+                Tone::Warning,
+                cx,
+            );
+        }
+
         let running = matches!(self.ran, Exec::Running);
 
         let output: AnyElement = match &self.ran {

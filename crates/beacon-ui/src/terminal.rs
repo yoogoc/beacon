@@ -14,11 +14,15 @@
 //! I/O involved. It is therefore all unit tested, which matters because it is
 //! the half that cannot be checked by looking at a screenshot.
 
-use std::{cell::Cell as StdCell, rc::Rc, sync::Arc};
+use std::{
+    cell::{Cell as StdCell, RefCell},
+    rc::Rc,
+    sync::Arc,
+};
 
 use alacritty_terminal::{
     Term,
-    event::VoidListener,
+    event::{Event, EventListener, WindowSize},
     grid::Dimensions,
     index::{Column, Line, Point},
     term::{Config, cell::Flags},
@@ -53,9 +57,27 @@ const FONT_SIZE: f32 = 13.0;
 /// What the pane is doing.
 enum State {
     Idle,
+    Connecting,
     Running,
     Ended,
     Failed(String),
+}
+
+/// VT queries (notably DuckDB/readline's cursor-position query) need a reply
+/// on stdin. Dropping these events can leave a connected terminal waiting
+/// forever before it prints a prompt.
+#[derive(Clone, Default)]
+struct Replies(Rc<RefCell<Vec<Event>>>);
+
+impl EventListener for Replies {
+    fn send_event(&self, event: Event) {
+        if matches!(
+            event,
+            Event::PtyWrite(_) | Event::ColorRequest(..) | Event::TextAreaSizeRequest(_)
+        ) {
+            self.0.borrow_mut().push(event);
+        }
+    }
 }
 
 pub struct TerminalView {
@@ -64,10 +86,8 @@ pub struct TerminalView {
     pod: String,
     container: Option<String>,
 
-    /// The grid. `VoidListener` because the events it would emit -- bell,
-    /// title changes, clipboard requests -- are things this pane does not act
-    /// on.
-    term: Term<VoidListener>,
+    term: Term<Replies>,
+    replies: Replies,
     parser: Processor,
 
     /// `None` until a shell is opened. There is no such thing as a terminal
@@ -131,13 +151,15 @@ impl TerminalView {
             scrolling_history: HISTORY,
             ..Default::default()
         };
+        let replies = Replies::default();
 
         let this = Self {
             session,
             namespace,
             pod,
             container,
-            term: Term::new(config, &size, VoidListener),
+            term: Term::new(config, &size, replies.clone()),
+            replies,
             parser: Processor::new(),
             shell: None,
             state: State::Idle,
@@ -170,7 +192,7 @@ impl TerminalView {
                 // with `TERM` unset a shell's rc file takes the no-colour
                 // branch and `ls` gives up too -- so it is exported by the
                 // command itself, before the shell it hands over to.
-                "TERM=xterm-256color; export TERM; exec /bin/bash || exec /bin/sh".to_string(),
+                "TERM=xterm-256color; export TERM; if command -v bash >/dev/null 2>&1; then exec bash; else exec /bin/sh; fi".to_string(),
             ];
         }
 
@@ -188,42 +210,58 @@ impl TerminalView {
     /// WebSocket -- so this doubles as "try a different shell", which is the
     /// whole reason the command is editable.
     pub fn start(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let size = Size {
+            columns: self.term.columns(),
+            rows: self.term.screen_lines(),
+        };
+        self._output = None;
+        self.shell = None;
+        self.replies.0.borrow_mut().clear();
         self.term = Term::new(
             Config {
                 scrolling_history: HISTORY,
                 ..Default::default()
             },
-            &Size {
-                columns: COLUMNS,
-                rows: ROWS,
-            },
-            VoidListener,
+            &size,
+            self.replies.clone(),
         );
         self.parser = Processor::new();
-        self.state = State::Running;
+        self.state = State::Connecting;
 
         let command = self.command(cx);
-        tracing::info!(pod = %self.pod, ?command, "opening a shell");
+        tracing::info!(context = %self.session.id(), namespace = %self.namespace, pod = %self.pod, ?command, "opening a shell");
 
         let handle = crate::bridge::Bridge::global(cx).handle();
         let (shell, output) = beacon_kube::terminal::attach(
             self.session.client().clone(),
             &handle,
+            self.session.id().to_string(),
             self.namespace.clone(),
             self.pod.clone(),
             self.container.clone(),
             command,
         );
         self.shell = Some(shell);
+        if let Some(shell) = &self.shell {
+            shell.resize(size.columns as u16, size.rows as u16);
+        }
 
         self._output = Some(drain_into(
             cx,
             output,
             |view, event, _window, cx| {
                 match event {
-                    TerminalEvent::Output(bytes) => view.feed(&bytes),
-                    TerminalEvent::Closed => view.state = State::Ended,
-                    TerminalEvent::Failed(error) => view.state = State::Failed(error),
+                    TerminalEvent::Connected => view.state = State::Running,
+                    TerminalEvent::Output(bytes) => view.feed(&bytes, cx),
+                    TerminalEvent::Closed => {
+                        view.shell = None;
+                        view.state = State::Ended;
+                    }
+                    TerminalEvent::Failed(error) => {
+                        tracing::warn!(pod = %view.pod, %error, "shell failed");
+                        view.shell = None;
+                        view.state = State::Failed(error);
+                    }
                 }
                 cx.notify();
             },
@@ -232,30 +270,44 @@ impl TerminalView {
 
         self.focus.focus(window, cx);
 
-        // Send the size again once the shell is up. The first one goes out as
-        // soon as the pane is measured, which is before `exec` has finished
-        // creating the process -- it reaches the API server, but there is no
-        // TTY yet for it to apply to, so the shell starts at the default
-        // eighty columns and wraps in the wrong place.
-        let shell = self.shell.clone();
-        let columns = self.term.columns() as u16;
-        let rows = self.term.screen_lines() as u16;
-        cx.spawn(async move |_, cx| {
-            cx.background_executor()
-                .timer(std::time::Duration::from_millis(400))
-                .await;
-            if let Some(shell) = shell {
-                shell.resize(columns, rows);
-            }
-        })
-        .detach();
-
         cx.notify();
     }
 
     /// Pushes container output through the VT parser and into the grid.
-    pub fn feed(&mut self, bytes: &[u8]) {
+    pub fn feed(&mut self, bytes: &[u8], cx: &App) {
         self.parser.advance(&mut self.term, bytes);
+        for event in self.replies.0.borrow_mut().drain(..) {
+            let reply = match event {
+                Event::PtyWrite(reply) => reply,
+                Event::ColorRequest(index, format) => {
+                    let color = self.term.colors()[index].unwrap_or_else(|| {
+                        let color = match index {
+                            0..16 => palette(index, cx),
+                            16..256 => indexed_colour(index as u8),
+                            n if n == NamedColor::Background as usize => cx.theme().background,
+                            _ => cx.theme().foreground,
+                        }
+                        .to_rgb();
+                        Rgb {
+                            r: (color.r * 255.).round() as u8,
+                            g: (color.g * 255.).round() as u8,
+                            b: (color.b * 255.).round() as u8,
+                        }
+                    });
+                    format(color)
+                }
+                Event::TextAreaSizeRequest(format) => format(WindowSize {
+                    num_cols: self.term.columns() as u16,
+                    num_lines: self.term.screen_lines() as u16,
+                    cell_width: CELL_WIDTH as u16,
+                    cell_height: CELL_HEIGHT as u16,
+                }),
+                _ => continue,
+            };
+            if let Some(shell) = &self.shell {
+                shell.send(reply.into_bytes());
+            }
+        }
     }
 
     /// Sends a keystroke, if it means anything to a terminal.
@@ -635,6 +687,10 @@ impl Render for TerminalView {
 
         let rows = self.rows(cx);
         let status = match &self.state {
+            State::Connecting => Some((
+                Tone::Progressing,
+                "Connecting to the container…".to_string(),
+            )),
             State::Failed(error) => Some((Tone::Critical, error.clone())),
             State::Ended => Some((Tone::Unknown, "The shell exited.".to_string())),
             _ => None,
@@ -660,6 +716,7 @@ impl Render for TerminalView {
                     .id("terminal-grid")
                     .relative()
                     .flex_1()
+                    .min_h_0()
                     .overflow_hidden()
                     .p_2()
                     .bg(cx.theme().background)
@@ -668,16 +725,18 @@ impl Render for TerminalView {
                     // shell wraps at whatever the grid was created with and
                     // the wrap lands in the middle of a visible line.
                     .child({
-                        let view = cx.entity().downgrade();
+                        let measured = self.measured.clone();
+                        let entity_id = cx.entity_id();
+                        let current = (self.term.columns(), self.term.screen_lines());
                         canvas(
                             move |bounds, _, cx| {
                                 let columns = (f32::from(bounds.size.width) / CELL_WIDTH) as usize;
                                 let rows = (f32::from(bounds.size.height) / CELL_HEIGHT) as usize;
-                                let _ = view.update(cx, |view, cx| {
-                                    if view.fit(columns, rows) {
-                                        cx.notify();
-                                    }
-                                });
+                                let size = (columns.max(2), rows.max(2));
+                                if size != current {
+                                    measured.set(Some(size));
+                                    cx.notify(entity_id);
+                                }
                             },
                             |_, _, _, _| {},
                         )
@@ -707,6 +766,7 @@ impl Render for TerminalView {
             .children(status.map(|(tone, message)| {
                 h_flex()
                     .w_full()
+                    .flex_shrink_0()
                     .px_3()
                     .py_1p5()
                     .gap_3()
@@ -717,7 +777,7 @@ impl Render for TerminalView {
                     .child(
                         div()
                             .flex_1()
-                            .truncate()
+                            .min_w_0()
                             .text_xs()
                             .text_color(cx.theme().tone(tone))
                             .child(message),
@@ -736,6 +796,54 @@ impl Render for TerminalView {
 mod tests {
     use super::{CELL_HEIGHT, CELL_WIDTH, DARK_PALETTE, LIGHT_PALETTE, encode, indexed_colour};
     use gpui_kit::Keystroke;
+
+    #[test]
+    fn cursor_queries_produce_replies_for_interactive_programs() {
+        use super::*;
+        let replies = Replies::default();
+        let mut term = Term::new(
+            Config::default(),
+            &Size {
+                columns: 100,
+                rows: 28,
+            },
+            replies.clone(),
+        );
+        let mut parser: Processor = Processor::new();
+        // A split network frame must still be decoded as one query.
+        parser.advance(&mut term, b"\x1b[2;5H\x1b[");
+        parser.advance(&mut term, b"6n");
+        assert!(
+            matches!(replies.0.borrow().as_slice(), [Event::PtyWrite(reply)] if reply == "\x1b[2;5R")
+        );
+    }
+
+    #[test]
+    fn duckdb_background_color_queries_are_not_discarded() {
+        use super::*;
+        let replies = Replies::default();
+        let mut term = Term::new(
+            Config::default(),
+            &Size {
+                columns: 100,
+                rows: 28,
+            },
+            replies.clone(),
+        );
+        let mut parser: Processor = Processor::new();
+        parser.advance(&mut term, b"\x1b]11;?\x07");
+        let events = replies.0.borrow();
+        let [Event::ColorRequest(index, format)] = events.as_slice() else {
+            panic!("no background color reply");
+        };
+        assert_eq!(*index, NamedColor::Background as usize);
+        let reply = format(Rgb {
+            r: 255,
+            g: 255,
+            b: 255,
+        });
+        assert!(reply.starts_with("\x1b]11;rgb:ffff/ffff/ffff"), "{reply:?}");
+    }
 
     fn press(keystroke: &str) -> Option<Vec<u8>> {
         encode(&Keystroke::parse(keystroke).expect("a keystroke"), false)

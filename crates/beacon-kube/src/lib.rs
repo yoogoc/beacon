@@ -13,6 +13,7 @@ pub mod error;
 pub mod exec;
 pub mod forward;
 pub mod helm;
+mod kubectl;
 pub mod logs;
 pub mod metrics;
 pub mod ops;
