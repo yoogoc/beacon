@@ -22,7 +22,11 @@ manager owns what you changed, the refusal names the fields and their owner.
 
 Pods also get logs, a one-shot command runner and an interactive shell — the
 shell's command is a box you can change, empty meaning bash falling back to
-sh, and it sits beside the error when one did not exist. Ports
+sh, and it sits beside the error when one did not exist. The shell is in
+colour: the default command exports `TERM=xterm-256color`, without which
+nothing in a container emits any, and the sixteen ANSI colours come from a
+real palette rather than from theme tokens, which had collapsed them onto
+eight. Ports
 forward to localhost and keep running while you work elsewhere. CPU and memory
 come from metrics-server, Helm releases are read straight out of the cluster,
 and every cluster you connect to stays connected. See

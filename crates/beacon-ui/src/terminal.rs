@@ -165,7 +165,12 @@ impl TerminalView {
             return vec![
                 "/bin/sh".to_string(),
                 "-c".to_string(),
-                "exec /bin/bash || exec /bin/sh".to_string(),
+                // `TERM` is the whole reason anything in here has colour.
+                // Kubernetes `exec` has no way to pass an environment, and
+                // with `TERM` unset a shell's rc file takes the no-colour
+                // branch and `ls` gives up too -- so it is exported by the
+                // command itself, before the shell it hands over to.
+                "TERM=xterm-256color; export TERM; exec /bin/bash || exec /bin/sh".to_string(),
             ];
         }
 
@@ -375,28 +380,79 @@ fn colour(color: VtColor, cx: &App, is_background: bool) -> Hsla {
     }
 }
 
+/// The sixteen ANSI colours on a dark background, in their standard order:
+/// black, red, green, yellow, blue, magenta, cyan, white, then the bright
+/// eight. These are One Dark's terminal palette, which is widely used for
+/// exactly this and known to be legible.
+const DARK_PALETTE: [u32; 16] = [
+    0x3f4451, 0xe05561, 0x8cc265, 0xd18f52, 0x4aa5f0, 0xc162de, 0x42b3c2, 0xd7dae0, 0x4f5666,
+    0xff616e, 0xa5e075, 0xf0a45d, 0x4dc4ff, 0xde73ff, 0x4cd1e0, 0xe6e6e6,
+];
+
+/// The same sixteen on a light background.
+///
+/// The first eight are One Light. The bright eight are *darker* rather than
+/// lighter, which is the opposite of what "bright" means and the only thing
+/// that works here: a lighter red on a white background is a red nobody can
+/// read. White and bright white become greys for the same reason -- a
+/// terminal that is accurate and illegible is worse than one that is legible
+/// and says so.
+const LIGHT_PALETTE: [u32; 16] = [
+    0x383a42, 0xe45649, 0x50a14f, 0xc18401, 0x0184bc, 0xa626a4, 0x0997b3, 0xa0a1a7, 0x696c77,
+    0xc62f23, 0x3c7a3b, 0x96670a, 0x01669a, 0x7f1d7e, 0x07748a, 0x6b6d75,
+];
+
+/// One of the sixteen, for whichever background the window has.
+fn palette(index: usize, cx: &App) -> Hsla {
+    let palette = match cx.theme().is_dark() {
+        true => DARK_PALETTE,
+        false => LIGHT_PALETTE,
+    };
+    gpui_kit::rgb(palette[index.min(15)]).into()
+}
+
+/// Maps the named colours.
+///
+/// The sixteen come from the palette above rather than from the theme's own
+/// tokens. Tokens were the first attempt and they are the wrong shape: the
+/// theme has one danger colour, so red and bright red came out identical,
+/// and `ls` painting directories in bright blue looked the same as ordinary
+/// blue. Sixteen distinct colours is what a program emitting them expects.
+///
+/// The three that are not colours -- background, foreground, cursor -- do
+/// still come from the theme, so the pane matches the window around it.
 fn named_colour(named: NamedColor, cx: &App, is_background: bool) -> Hsla {
     let theme = cx.theme();
-    match named {
-        NamedColor::Background => theme.background,
-        NamedColor::Foreground | NamedColor::BrightForeground => theme.foreground,
-        NamedColor::Cursor => theme.foreground,
-        NamedColor::Black | NamedColor::BrightBlack => {
-            if is_background {
-                theme.muted
-            } else {
-                theme.muted_foreground
-            }
-        }
-        NamedColor::Red | NamedColor::BrightRed => theme.danger,
-        NamedColor::Green | NamedColor::BrightGreen => theme.success,
-        NamedColor::Yellow | NamedColor::BrightYellow => theme.warning,
-        NamedColor::Blue | NamedColor::BrightBlue => theme.primary,
-        NamedColor::Magenta | NamedColor::BrightMagenta => theme.tone(Tone::Progressing),
-        NamedColor::Cyan | NamedColor::BrightCyan => theme.info,
-        NamedColor::White | NamedColor::BrightWhite | NamedColor::DimForeground => theme.foreground,
-        _ => theme.foreground,
-    }
+    let index = match named {
+        NamedColor::Background => return theme.background,
+        NamedColor::Foreground | NamedColor::BrightForeground => return theme.foreground,
+        NamedColor::Cursor => return theme.foreground,
+        NamedColor::DimForeground => return theme.muted_foreground,
+
+        // A black background is the one place the palette is wrong to use:
+        // on a light window it would paint a black block behind the text.
+        NamedColor::Black | NamedColor::BrightBlack if is_background => return theme.muted,
+
+        NamedColor::Black => 0,
+        NamedColor::Red | NamedColor::DimRed => 1,
+        NamedColor::Green | NamedColor::DimGreen => 2,
+        NamedColor::Yellow | NamedColor::DimYellow => 3,
+        NamedColor::Blue | NamedColor::DimBlue => 4,
+        NamedColor::Magenta | NamedColor::DimMagenta => 5,
+        NamedColor::Cyan | NamedColor::DimCyan => 6,
+        NamedColor::White | NamedColor::DimWhite => 7,
+        NamedColor::BrightBlack => 8,
+        NamedColor::BrightRed => 9,
+        NamedColor::BrightGreen => 10,
+        NamedColor::BrightYellow => 11,
+        NamedColor::BrightBlue => 12,
+        NamedColor::BrightMagenta => 13,
+        NamedColor::BrightCyan => 14,
+        NamedColor::BrightWhite => 15,
+        _ => return theme.foreground,
+    };
+
+    palette(index, cx)
 }
 
 /// The first sixteen palette entries, in their standard order.
@@ -678,7 +734,7 @@ impl Render for TerminalView {
 
 #[cfg(test)]
 mod tests {
-    use super::{CELL_HEIGHT, CELL_WIDTH, encode, indexed_colour};
+    use super::{CELL_HEIGHT, CELL_WIDTH, DARK_PALETTE, LIGHT_PALETTE, encode, indexed_colour};
     use gpui_kit::Keystroke;
 
     fn press(keystroke: &str) -> Option<Vec<u8>> {
@@ -747,6 +803,33 @@ mod tests {
     fn keys_with_no_terminal_meaning_send_nothing() {
         assert_eq!(press("ctrl-1"), None);
         assert_eq!(press("f13"), None);
+    }
+
+    /// Red and bright red were the same colour when these came from the
+    /// theme's tokens, and a terminal with eight colours where a program
+    /// sent sixteen is what made this look nothing like a real one.
+    #[test]
+    fn the_bright_eight_are_not_the_ordinary_eight() {
+        for index in 0..8 {
+            assert_ne!(DARK_PALETTE[index], DARK_PALETTE[index + 8], "dark {index}");
+            assert_ne!(
+                LIGHT_PALETTE[index],
+                LIGHT_PALETTE[index + 8],
+                "light {index}"
+            );
+        }
+    }
+
+    /// On a white background "bright" cannot mean lighter, or it disappears.
+    #[test]
+    fn the_light_palette_stays_dark_enough_to_read() {
+        for (index, colour) in LIGHT_PALETTE.iter().enumerate() {
+            let (r, g, b) = (colour >> 16 & 0xff, colour >> 8 & 0xff, colour & 0xff);
+            // Rec. 601 luma, the usual quick test for "is this readable on
+            // white".
+            let luma = (299 * r + 587 * g + 114 * b) / 1000;
+            assert!(luma < 180, "{index} is too light to read: {luma}");
+        }
     }
 
     /// The 256-colour cube and the greyscale ramp, at their known anchors.
