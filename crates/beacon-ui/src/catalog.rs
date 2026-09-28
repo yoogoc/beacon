@@ -11,6 +11,12 @@
 //! nothing in the API says so. Everything the table does not name is a custom
 //! resource, which is the honest default -- on most clusters that is the
 //! majority, and it is where the interesting things live.
+//!
+//! Custom resources are then split again, by API group. One "Custom
+//! Resources" heading over two hundred kinds is a list, not a grouping; the
+//! group is the one piece of structure the cluster actually gives us, and it
+//! is the one people already use -- everything under `argoproj.io` arrived
+//! together, is documented together and is reasoned about together.
 
 use std::sync::Arc;
 
@@ -30,8 +36,10 @@ pub enum Category {
     Storage,
     AccessControl,
     Cluster,
-    /// Everything the table below does not name.
-    Custom,
+    /// Everything the table below does not name *and* that has no API group
+    /// to be filed under -- which leaves the few core kinds nobody thought to
+    /// curate. A custom resource never lands here; it has a group.
+    Other,
 }
 
 impl Category {
@@ -42,7 +50,7 @@ impl Category {
         Self::Storage,
         Self::AccessControl,
         Self::Cluster,
-        Self::Custom,
+        Self::Other,
     ];
 
     pub fn label(&self) -> &'static str {
@@ -53,7 +61,7 @@ impl Category {
             Self::Storage => "Storage",
             Self::AccessControl => "Access Control",
             Self::Cluster => "Cluster",
-            Self::Custom => "Custom Resources",
+            Self::Other => "Other",
         }
     }
 
@@ -124,7 +132,49 @@ fn placement(kind: &Kind) -> (Category, u8) {
         ("apiregistration.k8s.io", "APIService") => (Cluster, 5),
         ("", "ComponentStatus") => (Cluster, 6),
 
-        _ => (Custom, 0),
+        // Uncommon, but core, and not worth a line of its own above.
+        ("", "PodTemplate") => (Workloads, 7),
+
+        _ => (Other, 0),
+    }
+}
+
+/// A heading in the sidebar.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Section {
+    /// One of the curated groupings above.
+    Builtin(Category),
+    /// One API group's custom resources, headed by the group itself.
+    Group(SharedString),
+}
+
+impl Section {
+    pub fn label(&self) -> SharedString {
+        match self {
+            Self::Builtin(category) => SharedString::from(category.label()),
+            Self::Group(group) => group.clone(),
+        }
+    }
+
+    /// Whether the section starts expanded. Only the one people open first --
+    /// and never a custom group, of which there can be dozens.
+    pub fn starts_open(&self) -> bool {
+        matches!(self, Self::Builtin(category) if category.starts_open())
+    }
+
+    /// Built-ins in the order of [`Category::ALL`], then groups by name.
+    fn order(&self) -> (u8, usize, SharedString) {
+        match self {
+            Self::Builtin(category) => (
+                0,
+                Category::ALL
+                    .iter()
+                    .position(|candidate| candidate == category)
+                    .unwrap_or(usize::MAX),
+                SharedString::default(),
+            ),
+            Self::Group(group) => (1, 0, group.clone()),
+        }
     }
 }
 
@@ -132,35 +182,60 @@ fn placement(kind: &Kind) -> (Category, u8) {
 #[derive(Clone)]
 pub struct Entry {
     pub kind: Arc<Kind>,
-    /// What the sidebar shows: the bare kind for a built-in, the kind and its
-    /// group for anything else, because two CRDs sharing a name is common.
+    /// What the sidebar shows. Under a group heading that is the bare kind:
+    /// the heading has already said `argoproj.io`, and saying it again on
+    /// every row is what made the old flat list unreadable.
     pub label: SharedString,
+    /// The kind with its group, always. This is what search matches on and
+    /// what search shows, because a flat list of results has no heading to
+    /// lean on -- and two CRDs sharing a name is common.
+    pub qualified: SharedString,
     rank: u8,
 }
 
 /// The discovered kinds, grouped and ordered.
 #[derive(Default)]
 pub struct Catalog {
-    sections: Vec<(Category, Vec<Entry>)>,
+    sections: Vec<(Section, Vec<Entry>)>,
 }
 
 impl Catalog {
     pub fn new(kinds: &[Kind]) -> Self {
-        let mut sections: Vec<(Category, Vec<Entry>)> =
-            Category::ALL.iter().map(|&it| (it, Vec::new())).collect();
+        let mut sections: Vec<(Section, Vec<Entry>)> = Vec::new();
 
         for kind in kinds {
             let (category, rank) = placement(kind);
+            let qualified = SharedString::from(kind.display_name());
+
+            // Anything the table does not name is filed under its own API
+            // group, and drops the group from its label because the heading
+            // now carries it. That catches the CRDs, which is the point, and
+            // also the built-in groups nobody curated -- `flowcontrol` and
+            // friends -- which is a better home than a bucket labelled
+            // "other". Only a core-group kind, which has no group to be filed
+            // under, falls through to that bucket.
+            let (section, label) = match (category, kind.resource.group.as_str()) {
+                (Category::Other, "") => (Section::Builtin(Category::Other), qualified.clone()),
+                (Category::Other, group) => (
+                    Section::Group(SharedString::from(group.to_string())),
+                    SharedString::from(kind.resource.kind.clone()),
+                ),
+                (category, _) => (Section::Builtin(category), qualified.clone()),
+            };
+
             let entry = Entry {
-                label: SharedString::from(kind.display_name()),
+                label,
+                qualified,
                 kind: Arc::new(kind.clone()),
                 rank,
             };
-            if let Some((_, entries)) = sections
+
+            match sections
                 .iter_mut()
-                .find(|(candidate, _)| *candidate == category)
+                .find(|(candidate, _)| *candidate == section)
             {
-                entries.push(entry);
+                Some((_, entries)) => entries.push(entry),
+                None => sections.push((section, vec![entry])),
             }
         }
 
@@ -168,12 +243,12 @@ impl Catalog {
             entries
                 .sort_by(|left, right| (left.rank, &left.label).cmp(&(right.rank, &right.label)));
         }
-        sections.retain(|(_, entries)| !entries.is_empty());
+        sections.sort_by_key(|(section, _)| section.order());
 
         Self { sections }
     }
 
-    pub fn sections(&self) -> &[(Category, Vec<Entry>)] {
+    pub fn sections(&self) -> &[(Section, Vec<Entry>)] {
         &self.sections
     }
 
@@ -210,7 +285,9 @@ impl Catalog {
             .iter()
             .flat_map(|(_, entries)| entries)
             .filter_map(|entry| {
-                let haystack = Utf32Str::new(&entry.label, &mut buffer);
+                // Matched on the qualified name so that typing a group finds
+                // everything in it, which is the other half of grouping them.
+                let haystack = Utf32Str::new(&entry.qualified, &mut buffer);
                 Some((pattern.score(haystack, matcher)?, entry))
             })
             .collect();
@@ -220,10 +297,18 @@ impl Catalog {
         scored.sort_by(|(left_score, left), (right_score, right)| {
             right_score
                 .cmp(left_score)
-                .then_with(|| left.label.cmp(&right.label))
+                .then_with(|| left.qualified.cmp(&right.qualified))
         });
 
-        scored.into_iter().map(|(_, entry)| entry.clone()).collect()
+        scored
+            .into_iter()
+            .map(|(_, entry)| Entry {
+                // A flat list has no heading above it, so results carry the
+                // group even when the sidebar entry does not.
+                label: entry.qualified.clone(),
+                ..entry.clone()
+            })
+            .collect()
     }
 }
 
@@ -235,8 +320,9 @@ pub fn matcher() -> Matcher {
 
 #[cfg(test)]
 mod tests {
-    use super::{Catalog, Category, matcher, placement};
+    use super::{Catalog, Category, Section, matcher, placement};
     use beacon_kube::{ApiResource, GroupVersionKind, Kind};
+    use gpui_kit::SharedString;
 
     fn kind(group: &str, name: &str) -> Kind {
         Kind {
@@ -262,12 +348,31 @@ mod tests {
     }
 
     fn section(catalog: &Catalog, category: Category) -> Vec<String> {
+        entries(catalog, &Section::Builtin(category))
+    }
+
+    fn group(catalog: &Catalog, name: &str) -> Vec<String> {
+        entries(
+            catalog,
+            &Section::Group(SharedString::from(name.to_string())),
+        )
+    }
+
+    fn entries(catalog: &Catalog, section: &Section) -> Vec<String> {
         catalog
             .sections()
             .iter()
-            .find(|(candidate, _)| *candidate == category)
+            .find(|(candidate, _)| candidate == section)
             .map(|(_, entries)| entries.iter().map(|e| e.label.to_string()).collect())
             .unwrap_or_default()
+    }
+
+    fn headings(catalog: &Catalog) -> Vec<String> {
+        catalog
+            .sections()
+            .iter()
+            .map(|(section, _)| section.label().to_string())
+            .collect()
     }
 
     /// Alphabetical order would put Deployment above Pod. Nobody opens this
@@ -281,14 +386,59 @@ mod tests {
         );
     }
 
-    /// Anything the table does not name is a custom resource, which on a real
-    /// cluster is most of what there is.
+    /// Anything the table does not name is a custom resource, and each API
+    /// group gets its own heading rather than all of them sharing one.
     #[test]
-    fn unknown_kinds_are_custom_resources() {
+    fn custom_resources_are_filed_under_their_api_group() {
         let catalog = catalog();
+        assert_eq!(group(&catalog, "argoproj.io"), ["Application"]);
+        assert_eq!(group(&catalog, "k3s.cattle.io"), ["Addon"]);
+        // The old single heading is gone, not merely empty.
+        assert!(!headings(&catalog).contains(&"Custom Resources".to_string()));
+        assert!(!headings(&catalog).contains(&"Other".to_string()));
+    }
+
+    /// The heading already says the group, so the row does not repeat it.
+    #[test]
+    fn a_grouped_entry_drops_the_group_from_its_label() {
+        let catalog = catalog();
+        let entry = catalog
+            .sections()
+            .iter()
+            .find(|(section, _)| section.label() == "argoproj.io")
+            .and_then(|(_, entries)| entries.first())
+            .expect("the group");
+        assert_eq!(entry.label, "Application");
+        assert_eq!(entry.qualified, "Application (argoproj.io)");
+    }
+
+    /// Curated sections first, in their own order; groups after, by name.
+    #[test]
+    fn groups_come_after_the_curated_sections() {
         assert_eq!(
-            section(&catalog, Category::Custom),
-            ["Addon (k3s.cattle.io)", "Application (argoproj.io)"]
+            headings(&catalog()),
+            [
+                "Workloads",
+                "Config",
+                "Access Control",
+                "Cluster",
+                "argoproj.io",
+                "k3s.cattle.io",
+            ]
+        );
+    }
+
+    /// Typing a group is how you get everything that came with it.
+    #[test]
+    fn search_finds_a_kind_by_its_group() {
+        let found = catalog().search("argoproj", &mut matcher());
+        assert_eq!(
+            found
+                .iter()
+                .map(|e| e.label.to_string())
+                .collect::<Vec<_>>(),
+            ["Application (argoproj.io)"],
+            "a result has no heading above it, so it carries the group"
         );
     }
 
@@ -307,14 +457,27 @@ mod tests {
         assert_eq!(placement(&kind("", "Namespace")).0, Category::Cluster);
     }
 
-    /// A CRD that borrowed a built-in name is still a custom resource -- the
-    /// group is what the table is keyed on.
+    /// A CRD that borrowed a built-in name is still uncurated -- the group is
+    /// what the table is keyed on -- and so ends up under its own group.
     #[test]
     fn a_borrowed_name_is_still_a_custom_resource() {
         assert_eq!(
             placement(&kind("example.com", "Service")).0,
-            Category::Custom
+            Category::Other
         );
+
+        let catalog = Catalog::new(&[kind("example.com", "Service")]);
+        assert_eq!(group(&catalog, "example.com"), ["Service"]);
+    }
+
+    /// The bucket is for core kinds the table forgot, and nothing else. It
+    /// said "Custom Resources" until the groups moved out and left one
+    /// `PodTemplate` sitting under a heading that was no longer true.
+    #[test]
+    fn only_core_kinds_fall_through_to_other() {
+        let catalog = Catalog::new(&[kind("", "Binding"), kind("argoproj.io", "Application")]);
+        assert_eq!(section(&catalog, Category::Other), ["Binding"]);
+        assert_eq!(group(&catalog, "argoproj.io"), ["Application"]);
     }
 
     #[test]
@@ -322,6 +485,18 @@ mod tests {
         let catalog = Catalog::new(&[kind("", "Pod")]);
         assert_eq!(catalog.sections().len(), 1);
         assert_eq!(catalog.len(), 1);
+    }
+
+    /// Only the first section opens itself. A cluster with thirty CRD groups
+    /// must not greet you with thirty open ones.
+    #[test]
+    fn no_custom_group_starts_open() {
+        for (section, _) in catalog().sections() {
+            match section {
+                Section::Group(_) => assert!(!section.starts_open(), "{}", section.label()),
+                Section::Builtin(_) => {}
+            }
+        }
     }
 
     /// Pods are where a cluster opens, and the fallback only matters on a

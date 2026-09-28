@@ -91,6 +91,20 @@ down. That costs a connection each, and buys the thing multi-select is mostly
 for: a cluster-wide list is refused outright for anyone whose RBAC is
 namespaced, which is exactly the person picking namespaces by hand.
 
+## The sidebar
+
+Built-in kinds are filed under the seven headings people already think in —
+Workloads, Config, Network and so on — because nothing in the API says a
+`Lease` is a coordination primitive and an `Endpoint` is networking; that is
+a table, not a rule.
+
+Everything the table does not name is filed under **its own API group**, one
+collapsed heading each: `argoproj.io`, `traefik.io`, `flowcontrol.apiserver.k8s.io`.
+The group is the one piece of structure the cluster really gives us, and the
+one people already use. Rows drop the group from their label, since the
+heading above them has just said it — but search still matches and shows the
+qualified name, because a flat list of results has no heading to lean on.
+
 ## The command palette
 
 `⌘K` (`Ctrl+K` off macOS). A prefix decides what the list is, so there is no

@@ -1035,7 +1035,7 @@ impl ClusterView {
             self.catalog
                 .sections()
                 .iter()
-                .map(|(category, entries)| (SharedString::from(category.label()), entries.clone()))
+                .map(|(section, entries)| (section.label(), entries.clone()))
                 .collect()
         } else {
             let matches = self.catalog.search(&self.sidebar_query, &mut self.matcher);
@@ -1048,10 +1048,10 @@ impl ClusterView {
             self.catalog
                 .sections()
                 .iter()
-                .map(|(category, entries)| {
+                .map(|(section, entries)| {
                     // A section also opens when it holds what is on screen, so
                     // that the selection is never hidden inside a closed group.
-                    category.starts_open()
+                    section.starts_open()
                         || entries
                             .iter()
                             .any(|entry| current.as_ref() == Some(&entry.kind.gvk()))

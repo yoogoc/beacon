@@ -1100,3 +1100,40 @@ ClusterView 只保留 `close_detail()` 这个方法（终端聚焦时不关的�
 `stop_propagation` 的既有行为，不是这次引入的；也说明 `close_detail` 里那道
 "shell 是否聚焦"的判断实际上是第二道防线 —— 事件根本到不了它。保留它，因为它不依赖
 `stop_propagation` 将来继续存在。
+
+### 补：CR 按 API group 分组显示（2026-09-27）
+
+原来所有 CRD 挤在一个 "Custom Resources" 标题下面。本机这台小 k3s 就有 11 个 group、
+50 多个 kind —— 那不是分组，那是一张列表。现在**每个 API group 一个折叠标题**：
+`argoproj.io`、`traefik.io`、`k3s.cattle.io` …… group 是集群唯一真正给出的结构，
+也是人本来就在用的那个 —— `argoproj.io` 下面的东西是一起装进来的、一起写文档的、
+一起思考的。
+
+侧栏的 section key 从 `Category` 换成 `Section { Builtin(Category), Group(SharedString) }`。
+排序：策展好的那几类按原顺序在前，group 按名字排在后。**group 一律默认折叠** ——
+有的集群三十个 group，全展开等于没分组（有个测试盯着这条）。
+
+**标签去掉了重复的 group**：标题已经写了 `argoproj.io`，行里再写一遍 `Application
+(argoproj.io)` 正是原来那张列表难读的原因。所以 `Entry` 有两个字段：`label`（组里显示的
+裸 kind）和 `qualified`（永远带 group）。**搜索用 `qualified` 匹配也用它显示** ——
+打 `argoproj` 要能把整组捞出来，而搜索结果是一个平铺列表，上面没有标题可倚靠。
+
+**顺手修掉一个被这次改动暴露的谎**：分组之后，原来那个兜底桶里只剩一个 `PodTemplate` ——
+一个核心内置类型，却顶着 "Custom Resources" 的标题。于是把兜底 `Category::Custom`
+改名成 `Other`（"表里没点名、又没有 group 可归"，实际上只可能是核心组里没人策展的那几个），
+并把 `PodTemplate` 补进 Workloads。本机上这个桶现在是空的，不再出现。
+
+**副作用，是有意接受的**：那些没被策展的**内置** group 现在也各自成节 ——
+`flowcontrol.apiserver.k8s.io`、`admissionregistration.k8s.io`、`networking.k8s.io`
+（`IPAddress`/`ServiceCIDR`，与策展的 "Network" 并存）。规则简单可预测：
+"表里没点名的，按它的 API group 归"。比塞进一个叫 "其他" 的桶里强。
+
+### 真机验证
+
+本机 k3s，`kubectl get crd` 报 8 个 CRD group。临时打日志列出实际 section：
+6 个策展节 + **11 个 group 节**（CRD 那 8 个，加上三个没被策展的内置 group），
+兜底桶消失、Workloads 从 9 个变 10 个（PodTemplate 归位）。再临时把所有节强制折叠截图，
+确认侧栏就是"六个策展标题 + 一串 group 标题"。插桩已删。
+
+小瑕疵，没改：侧栏宽 232px，`flowcontrol.apiserver.k8s.io` 这种长名字会截断成
+`flowcontrol.apiserver.k8s`。本机这些 group 名字都能靠前缀区分，所以没为它加宽侧栏。
