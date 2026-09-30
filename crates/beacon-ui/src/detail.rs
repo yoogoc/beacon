@@ -25,6 +25,7 @@ use serde_json::Value;
 
 use crate::bridge::{Bridge, drain_into};
 use crate::theme::{BeaconTheme as _, Tone};
+use crate::tls::{self, CertificateInfo};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DetailTab {
@@ -109,6 +110,9 @@ pub struct DetailView {
     /// The slimmed copy from the table's store, replaced as the watch updates
     /// it so that Overview stays live.
     object: Arc<DynamicObject>,
+    /// Parsed only for Secrets of type `kubernetes.io/tls`; never includes the
+    /// private key.
+    certificates: Option<Result<Vec<CertificateInfo>, String>>,
 
     tabs: Vec<DetailTab>,
     tab: DetailTab,
@@ -184,6 +188,7 @@ impl DetailView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
+        let certificates = tls_certificates(&kind, &object);
         let yaml_editor = cx.new(|cx| EditorState::new(window, cx).language("yaml"));
         let command = cx.new(|cx| {
             InputState::new(window, cx)
@@ -197,6 +202,7 @@ impl DetailView {
             tabs: DetailTab::for_kind(&kind),
             kind,
             object,
+            certificates,
             tab: DetailTab::Overview,
             yaml: Yaml::Unopened,
             data: Data::Unopened,
@@ -259,6 +265,7 @@ impl DetailView {
         rules: Option<Arc<Rules>>,
         cx: &mut Context<Self>,
     ) {
+        self.certificates = tls_certificates(&self.kind, &object);
         self.object = object;
         self.rules = rules;
         cx.notify();
@@ -687,6 +694,10 @@ impl DetailView {
 
         let mut sections = v_flex().gap_4().p_3().w_full();
 
+        if let Some(certificates) = &self.certificates {
+            sections = sections.child(self.render_certificates(certificates, cx));
+        }
+
         let created = metadata
             .creation_timestamp
             .as_ref()
@@ -738,6 +749,159 @@ impl DetailView {
             .size_full()
             .overflow_y_scroll()
             .child(sections)
+            .into_any_element()
+    }
+
+    fn render_certificates(
+        &self,
+        certificates: &Result<Vec<CertificateInfo>, String>,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        match certificates {
+            Err(error) => v_flex()
+                .gap_1()
+                .child(self.heading("TLS Certificate", cx))
+                .child(
+                    div()
+                        .text_sm()
+                        .text_color(cx.theme().tone(Tone::Critical))
+                        .child(error.clone()),
+                )
+                .into_any_element(),
+            Ok(certificates) => v_flex()
+                .w_full()
+                .gap_4()
+                .children(
+                    certificates.iter().enumerate().map(|(index, certificate)| {
+                        self.render_certificate(index, certificate, cx)
+                    }),
+                )
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(cx.theme().muted_foreground)
+                        .child(
+                            "Expiry checks time only; issuer trust and hostname are not verified.",
+                        ),
+                )
+                .into_any_element(),
+        }
+    }
+
+    fn render_certificate(
+        &self,
+        index: usize,
+        certificate: &CertificateInfo,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let now = x509_parser::time::ASN1Time::now().timestamp();
+        let expired = now >= certificate.not_after_unix;
+        let pending = now < certificate.not_before_unix;
+        let tone = if expired {
+            Tone::Critical
+        } else if pending {
+            Tone::Progressing
+        } else {
+            Tone::Healthy
+        };
+        let title = if index == 0 {
+            "Leaf certificate".to_string()
+        } else {
+            format!("Chain certificate {}", index + 1)
+        };
+
+        v_flex()
+            .w_full()
+            .gap_3()
+            .p_3()
+            .rounded_md()
+            .border_1()
+            .border_color(cx.theme().border)
+            .child(
+                h_flex()
+                    .gap_2()
+                    .items_center()
+                    .child(div().font_weight(FontWeight::SEMIBOLD).child(title))
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(cx.theme().tone(tone))
+                            .child(certificate.validity_at(now)),
+                    ),
+            )
+            .child(self.section(
+                "Identity",
+                vec![
+                    ("Common name", certificate.common_name.clone()),
+                    ("Subject", Some(certificate.subject.clone())),
+                    ("Issuer", Some(certificate.issuer.clone())),
+                    ("Serial", Some(certificate.serial.clone())),
+                    ("Version", Some(format!("X.509 v{}", certificate.version))),
+                ],
+                cx,
+            ))
+            .child(self.section(
+                "Validity",
+                vec![
+                    ("Not before", Some(certificate.not_before.clone())),
+                    ("Not after", Some(certificate.not_after.clone())),
+                ],
+                cx,
+            ))
+            .child(self.section(
+                "Algorithms",
+                vec![
+                    ("Signature", Some(certificate.signature_algorithm.clone())),
+                    ("Public key", Some(certificate.public_key_algorithm.clone())),
+                    (
+                        "Key size",
+                        certificate.public_key_bits.map(|bits| format!("{bits} bits")),
+                    ),
+                    ("Key details", certificate.public_key_details.clone()),
+                    ("Cert SHA-256", Some(certificate.sha256_fingerprint.clone())),
+                ],
+                cx,
+            ))
+            .child(
+                v_flex()
+                    .w_full()
+                    .gap_1p5()
+                    .child(self.heading("Extensions", cx))
+                    .children(certificate.extensions.iter().map(|extension| {
+                        v_flex()
+                            .w_full()
+                            .gap_0p5()
+                            .child(div().text_sm().font_weight(FontWeight::MEDIUM).child(
+                                if extension.critical {
+                                    format!("{} · critical", extension.name)
+                                } else {
+                                    extension.name.clone()
+                                },
+                            ))
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .text_color(cx.theme().muted_foreground)
+                                    .child(extension.details.clone()),
+                            )
+                    })),
+            )
+            .child(
+                v_flex()
+                    .w_full()
+                    .gap_1p5()
+                    .child(self.heading("Public key PEM", cx))
+                    .child(
+                        div()
+                            .w_full()
+                            .p_2()
+                            .rounded_md()
+                            .bg(cx.theme().muted.opacity(0.5))
+                            .font_family("monospace")
+                            .text_xs()
+                            .child(certificate.public_key_pem.clone()),
+                    ),
+            )
             .into_any_element()
     }
 
@@ -1720,6 +1884,16 @@ impl Render for DetailView {
             .child(self.render_header(cx))
             .child(div().flex_1().overflow_hidden().child(body))
     }
+}
+
+fn tls_certificates(
+    kind: &Kind,
+    object: &DynamicObject,
+) -> Option<Result<Vec<CertificateInfo>, String>> {
+    (kind.resource.group.is_empty()
+        && kind.resource.kind == "Secret"
+        && object.data.get("type").and_then(Value::as_str) == Some("kubernetes.io/tls"))
+    .then(|| tls::inspect(object))
 }
 
 /// Reads a YAML document into the value the rest of this works with.

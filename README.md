@@ -142,6 +142,12 @@ is the whole point — every value of a Secret is base64, which is not
 something a person can edit, and a ConfigMap's multi-line values are folded
 into a YAML block scalar where the indentation is syntax.
 
+For a Secret of type `kubernetes.io/tls`, Overview also reads `tls.crt` and
+shows every certificate in the chain: subject, issuer, validity and expiry,
+signature and public-key algorithms, key size, extensions, fingerprint and
+public-key PEM. This certificate view does not display or parse `tls.key`.
+Expiry is a time check, not a trust or hostname verification.
+
 A value that is not text — a TLS key, a keystore — is described and not
 offered for editing, because putting it through a text box would corrupt it
 on save. A Secret's values start covered, and Save is disabled until they are
