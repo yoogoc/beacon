@@ -1,0 +1,163 @@
+<p align="center">
+  <img src="assets/app-icon/icon-256.png" width="112" alt="Beacon 图标">
+</p>
+
+<h1 align="center">Beacon</h1>
+
+<p align="center">
+  <a href="README.md">English</a> · <strong>简体中文</strong>
+</p>
+
+<p align="center">
+  <strong>一个原生 Kubernetes 桌面客户端</strong><br>
+  多集群浏览 · 实时资源视图 · Pod 终端 · 自定义主题
+</p>
+
+<p align="center">
+  <a href="https://github.com/yoogoc/beacon/actions/workflows/ci.yml"><img src="https://github.com/yoogoc/beacon/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <img src="https://img.shields.io/badge/Rust-1.98-F74C00?style=flat&logo=rust&logoColor=white" alt="Rust 1.98">
+  <img src="https://img.shields.io/badge/UI-GPUI-3B82F6?style=flat" alt="Built with GPUI">
+  <a href="Cargo.toml"><img src="https://img.shields.io/badge/License-Apache--2.0-22C55E?style=flat" alt="Cargo 声明的许可证：Apache-2.0"></a>
+</p>
+
+<p align="center">
+  <a href="#快速开始">快速开始</a> ·
+  <a href="docs/USAGE.md">使用指南</a> ·
+  <a href="https://github.com/yoogoc/beacon/releases">下载构建</a> ·
+  <a href="docs/DEVELOPMENT.md">开发指南</a>
+</p>
+
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/images/workspace-dark.jpg">
+    <source media="(prefers-color-scheme: light)" srcset="docs/images/workspace-light.jpg">
+    <img src="docs/images/workspace-light.jpg" alt="Beacon：集群侧边栏、资源标签页、Pod 容器状态与 CPU / 内存指标" width="1200">
+  </picture>
+</p>
+
+<p align="center">
+  <sub>macOS 实际界面截图，使用本地演示数据；根据浏览器的深浅色偏好显示。</sub>
+</p>
+
+Beacon 使用 Rust 和 GPUI 构建，将集群、资源列表、详情和容器工具放进一个桌面工作区。
+沿用现有 kubeconfig 和集群权限，内置资源与 CRD 都由集群动态发现；不必为每个新资源安装额外插件。
+
+## 功能
+
+| 功能 | 可以做什么 |
+| --- | --- |
+| **多集群工作区** | 从左侧集群树切换上下文；多个集群保持连接；支持 EKS 名称识别、别名、自定义图标、主动断开和重连。 |
+| **资源与 CRD** | 实时 Watch 更新；内置资源使用 kubectl 风格列；动态读取 CRD 的 `additionalPrinterColumns`。 |
+| **搜索与筛选** | 模糊搜索、排序、命名空间多选；按 Pod / Deployment 状态、Service 类型、Ingress Class、PVC 属性、Secret 类型和 CRD Scope 筛选。 |
+| **资源详情** | Overview、YAML、Events；可复制的字段、折叠的标签和注解；容器端口、资源请求与限制、探针、环境变量与挂载；点击 Owner 跳转。 |
+| **Pod 工具** | 流式日志、单次 Exec、交互式 Shell 和端口转发；独立的底部工具面板；用实心 / 空心圆显示普通 / Init 容器状态。 |
+| **资源写操作** | YAML 创建与服务端预校验、Server-Side Apply、重启、扩缩容、单个及批量删除；按资源类型显示右键菜单和权限预检结果。 |
+| **ConfigMap 与 Secret** | 按键查看和编辑 Data；Secret 值默认遮盖；TLS 证书展示主题、签发者、有效期、算法、强度、扩展和公钥。 |
+| **指标与 Helm** | Pod / Node 的 CPU、内存指标可来自 Kubernetes Metrics API 或 Prometheus；从集群读取 Helm Release。 |
+| **外观与连接** | 浅色、深色、命名的自定义主题；字体和颜色配置保存到本地；全局代理与集群独立代理。 |
+| **诊断与键盘操作** | 命令面板、可搜索的快捷键指南、独立的应用日志窗口；底部可查看连接和 Watch 状态。 |
+
+## 快速开始
+
+### 下载构建
+
+在 [Releases](https://github.com/yoogoc/beacon/releases) 查找对应平台的产物。
+主分支构建发布为预发布版本；`v*` 标签触发正式 Release。手动运行打包任务的产物位于
+[Actions](https://github.com/yoogoc/beacon/actions/workflows/package.yml)。
+
+| 平台 | 打包格式 | 验证情况 |
+| --- | --- | --- |
+| macOS · Apple Silicon / Intel | `.app`、`.dmg` | 已在本机验证构建、打包与启动；签名和公证尚未验证。 |
+| Linux · x86_64 / ARM64 | `.deb`、AppImage | 已配置打包任务，本机尚未验证。 |
+| Windows · x86_64 / ARM64 | NSIS 安装包 | 已配置打包任务，本机尚未验证。 |
+
+实际可用产物以 Release 和 Actions 结果为准。详情见 [打包与分发](docs/PACKAGING.md)。
+
+### 从源码运行
+
+准备 Rust 工具链和平台构建依赖；仓库的 `rust-toolchain.toml` 固定使用 Rust 1.98。
+macOS 需要 Xcode Command Line Tools；Linux 的系统依赖、Windows 的 MSVC 环境见
+[开发指南](docs/DEVELOPMENT.md)。
+
+```sh
+git clone https://github.com/yoogoc/beacon.git
+cd beacon
+cargo run --locked -p beacon
+```
+
+Beacon 读取 `KUBECONFIG`，未设置时读取 `~/.kube/config`。如需指定配置：
+
+```sh
+KUBECONFIG=/path/to/kubeconfig cargo run --locked -p beacon
+```
+
+首次启动后：
+
+1. 点击左侧集群名称进行连接。
+2. 展开资源分组，选择 Pod、Deployment 或其他资源类型。
+3. 点击资源查看详情；右键使用该资源支持的操作。
+
+**启动时不自动连接任何集群，连接后也不自动打开资源列表。**
+使用 kubeconfig 凭据插件时，需要对应命令在 PATH 上；集群拒绝 WebSocket Exec 升级时，
+Shell / Exec 可自动回退到本机 `kubectl`。
+
+## 工作区与键盘操作
+
+点击资源类型会复用**同一集群、同一类型**的标签页；右键选择 **Open in new tab** 可打开另一个视图。
+每个标签页独立保留命名空间、搜索、筛选和详情状态。侧边栏位于标签页外，侧边栏、右侧详情和底部 Pod 面板均可拖拽调整大小。
+
+| 功能 | macOS | Windows / Linux |
+| --- | --- | --- |
+| 命令面板 | `⌘ K` | `Ctrl K` |
+| 新建 / 关闭标签页 | `⌘ T` / `⌘ W` | `Ctrl T` / `Ctrl W` |
+| 下一个 / 上一个标签页 | `Ctrl Tab` / `Ctrl Shift Tab` | `Ctrl Tab` / `Ctrl Shift Tab` |
+| 应用设置 | `⌘ ,` | `Ctrl ,` |
+| 应用日志 | `⌘ Shift L` | `Ctrl Shift L` |
+| 快捷键指南 | `F1` | `F1` |
+
+命令面板支持 `@资源类型`、`#命名空间`、`ctx 集群` 和 `>命令`。
+例如 `@dep` 查找 Deployment，`#kube-sys` 查找 kube-system。
+完整快捷键和焦点行为可在 **Help → Keyboard shortcuts** 中查看。
+
+## 按你的习惯配置
+
+**应用设置**：macOS 使用系统菜单栏 **Beacon → Settings…**；
+Windows / Linux 使用应用菜单 **Menu → Settings…**。
+可选择主题、调整字体与各类按钮 / 文字的颜色，保存多个本地主题，并设置全局 HTTP、HTTPS 或 SOCKS5 代理。
+
+**集群设置**：右键集群，打开 **Cluster settings…**。
+可设置别名、预设或导入的 SVG 图标、独立代理，以及 Kubernetes Metrics API / Prometheus / Disabled 指标来源。
+Prometheus 支持 Bearer Token 和四组可编辑查询，保存前可测试指标来源。
+
+集群代理优先于全局代理；连接配置变更可通过 **Save and reconnect** 生效并保留资源标签页。
+配置路径、代理行为和 Prometheus 标签要求见 [配置说明](docs/USAGE.md#应用与集群配置)。
+
+## 开发
+
+```sh
+cargo fmt --all -- --check
+cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace
+```
+
+| Crate | 职责 |
+| --- | --- |
+| `beacon` | 应用启动、日志与平台打包入口。 |
+| `beacon-ui` | GPUI 视图、主题、资源目录、命令面板和异步桥接。 |
+| `beacon-kube` | 配置、连接、发现、Watch、权限和 Kubernetes 操作；不依赖 GPUI。 |
+| `beacon-columns` | 内置资源与 CRD 表格列、字段格式化和容器状态。 |
+
+网络任务运行在 Tokio 上，视图运行在 GPUI 线程，通过消息交换合批后的更新。
+同一集群的标签页共享连接；同一种资源的相同订阅共享 Watch。
+
+## 文档
+
+| 文档 | 内容 |
+| --- | --- |
+| [使用指南](docs/USAGE.md) | 标签页、命名空间、筛选、详情、Pod 工具、资源操作、配置和日志。 |
+| [开发指南](docs/DEVELOPMENT.md) | 构建依赖、检查命令、无界面验证、UI 截图和开发约定。 |
+| [设计文档](docs/DESIGN.md) | 初始架构设计、技术选型与里程碑。 |
+| [打包与分发](docs/PACKAGING.md) | 各平台产物、CI 发布流程、签名和验证情况。 |
+
+项目在 Cargo 元数据中声明使用 **Apache-2.0**。界面图标的来源和许可见
+[图标说明](crates/beacon-ui/assets/README.md)。
