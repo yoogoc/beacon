@@ -38,7 +38,7 @@ pub use kube::api::{ApiResource, DynamicObject};
 pub use kube::core::GroupVersionKind;
 pub use logs::{LogBuffer, LogEvent, LogOptions};
 pub use metrics::{Metrics, Usage};
-pub use ops::{Applied, Conflict, Operation};
+pub use ops::{Applied, Conflict, DeleteTarget, Operation};
 pub use session::{ClusterSession, Health};
 pub use store::{Delta, DeltaBatch, ObjectRef, ResourceStore};
 pub use terminal::{Terminal, TerminalEvent};

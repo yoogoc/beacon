@@ -12,8 +12,8 @@ use std::{collections::BTreeSet, sync::Arc, time::Duration};
 
 use beacon_columns::ColumnSet;
 use beacon_kube::{
-    Applied, ClusterSession, Forward, Health, Kind, ObjectRef, Operation, Release, ResourceStore,
-    Rules, WatchKey, resources,
+    Applied, ClusterSession, DeleteTarget, Forward, Health, Kind, ObjectRef, Operation, Release,
+    ResourceStore, Rules, WatchKey, resources,
 };
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::checkbox::Checkbox;
@@ -24,7 +24,7 @@ use gpui_kit::component::resizable::{ResizableState, resizable_panel, v_resizabl
 use gpui_kit::component::sidebar::SidebarMenuItem;
 use gpui_kit::component::spinner::Spinner;
 use gpui_kit::component::table::{TableEvent, TableState};
-use gpui_kit::component::{ActiveTheme as _, Sizable as _, h_flex, v_flex};
+use gpui_kit::component::{ActiveTheme as _, Disableable as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::*;
 use nucleo_matcher::Matcher;
 
@@ -137,6 +137,7 @@ pub struct ClusterView {
     prompt: Option<Entity<Prompt>>,
     /// What the last write said, for the toolbar.
     outcome: Option<Outcome>,
+    bulk_deleting: bool,
     mode: Mode,
     releases: Releases,
 
@@ -154,6 +155,7 @@ pub struct ClusterView {
     _objects: Vec<Task<()>>,
     _columns: Option<Task<()>>,
     _operation: Option<Task<()>>,
+    _bulk_operation: Option<Task<()>>,
     _rules: Option<Task<()>>,
     _metrics: Task<()>,
     _forward: Option<Task<()>>,
@@ -231,6 +233,7 @@ impl ClusterView {
             rules: None,
             prompt: None,
             outcome: None,
+            bulk_deleting: false,
             mode: Mode::Objects,
             releases: Releases::Unopened,
             visible: true,
@@ -239,6 +242,7 @@ impl ClusterView {
             _objects: Vec::new(),
             _columns: None,
             _operation: None,
+            _bulk_operation: None,
             _rules: None,
             _metrics: Task::ready(()),
             _forward: None,
@@ -507,6 +511,7 @@ impl ClusterView {
             operation,
             target: target.clone(),
             kind: SharedString::from(kind.resource.kind.clone()),
+            bulk_targets: None,
         };
         let prompt = cx.new(|cx| Prompt::new(ask, window, cx));
 
@@ -525,6 +530,103 @@ impl ClusterView {
 
         self.prompt = Some(prompt);
         cx.notify();
+    }
+
+    /// Confirms a fixed snapshot of checked objects before deleting them.
+    pub fn start_delete_selected(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(kind) = self.kind.clone() else {
+            return;
+        };
+        let targets = self.table.read(cx).delegate().selected_targets();
+        if targets.is_empty() || !self.may_delete() || self.bulk_deleting {
+            return;
+        }
+        let ask = Ask::bulk_delete(
+            SharedString::from(kind.resource.kind.clone()),
+            targets
+                .iter()
+                .map(|target| target.reference.clone())
+                .collect(),
+        );
+        let prompt = cx.new(|cx| Prompt::new(ask, window, cx));
+        cx.subscribe_in(
+            &prompt,
+            window,
+            move |view, _, event: &PromptEvent, window, cx| {
+                view.prompt = None;
+                if matches!(event, PromptEvent::Confirmed(Operation::Delete)) {
+                    view.run_delete_many(kind.clone(), targets.clone(), window, cx);
+                }
+                cx.notify();
+            },
+        )
+        .detach();
+        self.prompt = Some(prompt);
+        cx.notify();
+    }
+
+    fn may_delete(&self) -> bool {
+        self.kind.as_ref().is_some_and(|kind| {
+            self.rules.as_deref().is_none_or(|rules| {
+                rules.allows("delete", &kind.resource.group, &kind.resource.plural)
+            })
+        })
+    }
+
+    fn run_delete_many(
+        &mut self,
+        kind: Arc<Kind>,
+        targets: Vec<DeleteTarget>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let count = targets.len();
+        self.bulk_deleting = true;
+        self.outcome = Some(Outcome::Running(format!("Deleting {count} resources")));
+        cx.notify();
+        let session = self.session.clone();
+        let resource = kind.resource.clone();
+        let running =
+            Bridge::global(cx).run(async move { session.delete_many(resource, targets).await });
+        self._bulk_operation = Some(cx.spawn_in(window, async move |this, cx| {
+            let result = running.await;
+            let _ = this.update(cx, |view, cx| {
+                view.bulk_deleting = false;
+                view.outcome = Some(match result {
+                    Ok(results) => {
+                        let deleted: Vec<DeleteTarget> = results
+                            .iter()
+                            .filter(|(_, result)| result.is_ok())
+                            .map(|(target, _)| target.clone())
+                            .collect();
+                        view.table.update(cx, |table, cx| {
+                            table.delegate_mut().remove_selected(&deleted);
+                            cx.notify();
+                        });
+                        let succeeded = results.iter().filter(|(_, result)| result.is_ok()).count();
+                        let failed = results.len() - succeeded;
+                        if failed == 0 {
+                            Outcome::Done(format!("Deleted {succeeded} resources"))
+                        } else {
+                            let first = results
+                                .iter()
+                                .find_map(|(target, result)| {
+                                    result
+                                        .as_ref()
+                                        .err()
+                                        .map(|error| format!("{}: {error}", target.reference))
+                                })
+                                .unwrap_or_default();
+                            Outcome::Failed(format!(
+                                "Deleted {succeeded}; {failed} failed. {first}"
+                            ))
+                        }
+                    }
+                    Err(error) => Outcome::Failed(error.to_string()),
+                });
+                cx.notify();
+            });
+        }));
     }
 
     /// Sends one operation, and reports what came back.
@@ -1660,6 +1762,11 @@ impl ClusterView {
             },
             Mode::Forwards => self.session.forwards().len().to_string(),
         };
+        let selected = if self.mode == Mode::Objects {
+            self.table.read(cx).delegate().selected_count()
+        } else {
+            0
+        };
 
         h_flex()
             .w_full()
@@ -1705,6 +1812,35 @@ impl ClusterView {
                             .text_xs()
                             .text_color(cx.theme().tone(tone))
                             .child(text)
+                    }))
+                    .children((selected > 0).then(|| {
+                        h_flex()
+                            .gap_1()
+                            .items_center()
+                            .child(div().text_xs().child(format!("{selected} selected")))
+                            .child(
+                                Button::new("clear-selected")
+                                    .small()
+                                    .ghost()
+                                    .label("Clear")
+                                    .on_click(cx.listener(|view, _, _, cx| {
+                                        view.table.update(cx, |table, cx| {
+                                            table.delegate_mut().clear_selected();
+                                            cx.notify();
+                                        });
+                                        cx.notify();
+                                    })),
+                            )
+                            .child(
+                                Button::new("delete-selected")
+                                    .small()
+                                    .danger()
+                                    .label("Delete selected")
+                                    .disabled(!self.may_delete() || self.bulk_deleting)
+                                    .on_click(cx.listener(|view, _, window, cx| {
+                                        view.start_delete_selected(window, cx);
+                                    })),
+                            )
                     }))
                     .child(
                         div()
@@ -1772,10 +1908,25 @@ impl Render for ClusterView {
                 .into_any_element(),
         };
 
-        v_flex()
+        div()
+            .relative()
             .size_full()
             .overflow_hidden()
-            .child(self.render_toolbar(cx))
-            .child(div().flex_1().overflow_hidden().child(body))
+            .child(
+                v_flex()
+                    .size_full()
+                    .child(self.render_toolbar(cx))
+                    .child(div().flex_1().overflow_hidden().child(body)),
+            )
+            .children(self.prompt.clone().map(|prompt| {
+                div()
+                    .absolute()
+                    .inset_0()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .bg(cx.theme().background.opacity(0.75))
+                    .child(prompt)
+            }))
     }
 }

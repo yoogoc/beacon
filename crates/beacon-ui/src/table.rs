@@ -13,16 +13,22 @@
 use beacon_columns::{
     Cell, CellValue, ColumnDef, ColumnSet, ColumnSource, ColumnWidth, Timestamp, Usage,
 };
-use beacon_kube::{Delta, DeltaBatch, DynamicObject, Metrics, ObjectRef, ResourceStore, data};
+use beacon_kube::{
+    DeleteTarget, Delta, DeltaBatch, DynamicObject, Metrics, ObjectRef, ResourceStore, data,
+};
+use gpui_kit::component::checkbox::Checkbox;
 use gpui_kit::component::menu::{PopupMenu, PopupMenuItem};
 use gpui_kit::component::table::{Column, ColumnSort, TableDelegate, TableState};
-use gpui_kit::component::{ActiveTheme as _, h_flex};
+use gpui_kit::component::{ActiveTheme as _, Disableable as _, h_flex};
 use gpui_kit::*;
 use nucleo_matcher::{
     Matcher, Utf32Str,
     pattern::{CaseMatching, Normalization, Pattern},
 };
-use std::{collections::BTreeSet, sync::Arc};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    sync::Arc,
+};
 
 use crate::actions;
 use crate::cluster::ClusterView;
@@ -42,6 +48,8 @@ pub struct ResourceTable {
     /// The store in display order. Rebuilt whenever the store or the sort
     /// changes; everything else reads it.
     rows: Vec<ObjectRef>,
+    /// Checked rows and the exact UIDs they referred to when checked.
+    checked: BTreeMap<ObjectRef, String>,
     sort: Sort,
     /// What the search box contains. Empty means everything.
     filter: String,
@@ -82,6 +90,7 @@ impl ResourceTable {
             columns,
             store: ResourceStore::new(),
             rows: Vec::new(),
+            checked: BTreeMap::new(),
             sort: Sort::Natural,
             filter: String::new(),
             secret_type_filter: None,
@@ -223,6 +232,65 @@ impl ResourceTable {
         self.rows.get(row)
     }
 
+    pub fn selected_targets(&self) -> Vec<DeleteTarget> {
+        self.checked
+            .iter()
+            .map(|(reference, uid)| DeleteTarget {
+                reference: reference.clone(),
+                uid: uid.clone(),
+            })
+            .collect()
+    }
+
+    pub fn selected_count(&self) -> usize {
+        self.checked.len()
+    }
+
+    pub fn all_visible_selected(&self) -> bool {
+        !self.rows.is_empty() && self.rows.iter().all(|key| self.checked.contains_key(key))
+    }
+
+    pub fn toggle_selected(&mut self, key: &ObjectRef) {
+        if self.checked.remove(key).is_some() {
+            return;
+        }
+        if let Some(uid) = self
+            .store
+            .get(key)
+            .and_then(|object| object.metadata.uid.clone())
+        {
+            self.checked.insert(key.clone(), uid);
+        }
+    }
+
+    pub fn toggle_all_visible(&mut self) {
+        if self.all_visible_selected() {
+            self.checked.clear();
+            return;
+        }
+        for key in &self.rows {
+            if let Some(uid) = self
+                .store
+                .get(key)
+                .and_then(|object| object.metadata.uid.clone())
+            {
+                self.checked.insert(key.clone(), uid);
+            }
+        }
+    }
+
+    pub fn clear_selected(&mut self) {
+        self.checked.clear();
+    }
+
+    pub fn remove_selected(&mut self, targets: &[DeleteTarget]) {
+        for target in targets {
+            if self.checked.get(&target.reference) == Some(&target.uid) {
+                self.checked.remove(&target.reference);
+            }
+        }
+    }
+
     /// Where a key sits in the current order, if it is on screen at all.
     ///
     /// `None` for an object the filter is hiding, which is why the palette
@@ -257,6 +325,7 @@ impl ResourceTable {
         self.columns = columns;
         self.store = ResourceStore::new();
         self.rows.clear();
+        self.checked.clear();
         self.sort = Sort::Natural;
         // Every reset is followed by a new subscription, so from here until
         // that watch says something the table is waiting rather than empty.
@@ -317,6 +386,7 @@ impl ResourceTable {
                 right_score.cmp(left_score).then_with(|| left.cmp(right))
             });
             self.rows = ranked.into_iter().map(|(_, key)| key).collect();
+            self.prune_selection();
             return;
         }
 
@@ -328,6 +398,7 @@ impl ResourceTable {
                 let Some(column) = self.columns.columns.get(index) else {
                     rows.sort();
                     self.rows = rows;
+                    self.prune_selection();
                     return;
                 };
 
@@ -351,6 +422,22 @@ impl ResourceTable {
         }
 
         self.rows = rows;
+        self.prune_selection();
+    }
+
+    fn prune_selection(&mut self) {
+        if self.checked.is_empty() {
+            return;
+        }
+        let visible: BTreeSet<_> = self.rows.iter().collect();
+        self.checked.retain(|key, uid| {
+            visible.contains(key)
+                && self
+                    .store
+                    .get(key)
+                    .and_then(|object| object.metadata.uid.as_ref())
+                    == Some(uid)
+        });
     }
 
     /// The keys that survive the filter, each with its match score.
@@ -473,7 +560,7 @@ impl SortKey {
 
 impl TableDelegate for ResourceTable {
     fn columns_count(&self, _: &App) -> usize {
-        self.columns.len()
+        self.columns.len() + 1
     }
 
     /// Draws the component's skeleton rows instead of an empty table. The
@@ -488,7 +575,16 @@ impl TableDelegate for ResourceTable {
     }
 
     fn column(&self, index: usize, _: &App) -> Column {
-        let Some(definition) = self.columns.columns.get(index) else {
+        if index == 0 {
+            return Column::new("select", "")
+                .width(px(44.))
+                .min_width(px(44.))
+                .fixed_left()
+                .resizable(false)
+                .movable(false)
+                .selectable(false);
+        }
+        let Some(definition) = self.columns.columns.get(index - 1) else {
             return Column::new("", "");
         };
 
@@ -501,7 +597,7 @@ impl TableDelegate for ResourceTable {
             Sort::ByColumn {
                 index: sorted,
                 descending,
-            } if sorted == index => {
+            } if sorted == index - 1 => {
                 if descending {
                     ColumnSort::Descending
                 } else {
@@ -524,8 +620,50 @@ impl TableDelegate for ResourceTable {
         _: &mut Window,
         cx: &mut Context<TableState<Self>>,
     ) {
-        self.sort_by(index, sort);
+        if index == 0 {
+            return;
+        }
+        self.sort_by(index - 1, sort);
         cx.notify();
+    }
+
+    fn render_th(
+        &mut self,
+        column: usize,
+        _: &mut Window,
+        cx: &mut Context<TableState<Self>>,
+    ) -> impl IntoElement {
+        if column != 0 {
+            return div()
+                .size_full()
+                .child(self.column(column, cx).name)
+                .into_any_element();
+        }
+        let table = cx.entity().downgrade();
+        let cluster = self.context_view.clone();
+        div()
+            .id("select-all-cell")
+            .size_full()
+            .flex()
+            .items_center()
+            .justify_center()
+            .on_click(|_, _, cx| cx.stop_propagation())
+            .child(
+                Checkbox::new("select-all-resources")
+                    .checked(self.all_visible_selected())
+                    .disabled(self.rows.is_empty())
+                    .accessibility_label("Select all visible resources")
+                    .on_click(move |_, _, cx| {
+                        let _ = table.update(cx, |state, cx| {
+                            state.delegate_mut().toggle_all_visible();
+                            cx.notify();
+                        });
+                        if let Some(cluster) = &cluster {
+                            let _ = cluster.update(cx, |_, cx| cx.notify());
+                        }
+                    }),
+            )
+            .into_any_element()
     }
 
     fn context_menu(
@@ -631,8 +769,52 @@ impl TableDelegate for ResourceTable {
         _: &mut Window,
         cx: &mut Context<TableState<Self>>,
     ) -> impl IntoElement {
-        let Some((definition, value)) = self.cell(row, column) else {
-            return h_flex();
+        if column == 0 {
+            let Some(key) = self.key_at(row).cloned() else {
+                return h_flex().into_any_element();
+            };
+            let enabled = self
+                .store
+                .get(&key)
+                .and_then(|object| object.metadata.uid.as_ref())
+                .is_some();
+            let checked = self.checked.contains_key(&key);
+            let table = cx.entity().downgrade();
+            let cluster = self.context_view.clone();
+            return div()
+                .id(SharedString::from(format!(
+                    "select-cell-{}-{}",
+                    key.namespace.as_deref().unwrap_or(""),
+                    key.name
+                )))
+                .size_full()
+                .flex()
+                .items_center()
+                .justify_center()
+                .on_click(|_, _, cx| cx.stop_propagation())
+                .child(
+                    Checkbox::new(SharedString::from(format!(
+                        "select-{}-{}",
+                        key.namespace.as_deref().unwrap_or(""),
+                        key.name
+                    )))
+                    .checked(checked)
+                    .disabled(!enabled)
+                    .accessibility_label(format!("Select {key}"))
+                    .on_click(move |_, _, cx| {
+                        let _ = table.update(cx, |state, cx| {
+                            state.delegate_mut().toggle_selected(&key);
+                            cx.notify();
+                        });
+                        if let Some(cluster) = &cluster {
+                            let _ = cluster.update(cx, |_, cx| cx.notify());
+                        }
+                    }),
+                )
+                .into_any_element();
+        }
+        let Some((definition, value)) = self.cell(row, column - 1) else {
+            return h_flex().into_any_element();
         };
 
         let color = if value.is_missing() {
@@ -650,6 +832,7 @@ impl TableDelegate for ResourceTable {
             .items_center()
             .text_color(color)
             .child(value.display().to_string())
+            .into_any_element()
     }
 
     fn render_empty(
@@ -669,7 +852,10 @@ impl TableDelegate for ResourceTable {
     /// The table's own keyboard navigation and copy support read cells through
     /// this, so it has to produce the same text the row shows.
     fn cell_text(&self, row: usize, column: usize, _: &App) -> String {
-        self.cell(row, column)
+        if column == 0 {
+            return String::new();
+        }
+        self.cell(row, column - 1)
             .map(|(_, value)| value.display().to_string())
             .unwrap_or_default()
     }
@@ -759,7 +945,36 @@ mod tests {
             .within(namespace)
             .data(serde_json::json!({ "spec": { "containers": [{}] } }));
         object.metadata.resource_version = Some("1".into());
+        object.metadata.uid = Some(format!("uid-{namespace}-{name}"));
         Arc::new(object)
+    }
+
+    #[test]
+    fn checked_resources_track_uid_and_never_include_hidden_rows() {
+        let mut table = ResourceTable::new(ColumnSet::for_kind("", "Pod", true));
+        table.apply(vec![Delta::Reset(vec![
+            named("default", "one"),
+            named("default", "two"),
+        ])]);
+        table.toggle_all_visible();
+        assert_eq!(table.selected_count(), 2);
+        assert!(table.all_visible_selected());
+
+        table.set_filter("one");
+        assert_eq!(table.selected_count(), 1);
+        assert_eq!(table.selected_targets()[0].reference.name, "one");
+        table.set_filter("");
+        assert_eq!(table.selected_count(), 1, "hidden rows stay unselected");
+
+        let mut replacement = (*named("default", "one")).clone();
+        replacement.metadata.uid = Some("replacement-uid".into());
+        replacement.metadata.resource_version = Some("2".into());
+        table.apply(vec![Delta::Upsert(Arc::new(replacement))]);
+        assert_eq!(
+            table.selected_count(),
+            0,
+            "a replacement is never deleted by stale selection"
+        );
     }
 
     fn secret(name: &str, secret_type: Option<&str>) -> Arc<DynamicObject> {

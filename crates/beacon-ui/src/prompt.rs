@@ -21,10 +21,24 @@ pub struct Ask {
     pub operation: Operation,
     pub target: ObjectRef,
     pub kind: SharedString,
+    pub bulk_targets: Option<Vec<ObjectRef>>,
 }
 
 impl Ask {
+    pub fn bulk_delete(kind: SharedString, targets: Vec<ObjectRef>) -> Self {
+        assert!(!targets.is_empty());
+        Self {
+            operation: Operation::Delete,
+            target: targets[0].clone(),
+            kind,
+            bulk_targets: Some(targets),
+        }
+    }
+
     fn title(&self) -> String {
+        if let Some(targets) = &self.bulk_targets {
+            return format!("Delete {} {} resources?", targets.len(), self.kind);
+        }
         match self.operation {
             Operation::Delete => format!("Delete this {}?", self.kind),
             Operation::Scale { .. } => format!("Scale this {}", self.kind),
@@ -33,6 +47,9 @@ impl Ask {
     }
 
     fn body(&self) -> String {
+        if self.bulk_targets.is_some() {
+            return "The resources listed below will be deleted. There is no undo. Controller-owned resources may be recreated.".into();
+        }
         match self.operation {
             Operation::Delete => format!(
                 "{} will be deleted. There is no undo — if a controller owns it, \
@@ -104,6 +121,74 @@ impl Prompt {
             cx.emit(PromptEvent::Confirmed(operation));
         }
     }
+
+    fn render_targets(&self, cx: &App) -> Option<AnyElement> {
+        let targets = self.ask.bulk_targets.as_ref()?;
+        let border = cx.theme().border;
+        let muted = cx.theme().muted_foreground;
+        let header = h_flex()
+            .w_full()
+            .px_3()
+            .py_1p5()
+            .gap_2()
+            .border_b_1()
+            .border_color(border)
+            .bg(cx.theme().muted.opacity(0.35))
+            .text_xs()
+            .font_weight(FontWeight::MEDIUM)
+            .text_color(muted)
+            .child(div().w(px(32.)).child("#"))
+            .child(div().w(px(150.)).child("Namespace"))
+            .child(div().flex_1().child("Name"));
+
+        let rows = targets.iter().enumerate().map(|(index, target)| {
+            h_flex()
+                .w_full()
+                .px_3()
+                .py_2()
+                .gap_2()
+                .items_start()
+                .text_sm()
+                .when(index + 1 < targets.len(), |row| {
+                    row.border_b_1().border_color(border)
+                })
+                .child(
+                    div()
+                        .w(px(32.))
+                        .text_color(muted)
+                        .child((index + 1).to_string()),
+                )
+                .child(
+                    div().w(px(150.)).child(
+                        target
+                            .namespace
+                            .as_deref()
+                            .unwrap_or("Cluster-scoped")
+                            .to_string(),
+                    ),
+                )
+                .child(div().flex_1().min_w_0().child(target.name.clone()))
+        });
+
+        Some(
+            v_flex()
+                .w_full()
+                .rounded_md()
+                .border_1()
+                .border_color(border)
+                .overflow_hidden()
+                .child(header)
+                .child(
+                    div()
+                        .id("delete-target-table")
+                        .w_full()
+                        .max_h(px(280.))
+                        .overflow_y_scroll()
+                        .child(v_flex().children(rows)),
+                )
+                .into_any_element(),
+        )
+    }
 }
 
 impl Render for Prompt {
@@ -116,7 +201,11 @@ impl Render for Prompt {
         let ready = self.resolve(cx).is_some();
 
         v_flex()
-            .w(px(460.))
+            .w(px(if self.ask.bulk_targets.is_some() {
+                600.
+            } else {
+                460.
+            }))
             .p_4()
             .gap_3()
             .rounded_lg()
@@ -135,6 +224,7 @@ impl Render for Prompt {
                     .text_color(cx.theme().muted_foreground)
                     .child(self.ask.body()),
             )
+            .children(self.render_targets(cx))
             .children(
                 self.ask
                     .needs_a_number()

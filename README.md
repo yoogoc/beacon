@@ -131,6 +131,14 @@ copying the name and applicable write actions remain available across kinds.
 Write actions respect the current RBAC answer, and a menu action stays bound
 to the object that was right-clicked.
 
+For bulk deletion, tick the checkboxes beside resource rows (or the header
+checkbox for all visible rows), then choose **Delete selected**. The confirmation
+shows every target in a scrollable namespace/name table. Search and type
+filters drop hidden rows from the selection, and each deletion checks the
+selected object's UID so a replacement under the
+same name is not deleted accidentally. Successful deletions clear their ticks;
+failed ones remain selected with an error in the toolbar.
+
 ## ConfigMaps and Secrets
 
 The Secret list has a type picker populated from the current namespace scope,

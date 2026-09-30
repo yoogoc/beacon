@@ -12,11 +12,18 @@
 
 use kube::{
     Api,
-    api::{ApiResource, DeleteParams, DynamicObject, Patch, PatchParams},
+    api::{ApiResource, DeleteParams, DynamicObject, Patch, PatchParams, Preconditions},
 };
 use serde_json::{Value, json};
 
-use crate::{Error, Result, access::verbs};
+use crate::{Error, ObjectRef, Result, access::verbs};
+
+/// An object selected for deletion, pinned to the UID that was shown.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DeleteTarget {
+    pub reference: ObjectRef,
+    pub uid: String,
+}
 
 /// The field manager Beacon writes under. It appears in `managedFields`, and in
 /// somebody else's conflict message later, so it is worth being a name a person
@@ -108,6 +115,27 @@ pub async fn delete(
         .delete(name, &DeleteParams::default())
         .await?;
     tracing::info!(kind = %resource.kind, name, namespace = ?namespace, "deleted");
+    Ok(())
+}
+
+/// Delete only the exact incarnation selected by the user. If the object was
+/// replaced under the same name, Kubernetes rejects the UID precondition.
+pub async fn delete_with_uid(
+    client: &kube::Client,
+    resource: &ApiResource,
+    target: &DeleteTarget,
+) -> Result<()> {
+    let params = DeleteParams {
+        preconditions: Some(Preconditions {
+            uid: Some(target.uid.clone()),
+            ..Default::default()
+        }),
+        ..Default::default()
+    };
+    api(client, resource, target.reference.namespace.as_deref())
+        .delete(&target.reference.name, &params)
+        .await?;
+    tracing::info!(kind = %resource.kind, target = %target.reference, "deleted");
     Ok(())
 }
 

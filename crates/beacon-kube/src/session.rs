@@ -6,6 +6,7 @@
 //! each other, and dropping one stops all of its work -- which is what makes
 //! switching contexts safe rather than a slow leak.
 
+use futures::{StreamExt, stream};
 use std::sync::{
     Arc, Mutex,
     atomic::{AtomicUsize, Ordering},
@@ -29,7 +30,7 @@ use crate::{
     helm::{self, Release},
     logs::{LogEvent, LogOptions},
     metrics::{self, Metrics},
-    ops::{self, Applied, Operation},
+    ops::{self, Applied, DeleteTarget, Operation},
     watch::{Registry, Subscription, WatchKey},
 };
 
@@ -215,6 +216,27 @@ impl ClusterSession {
                 .await
             }
         }
+    }
+
+    /// Delete selected objects with UID preconditions, reporting each result
+    /// independently so one refusal does not hide the others.
+    pub async fn delete_many(
+        self: Arc<Self>,
+        resource: ApiResource,
+        targets: Vec<DeleteTarget>,
+    ) -> Vec<(DeleteTarget, Result<()>)> {
+        stream::iter(targets)
+            .map(|target| {
+                let client = self.client.clone();
+                let resource = resource.clone();
+                async move {
+                    let result = ops::delete_with_uid(&client, &resource, &target).await;
+                    (target, result)
+                }
+            })
+            .buffer_unordered(8)
+            .collect()
+            .await
     }
 
     /// Opens a port forward. `local_port` of 0 asks for any free port.
