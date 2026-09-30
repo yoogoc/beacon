@@ -20,7 +20,7 @@ use gpui_kit::component::checkbox::Checkbox;
 use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::component::menu::PopupMenuItem;
 use gpui_kit::component::popover::Popover;
-use gpui_kit::component::resizable::{ResizableState, resizable_panel, v_resizable};
+use gpui_kit::component::resizable::{ResizableState, h_resizable, resizable_panel};
 use gpui_kit::component::sidebar::SidebarMenuItem;
 use gpui_kit::component::spinner::Spinner;
 use gpui_kit::component::table::{TableEvent, TableState};
@@ -1993,22 +1993,21 @@ impl Render for ClusterView {
 
         let body = match self.detail.clone() {
             None => table,
-            Some(detail) => v_resizable("detail-split")
+            Some(detail) => h_resizable("detail-split")
                 .with_state(&self.split)
                 .child(
                     resizable_panel()
-                        .size(px(440.))
-                        .size_range(px(120.)..px(2000.))
+                        .size_range(px(160.)..px(10000.))
                         .child(table),
                 )
                 .child(
                     resizable_panel()
-                        .size(px(300.))
-                        .size_range(px(120.)..px(2000.))
+                        .size(px(440.))
+                        .size_range(px(260.)..px(10000.))
                         .child(
                             div()
                                 .size_full()
-                                .border_t_1()
+                                .border_l_1()
                                 .border_color(cx.theme().border)
                                 .child(detail),
                         ),

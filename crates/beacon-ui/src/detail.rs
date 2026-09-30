@@ -103,6 +103,21 @@ enum Apply {
     Done,
 }
 
+#[derive(Clone, Copy)]
+enum MetadataGroup {
+    Labels,
+    Annotations,
+}
+
+impl MetadataGroup {
+    fn title(self) -> &'static str {
+        match self {
+            Self::Labels => "Labels",
+            Self::Annotations => "Annotations",
+        }
+    }
+}
+
 pub struct DetailView {
     session: Arc<ClusterSession>,
     kind: Arc<Kind>,
@@ -116,6 +131,8 @@ pub struct DetailView {
 
     tabs: Vec<DetailTab>,
     tab: DetailTab,
+    labels_expanded: bool,
+    annotations_expanded: bool,
 
     yaml: Yaml,
     /// The Data tab's editors, built when it is first opened.
@@ -204,6 +221,8 @@ impl DetailView {
             object,
             certificates,
             tab: DetailTab::Overview,
+            labels_expanded: false,
+            annotations_expanded: false,
             yaml: Yaml::Unopened,
             data: Data::Unopened,
             revealed: false,
@@ -623,61 +642,36 @@ impl DetailView {
             None => self.kind.display_name(),
         };
 
-        h_flex()
+        v_flex()
             .w_full()
-            .px_3()
-            .py_1p5()
-            .gap_3()
-            .items_center()
-            .justify_between()
+            .flex_shrink_0()
             .border_b_1()
             .border_color(cx.theme().border)
             .child(
                 h_flex()
+                    .w_full()
+                    .px_3()
+                    .py_2()
                     .gap_2()
-                    .items_baseline()
-                    .overflow_hidden()
+                    .items_start()
                     .child(
-                        div()
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .text_sm()
-                            .child(self.target.name.clone()),
-                    )
-                    .child(
-                        div()
-                            .text_xs()
-                            .text_color(cx.theme().muted_foreground)
-                            .child(subtitle),
-                    ),
-            )
-            .child(
-                h_flex()
-                    .gap_2()
-                    .items_center()
-                    .child(
-                        TabBar::new("detail-tabs")
-                            .selected_index(
-                                self.tabs
-                                    .iter()
-                                    .position(|tab| *tab == self.tab)
-                                    .unwrap_or(0),
+                        v_flex()
+                            .flex_1()
+                            .min_w_0()
+                            .gap_1()
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .child(self.target.name.clone()),
                             )
-                            .children(
-                                self.tabs
-                                    .iter()
-                                    .map(|tab| Tab::new().child(tab.label()))
-                                    .collect::<Vec<_>>(),
-                            )
-                            .on_click(cx.listener(|view, index: &usize, window, cx| {
-                                if let Some(tab) = view.tabs.get(*index).copied() {
-                                    view.select(tab, window, cx);
-                                }
-                            })),
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .text_color(cx.theme().muted_foreground)
+                                    .child(subtitle),
+                            ),
                     )
-                    // The panel has been closable from the palette since M3 and
-                    // reachable by mouse not at all: `DetailClosed` had a
-                    // subscriber in ClusterView and nothing that emitted it. This
-                    // is the other half.
                     .child(
                         Button::new("close-detail")
                             .xsmall()
@@ -686,6 +680,28 @@ impl DetailView {
                             .tooltip("Close the details panel")
                             .on_click(cx.listener(|_, _, _, cx| cx.emit(DetailClosed))),
                     ),
+            )
+            .child(
+                TabBar::new("detail-tabs")
+                    .w_full()
+                    .small()
+                    .selected_index(
+                        self.tabs
+                            .iter()
+                            .position(|tab| *tab == self.tab)
+                            .unwrap_or(0),
+                    )
+                    .children(
+                        self.tabs
+                            .iter()
+                            .map(|tab| Tab::new().child(tab.label()))
+                            .collect::<Vec<_>>(),
+                    )
+                    .on_click(cx.listener(|view, index: &usize, window, cx| {
+                        if let Some(tab) = view.tabs.get(*index).copied() {
+                            view.select(tab, window, cx);
+                        }
+                    })),
             )
     }
 
@@ -718,12 +734,13 @@ impl DetailView {
         if let Some(labels) = &metadata.labels
             && !labels.is_empty()
         {
-            sections = sections.child(self.chips("Labels", labels, cx));
+            sections = sections.child(self.metadata_entries(MetadataGroup::Labels, labels, cx));
         }
         if let Some(annotations) = &metadata.annotations
             && !annotations.is_empty()
         {
-            sections = sections.child(self.chips("Annotations", annotations, cx));
+            sections =
+                sections.child(self.metadata_entries(MetadataGroup::Annotations, annotations, cx));
         }
 
         if let Some(containers) = self.containers() {
@@ -819,6 +836,7 @@ impl DetailView {
             .border_color(cx.theme().border)
             .child(
                 h_flex()
+                    .flex_wrap()
                     .gap_2()
                     .items_center()
                     .child(div().font_weight(FontWeight::SEMIBOLD).child(title))
@@ -918,22 +936,21 @@ impl DetailView {
             .w_full()
             .child(self.heading(title, cx))
             .children(rows.into_iter().map(|(label, value)| {
-                h_flex()
+                v_flex()
                     .w_full()
-                    .gap_3()
-                    .items_start()
-                    .text_sm()
+                    .min_w_0()
+                    .gap_0p5()
+                    .py_1()
                     .child(
                         div()
-                            .w(px(150.))
-                            .flex_shrink_0()
+                            .text_xs()
                             .text_color(cx.theme().muted_foreground)
                             .child(label.into()),
                     )
                     .child(match value {
-                        Some(value) => div().flex_1().child(value),
+                        Some(value) => div().w_full().text_sm().whitespace_normal().child(value),
                         None => div()
-                            .flex_1()
+                            .text_sm()
                             .text_color(cx.theme().muted_foreground)
                             .child("<none>"),
                     })
@@ -948,34 +965,58 @@ impl DetailView {
             .child(title.to_uppercase())
     }
 
-    fn chips(
+    fn metadata_entries(
         &self,
-        title: &'static str,
+        group: MetadataGroup,
         entries: &std::collections::BTreeMap<String, String>,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
+        const PREVIEW_LIMIT: usize = 5;
+        let expanded = match group {
+            MetadataGroup::Labels => self.labels_expanded,
+            MetadataGroup::Annotations => self.annotations_expanded,
+        };
+        let visible_count = if expanded {
+            entries.len()
+        } else {
+            PREVIEW_LIMIT
+        };
+
         v_flex()
-            .gap_1p5()
+            .gap_2()
             .w_full()
-            .child(self.heading(title, cx))
-            .child(
-                h_flex()
-                    .flex_wrap()
-                    .gap_1p5()
-                    .children(entries.iter().map(|(key, value)| {
-                        div()
-                            .px_1p5()
-                            .py_0p5()
-                            .rounded_md()
-                            .bg(cx.theme().muted)
-                            .text_xs()
-                            .child(if value.is_empty() {
-                                key.clone()
-                            } else {
-                                format!("{key}={value}")
-                            })
-                    })),
-            )
+            .child(self.heading(group.title(), cx))
+            .children(entries.iter().take(visible_count).map(|(key, value)| {
+                div()
+                    .w_full()
+                    .min_w_0()
+                    .p_2()
+                    .rounded_md()
+                    .bg(cx.theme().muted.opacity(0.5))
+                    .text_sm()
+                    .whitespace_normal()
+                    .child(format!("{key}={value}"))
+            }))
+            .when(entries.len() > PREVIEW_LIMIT, |this| {
+                this.child(
+                    Button::new(SharedString::from(format!("toggle-{}", group.title())))
+                        .ghost()
+                        .small()
+                        .label(if expanded {
+                            "Show less".to_string()
+                        } else {
+                            format!("Show {} more", entries.len() - PREVIEW_LIMIT)
+                        })
+                        .on_click(cx.listener(move |view, _, _, cx| {
+                            let expanded = match group {
+                                MetadataGroup::Labels => &mut view.labels_expanded,
+                                MetadataGroup::Annotations => &mut view.annotations_expanded,
+                            };
+                            *expanded = !*expanded;
+                            cx.notify();
+                        })),
+                )
+            })
     }
 
     fn container_section(
@@ -1002,6 +1043,7 @@ impl DetailView {
                     .bg(cx.theme().muted.opacity(0.5))
                     .child(
                         h_flex()
+                            .flex_wrap()
                             .gap_2()
                             .items_center()
                             .text_sm()
@@ -1062,6 +1104,7 @@ impl DetailView {
                 .child(
                     h_flex()
                         .w_full()
+                        .flex_wrap()
                         .gap_2()
                         .items_baseline()
                         .child(
@@ -1141,18 +1184,21 @@ impl DetailView {
         let running = matches!(self.apply, Apply::Running);
         let revealed = self.revealed;
 
-        h_flex()
+        v_flex()
             .w_full()
+            .flex_shrink_0()
             .px_3()
             .py_2()
-            .gap_3()
+            .gap_2()
             .items_start()
-            .justify_between()
             .border_t_1()
             .border_color(cx.theme().border)
-            .child(div().flex_1().child(self.render_apply_status(cx)))
+            .child(div().w_full().child(self.render_apply_status(cx)))
             .child(
                 h_flex()
+                    .w_full()
+                    .flex_wrap()
+                    .justify_end()
                     .gap_2()
                     .items_center()
                     .flex_shrink_0()
@@ -1221,18 +1267,21 @@ impl DetailView {
     fn render_apply_bar(&self, may_apply: bool, cx: &mut Context<Self>) -> impl IntoElement {
         let running = matches!(self.apply, Apply::Running);
 
-        h_flex()
+        v_flex()
             .w_full()
+            .flex_shrink_0()
             .px_3()
             .py_2()
-            .gap_3()
+            .gap_2()
             .items_start()
-            .justify_between()
             .border_t_1()
             .border_color(cx.theme().border)
-            .child(div().flex_1().child(self.render_apply_status(cx)))
+            .child(div().w_full().child(self.render_apply_status(cx)))
             .child(
                 h_flex()
+                    .w_full()
+                    .flex_wrap()
+                    .justify_end()
                     .gap_2()
                     .items_center()
                     .flex_shrink_0()
@@ -1311,6 +1360,7 @@ impl DetailView {
                     .children(conflict.fields.iter().map(|field| {
                         let mine = self.value_at(field, cx);
                         h_flex()
+                            .flex_wrap()
                             .gap_2()
                             .items_baseline()
                             .text_xs()
@@ -1403,6 +1453,7 @@ impl DetailView {
                             .gap_0p5()
                             .child(
                                 h_flex()
+                                    .flex_wrap()
                                     .gap_2()
                                     .items_baseline()
                                     .text_xs()
@@ -1479,6 +1530,8 @@ impl DetailView {
             .child(
                 h_flex()
                     .w_full()
+                    .flex_wrap()
+                    .flex_shrink_0()
                     .px_3()
                     .py_1p5()
                     .gap_2()
@@ -1694,7 +1747,12 @@ impl DetailView {
                     .items_center()
                     .border_b_1()
                     .border_color(cx.theme().border)
-                    .child(div().flex_1().child(Input::new(&self.command).small()))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .child(Input::new(&self.command).small()),
+                    )
                     .child(
                         Button::new("run")
                             .primary()

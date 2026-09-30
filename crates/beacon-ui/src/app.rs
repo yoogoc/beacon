@@ -25,6 +25,7 @@ use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::Input;
 use gpui_kit::component::menu::{DropdownMenu as _, PopupMenuItem};
 use gpui_kit::component::popover::Popover;
+use gpui_kit::component::resizable::{ResizableState, h_resizable, resizable_panel};
 use gpui_kit::component::sidebar::{Sidebar, SidebarGroup, SidebarMenu, SidebarMenuItem};
 use gpui_kit::component::spinner::Spinner;
 use gpui_kit::component::tab::{Tab as TabItem, TabBar};
@@ -154,6 +155,8 @@ pub struct BeaconApp {
     /// The tab bar's scroll, kept for one thing: `max_offset` is how the bar
     /// says its tabs no longer fit. See [`Self::render_tabs`].
     tab_scroll: ScrollHandle,
+    sidebar_collapsed: bool,
+    sidebar_split: Entity<ResizableState>,
     contexts: Result<Contexts, String>,
 
     /// Every cluster connected in this session, shared by every tab on it.
@@ -213,6 +216,8 @@ impl BeaconApp {
         let this = Self {
             focus: cx.focus_handle(),
             tab_scroll: ScrollHandle::new(),
+            sidebar_collapsed: false,
+            sidebar_split: cx.new(|_| ResizableState::default()),
             contexts,
             sessions: HashMap::new(),
             disconnected: HashSet::new(),
@@ -815,6 +820,25 @@ impl BeaconApp {
                 .child(
                     h_flex()
                         .gap_3()
+                        .child(
+                            Button::new("toggle-sidebar")
+                                .ghost()
+                                .small()
+                                .icon(if self.sidebar_collapsed {
+                                    IconName::PanelLeftOpen
+                                } else {
+                                    IconName::PanelLeftClose
+                                })
+                                .tooltip(if self.sidebar_collapsed {
+                                    "Expand sidebar"
+                                } else {
+                                    "Collapse sidebar"
+                                })
+                                .on_click(cx.listener(|app, _, _, cx| {
+                                    app.sidebar_collapsed = !app.sidebar_collapsed;
+                                    cx.notify();
+                                })),
+                        )
                         .child(div().font_weight(FontWeight::SEMIBOLD).child("Beacon"))
                         .when(!cfg!(target_os = "macos"), |bar| {
                             bar.child(
@@ -984,7 +1008,7 @@ impl BeaconApp {
             "cluster-tree"
         })
         .collapsible(false)
-        .w(px(248.))
+        .w_full()
         .when_some(search, |sidebar, search| {
             sidebar.header(
                 div()
@@ -995,6 +1019,40 @@ impl BeaconApp {
             )
         })
         .child(SidebarGroup::new("Clusters").child(SidebarMenu::new().children(rows)))
+    }
+
+    fn render_workspace(&self, cx: &mut Context<Self>) -> AnyElement {
+        let content = v_flex()
+            .size_full()
+            .min_w_0()
+            .overflow_hidden()
+            .child(self.render_tabs(cx))
+            .child(
+                div()
+                    .flex_1()
+                    .min_h_0()
+                    .overflow_hidden()
+                    .child(self.render_body(cx)),
+            );
+
+        if self.sidebar_collapsed {
+            return content.into_any_element();
+        }
+
+        h_resizable("sidebar-split")
+            .with_state(&self.sidebar_split)
+            .child(
+                resizable_panel()
+                    .size(px(248.))
+                    .size_range(px(168.)..px(480.))
+                    .child(self.render_sidebar(cx)),
+            )
+            .child(
+                resizable_panel()
+                    .size_range(px(420.)..px(10000.))
+                    .child(content),
+            )
+            .into_any_element()
     }
 
     /// The tab bar, always present so that `+` is always somewhere to click.
@@ -1508,25 +1566,11 @@ impl Render for BeaconApp {
                     .size_full()
                     .child(self.render_title_bar(cx))
                     .child(
-                        h_flex()
+                        div()
                             .flex_1()
                             .min_h_0()
                             .overflow_hidden()
-                            .child(self.render_sidebar(cx))
-                            .child(
-                                v_flex()
-                                    .flex_1()
-                                    .min_w_0()
-                                    .h_full()
-                                    .overflow_hidden()
-                                    .child(self.render_tabs(cx))
-                                    .child(
-                                        div()
-                                            .flex_1()
-                                            .overflow_hidden()
-                                            .child(self.render_body(cx)),
-                                    ),
-                            ),
+                            .child(self.render_workspace(cx)),
                     )
                     .child(self.render_status_bar(cx)),
             )

@@ -57,6 +57,13 @@ or choosing it in the command palette activates its tab on that cluster, or
 opens one if none exists. Right-click a resource and choose **Open in new tab**
 to open another copy, carrying the current namespace scope.
 
+The sidebar toggle in the title bar hides or shows the cluster tree. Drag its
+right divider to adjust the sidebar width; collapsing and reopening preserves
+that width for the current window. Resource details open beside the table with
+a draggable vertical divider. Overview fields are stacked vertically. Labels
+and annotations each display one `key=value` entry per row, with the first five
+shown by default and a button to expand or collapse the remaining entries.
+
 The `+` sits just after the last tab while the tabs still fit, and moves to
 the right edge once they do not — a button inside a scrolling row can be
 scrolled out of reach, and one you cannot find is worse than one that is not
