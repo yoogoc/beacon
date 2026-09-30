@@ -12,8 +12,8 @@ use std::{collections::BTreeSet, sync::Arc, time::Duration};
 
 use beacon_columns::ColumnSet;
 use beacon_kube::{
-    Applied, ClusterSession, DeleteTarget, Forward, Health, Kind, ObjectRef, Operation, Release,
-    ResourceStore, Rules, WatchKey, resources,
+    Applied, ClusterSession, DeleteTarget, Delta, Forward, Health, Kind, ObjectRef, Operation,
+    Release, ResourceStore, Rules, WatchKey, resources,
 };
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::checkbox::Checkbox;
@@ -30,6 +30,7 @@ use nucleo_matcher::Matcher;
 
 use crate::bridge::{Bridge, drain_into};
 use crate::catalog::{Catalog, Entry};
+use crate::create::{CreateEvent, CreateView};
 use crate::detail::{DetailClosed, DetailTab, DetailView};
 use crate::palette::Sources;
 use crate::prompt::{Ask, Prompt, PromptEvent};
@@ -135,6 +136,8 @@ pub struct ClusterView {
     rules: Option<Arc<Rules>>,
     /// An operation waiting on a confirmation or a number.
     prompt: Option<Entity<Prompt>>,
+    /// An editable manifest bound to this cluster and resource kind.
+    creation: Option<Entity<CreateView>>,
     /// What the last write said, for the toolbar.
     outcome: Option<Outcome>,
     bulk_deleting: bool,
@@ -232,6 +235,7 @@ impl ClusterView {
             split,
             rules: None,
             prompt: None,
+            creation: None,
             outcome: None,
             bulk_deleting: false,
             mode: Mode::Objects,
@@ -532,6 +536,53 @@ impl ClusterView {
         cx.notify();
     }
 
+    fn start_create(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(kind) = self.kind.clone().filter(|kind| kind.supports("create")) else {
+            return;
+        };
+        if self.mode != Mode::Objects || self.creation.is_some() || self.prompt.is_some() {
+            return;
+        }
+        let namespace = self.only_namespace();
+        let session = self.session.clone();
+        let creation =
+            cx.new(|cx| CreateView::new(session, kind.clone(), namespace.as_deref(), window, cx));
+        cx.subscribe_in(
+            &creation,
+            window,
+            move |view, _, event: &CreateEvent, window, cx| {
+                view.creation = None;
+                if let CreateEvent::Created(object) = event {
+                    let target = ObjectRef::of(object);
+                    view.outcome = Some(Outcome::Done(format!(
+                        "Created {} {target}",
+                        kind.resource.kind
+                    )));
+                    if view.shows_kind(&kind) {
+                        if let Some(namespace) = &target.namespace
+                            && !view.scoped_to.is_empty()
+                            && !view.scoped_to.contains(namespace)
+                        {
+                            view.rescope(BTreeSet::from([namespace.clone()]), window, cx);
+                        }
+                        view.table.update(cx, |table, cx| {
+                            table.delegate_mut().finish_loading();
+                            table
+                                .delegate_mut()
+                                .apply(vec![Delta::Upsert(Arc::new((**object).clone()))]);
+                            cx.notify();
+                        });
+                        view.reveal(&target, window, cx);
+                    }
+                }
+                cx.notify();
+            },
+        )
+        .detach();
+        self.creation = Some(creation);
+        cx.notify();
+    }
+
     /// Confirms a fixed snapshot of checked objects before deleting them.
     pub fn start_delete_selected(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(kind) = self.kind.clone() else {
@@ -809,6 +860,13 @@ impl ClusterView {
     /// wrong is Escape killing the panel out from under somebody in vim, and
     /// asking the panel directly is something a reader can check.
     pub fn close_detail(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(creation) = &self.creation {
+            if !creation.read(cx).is_running() {
+                self.creation = None;
+                cx.notify();
+            }
+            return;
+        }
         let in_shell = self
             .detail
             .as_ref()
@@ -1842,6 +1900,22 @@ impl ClusterView {
                                     })),
                             )
                     }))
+                    .children(
+                        self.kind
+                            .as_ref()
+                            .filter(|_| self.mode == Mode::Objects)
+                            .map(|kind| {
+                                Button::new("create-resource")
+                                    .small()
+                                    .primary()
+                                    .label("Create")
+                                    .disabled(!kind.supports("create"))
+                                    .tooltip(format!("Create a {} from YAML", kind.resource.kind))
+                                    .on_click(cx.listener(|view, _, window, cx| {
+                                        view.start_create(window, cx)
+                                    }))
+                            }),
+                    )
                     .child(
                         div()
                             .w(px(220.))
@@ -1927,6 +2001,16 @@ impl Render for ClusterView {
                     .justify_center()
                     .bg(cx.theme().background.opacity(0.75))
                     .child(prompt)
+            }))
+            .children(self.creation.clone().map(|creation| {
+                div()
+                    .absolute()
+                    .inset_0()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .bg(cx.theme().background.opacity(0.75))
+                    .child(creation)
             }))
     }
 }

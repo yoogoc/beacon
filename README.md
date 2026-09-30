@@ -139,6 +139,13 @@ selected object's UID so a replacement under the
 same name is not deleted accidentally. Successful deletions clear their ticks;
 failed ones remain selected with an error in the toolbar.
 
+Choose **Create** in a resource tab to edit a YAML template for that kind and
+the current namespace. **Validate** checks the manifest with the API server
+without saving it; **Create** saves a new object and opens its details. Both
+check creation permissions in the manifest's namespace. Existing names are
+refused rather than overwritten. Custom resources use the same editor; fill
+in the fields required by their schema. Each submission accepts one resource.
+
 ## ConfigMaps and Secrets
 
 The Secret list has a type picker populated from the current namespace scope,

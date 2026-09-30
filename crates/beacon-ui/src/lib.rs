@@ -9,6 +9,7 @@ pub mod app;
 pub mod bridge;
 pub mod catalog;
 pub mod cluster;
+mod create;
 pub mod detail;
 pub mod palette;
 pub mod prompt;

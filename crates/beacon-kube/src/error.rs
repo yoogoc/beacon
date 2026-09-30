@@ -20,6 +20,12 @@ pub enum Error {
     #[error("kubernetes api: {0}")]
     Api(#[from] kube::Error),
 
+    #[error("invalid resource manifest: {0}")]
+    Manifest(String),
+
+    #[error("you may not create {resource} in {scope}")]
+    CreateDenied { resource: String, scope: String },
+
     #[error("{what}: {cause}")]
     Forward { what: String, cause: String },
 
@@ -30,6 +36,16 @@ pub enum Error {
 }
 
 impl Error {
+    /// The API server's explanation, without the debug dump of its status.
+    pub fn user_message(&self) -> String {
+        match self {
+            Self::Api(kube::Error::Api(status)) => {
+                format!("{} (HTTP {})", status.message, status.code)
+            }
+            _ => self.to_string(),
+        }
+    }
+
     pub fn connect(context: &ClusterId, source: &(dyn std::error::Error + 'static)) -> Self {
         Self::Connect {
             context: context.to_string(),

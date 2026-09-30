@@ -1,8 +1,7 @@
 //! The operations that change a cluster.
 //!
-//! Four of them, and each one is the thing people actually do by hand:
-//! delete an object, restart a workload, scale it, and apply an edited
-//! manifest. Everything else is still `kubectl`.
+//! Create and delete objects, restart workloads, scale them, and apply edited
+//! manifests.
 //!
 //! Applying goes through Server-Side Apply with a field manager of `beacon`,
 //! which is what makes a conflict *detectable* rather than a silent overwrite.
@@ -12,11 +11,13 @@
 
 use kube::{
     Api,
-    api::{ApiResource, DeleteParams, DynamicObject, Patch, PatchParams, Preconditions},
+    api::{
+        ApiResource, DeleteParams, DynamicObject, Patch, PatchParams, PostParams, Preconditions,
+    },
 };
 use serde_json::{Value, json};
 
-use crate::{Error, ObjectRef, Result, access::verbs};
+use crate::{Error, Kind, ObjectRef, Result, access::verbs};
 
 /// An object selected for deletion, pinned to the UID that was shown.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -103,6 +104,70 @@ fn api(
         Some(namespace) => Api::namespaced_with(client.clone(), namespace, resource),
         None => Api::all_with(client.clone(), resource),
     }
+}
+
+/// Checks the identity and scope before using the selected kind's endpoint.
+pub fn prepare_create(kind: &Kind, manifest: Value) -> Result<DynamicObject> {
+    let invalid = |message: &str| Error::Manifest(message.to_string());
+    if !manifest.is_object() {
+        return Err(invalid("provide one resource object"));
+    }
+    if manifest.get("apiVersion").and_then(Value::as_str)
+        != Some(kind.resource.api_version.as_str())
+        || manifest.get("kind").and_then(Value::as_str) != Some(kind.resource.kind.as_str())
+    {
+        return Err(invalid(&format!(
+            "expected apiVersion {} and kind {} for this resource tab",
+            kind.resource.api_version, kind.resource.kind
+        )));
+    }
+    let object: DynamicObject =
+        serde_json::from_value(manifest).map_err(|error| invalid(&error.to_string()))?;
+    let present = |value: &Option<String>| {
+        value
+            .as_deref()
+            .is_some_and(|value| !value.trim().is_empty())
+    };
+    if !present(&object.metadata.name) && !present(&object.metadata.generate_name) {
+        return Err(invalid(
+            "metadata.name or metadata.generateName is required",
+        ));
+    }
+    if kind.namespaced {
+        if !present(&object.metadata.namespace) {
+            return Err(invalid("metadata.namespace is required for this resource"));
+        }
+    } else if object.metadata.namespace.is_some() {
+        return Err(invalid(
+            "cluster-scoped resources must not specify metadata.namespace",
+        ));
+    }
+    if object.metadata.uid.is_some() || object.metadata.resource_version.is_some() {
+        return Err(invalid(
+            "remove metadata.uid and metadata.resourceVersion when creating a resource",
+        ));
+    }
+    Ok(object)
+}
+
+/// Uses POST rather than Apply: an existing name must be refused, never updated.
+pub async fn create(
+    client: &kube::Client,
+    resource: &ApiResource,
+    object: &DynamicObject,
+    dry_run: bool,
+) -> Result<DynamicObject> {
+    let params = PostParams {
+        dry_run,
+        field_manager: Some(FIELD_MANAGER.to_string()),
+    };
+    let created = api(client, resource, object.metadata.namespace.as_deref())
+        .create(&params, object)
+        .await?;
+    if !dry_run {
+        tracing::info!(kind = %resource.kind, target = %ObjectRef::of(&created), "created");
+    }
+    Ok(created)
 }
 
 pub async fn delete(
@@ -335,6 +400,65 @@ fn manager_and_rest(fragment: &str) -> Option<(String, &str)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn create_kind(namespaced: bool) -> Kind {
+        Kind {
+            resource: ApiResource {
+                group: "".into(),
+                version: "v1".into(),
+                api_version: "v1".into(),
+                kind: "ConfigMap".into(),
+                plural: "configmaps".into(),
+            },
+            namespaced,
+            verbs: vec!["create".into()],
+        }
+    }
+
+    #[test]
+    fn creation_checks_endpoint_identity_and_namespace() {
+        let kind = create_kind(true);
+        let valid = json!({"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "test", "namespace": "qa"}});
+        assert_eq!(
+            prepare_create(&kind, valid.clone())
+                .unwrap()
+                .metadata
+                .namespace
+                .as_deref(),
+            Some("qa")
+        );
+        for (path, value) in [("kind", json!("Secret")), ("apiVersion", json!("apps/v1"))] {
+            let mut wrong = valid.clone();
+            wrong[path] = value;
+            assert!(prepare_create(&kind, wrong).is_err());
+        }
+        let mut missing = valid.clone();
+        missing["metadata"]
+            .as_object_mut()
+            .unwrap()
+            .remove("namespace");
+        assert!(prepare_create(&kind, missing.clone()).is_err());
+        assert!(prepare_create(&create_kind(false), valid).is_err());
+        assert!(prepare_create(&create_kind(false), missing).is_ok());
+    }
+
+    #[test]
+    fn creation_accepts_generated_names_but_rejects_existing_object_identity() {
+        let kind = create_kind(true);
+        let generated = json!({"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"generateName": "test-", "namespace": "qa"}});
+        assert!(prepare_create(&kind, generated.clone()).is_ok());
+        for field in ["uid", "resourceVersion"] {
+            let mut existing = generated.clone();
+            existing["metadata"][field] = json!("existing");
+            assert!(prepare_create(&kind, existing).is_err());
+        }
+        let mut nameless = generated;
+        nameless["metadata"]
+            .as_object_mut()
+            .unwrap()
+            .remove("generateName");
+        assert!(prepare_create(&kind, nameless).is_err());
+    }
 
     #[test]
     fn operations_need_the_verb_the_api_checks() {

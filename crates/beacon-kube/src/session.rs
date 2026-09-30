@@ -24,7 +24,7 @@ use tokio::sync::watch as watch_channel;
 use crate::{
     ClusterId, Error, Result,
     access::{Access, Rules, fetch_rules},
-    discovery::{Discovery, PrinterColumns, fetch_printer_columns},
+    discovery::{Discovery, Kind, PrinterColumns, fetch_printer_columns},
     exec,
     forward::{Forward, ForwardId, Forwards},
     helm::{self, Release},
@@ -169,6 +169,36 @@ impl ClusterSession {
             .expect("access cache")
             .insert(namespace, rules.clone());
         rules
+    }
+
+    /// Creates one manifest, checking permissions in its actual namespace.
+    /// A dry run performs the same server validation without saving the object.
+    pub async fn create(
+        self: Arc<Self>,
+        kind: Kind,
+        manifest: Value,
+        dry_run: bool,
+    ) -> Result<DynamicObject> {
+        let object = ops::prepare_create(&kind, manifest)?;
+        let rules = self.clone().rules(object.metadata.namespace.clone()).await;
+        if !kind.supports(crate::access::verbs::CREATE)
+            || !rules.allows(
+                crate::access::verbs::CREATE,
+                &kind.resource.group,
+                &kind.resource.plural,
+            )
+        {
+            return Err(Error::CreateDenied {
+                resource: kind.display_name(),
+                scope: object
+                    .metadata
+                    .namespace
+                    .clone()
+                    .map(|namespace| format!("namespace {namespace}"))
+                    .unwrap_or_else(|| "this cluster".into()),
+            });
+        }
+        ops::create(&self.client, &kind.resource, &object, dry_run).await
     }
 
     /// Runs one write operation.
