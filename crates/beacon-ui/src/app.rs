@@ -816,15 +816,17 @@ impl BeaconApp {
                     h_flex()
                         .gap_3()
                         .child(div().font_weight(FontWeight::SEMIBOLD).child("Beacon"))
-                        .child(
-                            Button::new("view-menu")
-                                .ghost()
-                                .small()
-                                .label("View")
-                                .dropdown_menu(|menu, _, _| {
-                                    menu.menu("App logs", Box::new(OpenAppLogs))
-                                }),
-                        ),
+                        .when(!cfg!(target_os = "macos"), |bar| {
+                            bar.child(
+                                Button::new("view-menu")
+                                    .ghost()
+                                    .small()
+                                    .label("View")
+                                    .dropdown_menu(|menu, _, _| {
+                                        menu.menu("App logs", Box::new(OpenAppLogs))
+                                    }),
+                            )
+                        }),
                 )
                 .child(
                     Button::new("toggle-theme")
