@@ -193,7 +193,7 @@ impl ClusterView {
         cx: &mut Context<Self>,
     ) -> Self {
         let catalog = Catalog::new(session.discovery().kinds());
-        let kind = initial_kind.or_else(|| catalog.default_kind());
+        let kind = initial_kind;
 
         let sidebar_search = cx.new(|cx| {
             InputState::new(window, cx)
@@ -258,10 +258,8 @@ impl ClusterView {
 
         this.listen(window, cx);
         this.load_rules(window, cx);
-        this.watch_metrics(window, cx);
         this.watch_health(window, cx);
         this.watch_namespaces(window, cx);
-        this.start_clock(cx);
 
         if let Some(kind) = kind {
             this.show(kind, window, cx);
@@ -283,7 +281,7 @@ impl ClusterView {
         match self.mode {
             Mode::Objects => match &self.kind {
                 Some(kind) => SharedString::from(kind.resource.kind.clone()),
-                None => SharedString::from("Objects"),
+                None => SharedString::from("Cluster"),
             },
             mode => SharedString::from(mode.label()),
         }
@@ -304,7 +302,7 @@ impl ClusterView {
         }
         self.visible = visible;
 
-        if visible {
+        if visible && !self.is_idle() {
             self.start_clock(cx);
             self.watch_metrics(window, cx);
         } else {
@@ -760,6 +758,11 @@ impl ClusterView {
         });
     }
 
+    /// A connected cluster waiting for an explicit resource selection.
+    pub(crate) fn is_idle(&self) -> bool {
+        self.mode == Mode::Objects && self.kind.is_none()
+    }
+
     /// Normal selection reuses the existing tab for this cluster and kind.
     pub(crate) fn select_resource(&self, kind: Arc<Kind>, cx: &mut Context<Self>) {
         self.request_resource(kind, false, cx);
@@ -920,7 +923,7 @@ impl ClusterView {
     /// The list starts immediately with whatever columns are known without
     /// asking the cluster; a kind that publishes its own gets them a moment
     /// later, without re-listing.
-    fn show(&mut self, kind: Arc<Kind>, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn show(&mut self, kind: Arc<Kind>, window: &mut Window, cx: &mut Context<Self>) {
         if self.mode == Mode::Objects
             && self
                 .kind
@@ -930,6 +933,10 @@ impl ClusterView {
             return;
         }
 
+        if self.kind.is_none() && self.visible {
+            self.start_clock(cx);
+            self.watch_metrics(window, cx);
+        }
         tracing::info!(kind = %kind.display_name(), "showing");
         self.mode = Mode::Objects;
         self.kind = Some(kind);
@@ -1948,6 +1955,28 @@ impl ClusterView {
 
 impl Render for ClusterView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if self.is_idle() {
+            return v_flex()
+                .size_full()
+                .items_center()
+                .justify_center()
+                .gap_3()
+                .p_8()
+                .child(
+                    div()
+                        .text_sm()
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .child(format!("Connected to {}", self.session.id().display_name())),
+                )
+                .child(
+                    div()
+                        .text_sm()
+                        .text_color(cx.theme().muted_foreground)
+                        .child("Select a resource from the sidebar to open its page."),
+                )
+                .into_any_element();
+        }
+
         // `TableState` renders itself; it is the virtualised table, not a
         // delegate that something else draws.
         let table = div()
@@ -2017,5 +2046,6 @@ impl Render for ClusterView {
                     .bg(cx.theme().background.opacity(0.75))
                     .child(creation)
             }))
+            .into_any_element()
     }
 }

@@ -42,6 +42,11 @@ and every cluster you connect to stays connected. See
 
 ## Tabs
 
+Beacon starts without connecting to a cluster. Select a cluster in the sidebar
+or command palette to connect; the connected workspace stays empty until you
+choose a resource. The first resource selection fills that blank tab. Opening
+`+` or pressing `⌘T` before selecting a cluster opens the cluster picker.
+
 A tab is one view into one cluster, and several tabs can point at the same
 cluster — so "Pods here, Deployments over there, and another cluster beside
 them" is three tabs rather than three windows. Each tab keeps its own kind,

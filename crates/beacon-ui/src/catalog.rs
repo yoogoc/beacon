@@ -296,16 +296,6 @@ impl Catalog {
 
     /// The first kind to show when a cluster connects.
     ///
-    /// Pods, unless this cluster somehow does not serve them.
-    pub fn default_kind(&self) -> Option<Arc<Kind>> {
-        self.sections
-            .iter()
-            .flat_map(|(_, entries)| entries)
-            .find(|entry| entry.kind.resource.kind == "Pod" && entry.kind.resource.group.is_empty())
-            .or_else(|| self.sections.first()?.1.first())
-            .map(|entry| entry.kind.clone())
-    }
-
     /// The entries matching a query, best first.
     ///
     /// Fuzzy rather than substring: `dep` should find Deployment, and `rolebind`
@@ -567,27 +557,6 @@ mod tests {
                 Section::Builtin(_) => {}
             }
         }
-    }
-
-    /// Pods are where a cluster opens, and the fallback only matters on a
-    /// cluster that does not serve them.
-    #[test]
-    fn a_cluster_opens_on_pods() {
-        let catalog = catalog();
-        let default = catalog.default_kind().expect("a default");
-        assert_eq!(default.resource.kind, "Pod");
-
-        let without_pods = Catalog::new(&[kind("argoproj.io", "Application")]);
-        assert_eq!(
-            without_pods
-                .default_kind()
-                .expect("a default")
-                .resource
-                .kind,
-            "Application"
-        );
-
-        assert!(Catalog::new(&[]).default_kind().is_none());
     }
 
     /// Fuzzy, not substring: nobody types the group, or the capitals.

@@ -210,7 +210,7 @@ impl BeaconApp {
             },
         );
 
-        let mut this = Self {
+        let this = Self {
             focus: cx.focus_handle(),
             tab_scroll: ScrollHandle::new(),
             contexts,
@@ -232,23 +232,7 @@ impl BeaconApp {
         // wherever you are should work wherever you are.
         this.focus.focus(window, cx);
 
-        // Start on whatever `kubectl` would have used. Opening to an empty
-        // window and making the user pick the context they already picked is
-        // the kind of small friction that adds up.
-        if let Some(id) = this.default_cluster() {
-            this.open(id, window, cx);
-        }
-
         this
-    }
-
-    /// The context to open when nothing else says which.
-    fn default_cluster(&self) -> Option<ClusterId> {
-        let contexts = self.contexts.as_ref().ok()?;
-        contexts
-            .current()
-            .or_else(|| contexts.entries().first())
-            .map(|entry| entry.id.clone())
     }
 
     fn namespace_for(&self, id: &ClusterId) -> Option<String> {
@@ -361,7 +345,20 @@ impl BeaconApp {
 
         match index {
             Some(index) => self.activate(index, window, cx),
-            None => self.open_kind(cluster, Some(kind), Some(scope), window, cx),
+            None => {
+                // The connected cluster starts without a resource page. Its
+                // first ordinary selection fills that blank tab.
+                if self
+                    .tabs
+                    .get(self.active)
+                    .is_some_and(|tab| tab.cluster == cluster)
+                    && let Some(view) = self.cluster().filter(|view| view.read(cx).is_idle())
+                {
+                    view.update(cx, |view, cx| view.show(kind, window, cx));
+                } else {
+                    self.open_kind(cluster, Some(kind), Some(scope), window, cx);
+                }
+            }
         }
     }
 
@@ -669,11 +666,7 @@ impl BeaconApp {
     /// Another tab on the cluster in front, so it can be narrowed to something
     /// else.
     fn new_tab(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let cluster = self
-            .tabs
-            .get(self.active)
-            .map(|tab| tab.cluster.clone())
-            .or_else(|| self.default_cluster());
+        let cluster = self.tabs.get(self.active).map(|tab| tab.cluster.clone());
 
         match cluster {
             Some(cluster) => self.open(cluster, window, cx),
@@ -1014,7 +1007,7 @@ impl BeaconApp {
                         tab.initial_kind
                             .as_ref()
                             .map(|kind| SharedString::from(kind.resource.kind.clone()))
-                            .unwrap_or_else(|| SharedString::from("Objects"))
+                            .unwrap_or_else(|| SharedString::from("Cluster"))
                     } else {
                         SharedString::from(tab.initial_mode.label())
                     }
@@ -1130,8 +1123,8 @@ impl BeaconApp {
             ),
             _ => (
                 Tone::Unknown,
-                "No tab open".to_string(),
-                "Press ⌘T for a tab, or ⌘K and `ctx` to go to a cluster.".to_string(),
+                if self.sessions.is_empty() { "No cluster selected" } else { "No tab open" }.to_string(),
+                "Select a cluster in the sidebar, or use the cluster picker in the command palette.".to_string(),
             ),
         };
 
@@ -1369,7 +1362,16 @@ impl BeaconApp {
             .map(|tab| self.cluster_description(&tab.cluster))
             .unwrap_or_default();
         let (tone, status, watches) = match active.map(|tab| &tab.state) {
-            None => (Tone::Unknown, "no tab open".to_string(), 0),
+            None => (
+                Tone::Unknown,
+                if self.sessions.is_empty() {
+                    "no cluster selected"
+                } else {
+                    "no tab open"
+                }
+                .to_string(),
+                0,
+            ),
             Some(TabState::Disconnected) => (
                 Tone::Unknown,
                 format!("{} · disconnected", name.unwrap_or_default()),

@@ -201,12 +201,19 @@ impl Palette {
         this
     }
 
-    /// Fills the palette and clears whatever was typed last time.
+    /// Starts with clusters or resource kinds when no resource page is open.
     pub fn open(&mut self, sources: Sources, window: &mut Window, cx: &mut Context<Self>) {
+        let query = if sources.kinds.is_empty() {
+            CLUSTERS
+        } else if sources.current_kind.is_none() {
+            "@"
+        } else {
+            ""
+        };
         self.sources = sources;
         self.state
-            .update(cx, |state, cx| state.set_query("", window, cx));
-        self.refresh("");
+            .update(cx, |state, cx| state.set_query(query, window, cx));
+        self.refresh(query);
         self.state.focus_handle(cx).focus(window, cx);
         cx.notify();
     }
