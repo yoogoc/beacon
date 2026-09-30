@@ -13,6 +13,7 @@ pub mod cluster;
 mod create;
 pub mod detail;
 pub mod palette;
+mod pod_tools;
 pub mod prompt;
 pub mod status;
 pub mod table;

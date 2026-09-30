@@ -64,6 +64,12 @@ a draggable vertical divider. Overview fields are stacked vertically. Labels
 and annotations each display one `key=value` entry per row, with the first five
 shown by default and a button to expand or collapse the remaining entries.
 
+Pod Logs, Exec and Shell open in a separate panel below the resource list.
+Open them from the Pod row's context menu. The panel has its own tabs, Pod
+name and close button, and its height can be adjusted by dragging the horizontal
+divider. Closing the right-side details
+keeps the Pod panel open, preserving its logs, command output and shell session.
+
 The `+` sits just after the last tab while the tabs still fit, and moves to
 the right edge once they do not — a button inside a scrolling row can be
 scrolled out of reach, and one you cannot find is worse than one that is not

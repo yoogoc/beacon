@@ -20,7 +20,7 @@ use gpui_kit::component::checkbox::Checkbox;
 use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::component::menu::PopupMenuItem;
 use gpui_kit::component::popover::Popover;
-use gpui_kit::component::resizable::{ResizableState, h_resizable, resizable_panel};
+use gpui_kit::component::resizable::{ResizableState, h_resizable, resizable_panel, v_resizable};
 use gpui_kit::component::sidebar::SidebarMenuItem;
 use gpui_kit::component::spinner::Spinner;
 use gpui_kit::component::table::{TableEvent, TableState};
@@ -33,6 +33,7 @@ use crate::catalog::{Catalog, Entry};
 use crate::create::{CreateEvent, CreateView};
 use crate::detail::{DetailClosed, DetailTab, DetailView};
 use crate::palette::Sources;
+use crate::pod_tools::{PodToolTab, PodToolsClosed, PodToolsView};
 use crate::prompt::{Ask, Prompt, PromptEvent};
 use crate::table::ResourceTable;
 use crate::theme::{BeaconTheme as _, Tone};
@@ -130,6 +131,9 @@ pub struct ClusterView {
     /// Kept across selections so that closing and reopening the panel does not
     /// reset the split the user dragged.
     split: Entity<ResizableState>,
+    /// Pod streams and terminals have their own lifetime and bottom split.
+    pod_tools: Option<Entity<PodToolsView>>,
+    pod_tools_split: Entity<ResizableState>,
 
     /// What this user may do in the current namespace. `None` until the answer
     /// arrives; see [`crate::actions`].
@@ -233,6 +237,8 @@ impl ClusterView {
             table,
             detail: None,
             split,
+            pod_tools: None,
+            pod_tools_split: cx.new(|_| ResizableState::default()),
             rules: None,
             prompt: None,
             creation: None,
@@ -745,6 +751,7 @@ impl ClusterView {
             let Ok(rules) = asking.await else { return };
             let _ = this.update(cx, |view, cx| {
                 view.rules = Some(rules);
+                view.refresh_detail(cx);
                 cx.notify();
             });
         }));
@@ -861,7 +868,7 @@ impl ClusterView {
         }
     }
 
-    /// Closes the detail panel, unless Escape belongs to something inside it.
+    /// Closes the bottom panel first, unless Escape belongs to its terminal.
     ///
     /// The guard is here rather than in the key binding's context. A context
     /// predicate would be the tidier way to say it, but the cost of getting it
@@ -876,13 +883,13 @@ impl ClusterView {
             return;
         }
         let in_shell = self
-            .detail
+            .pod_tools
             .as_ref()
-            .is_some_and(|detail| detail.read(cx).shell_has_focus(window, cx));
+            .is_some_and(|tools| tools.read(cx).shell_has_focus(window, cx));
         if in_shell {
             return;
         }
-        if self.detail.take().is_some() {
+        if self.pod_tools.take().is_some() || self.detail.take().is_some() {
             cx.notify();
         }
     }
@@ -946,6 +953,7 @@ impl ClusterView {
         });
         // The panel is about an object of the previous kind.
         self.detail = None;
+        self.pod_tools = None;
         self.watch_objects(window, cx);
         self.load_columns(window, cx);
         cx.emit(NavigationChanged);
@@ -989,20 +997,63 @@ impl ClusterView {
     /// Hands the detail panel the object the table now holds, so that Overview
     /// tracks a changing pod rather than freezing at the moment it was opened.
     fn refresh_detail(&mut self, cx: &mut Context<Self>) {
-        let Some(detail) = self.detail.clone() else {
+        if let Some(detail) = self.detail.clone() {
+            let key = detail.read(cx).target().clone();
+            if let Some(object) = self.table.read(cx).delegate().object(&key).cloned() {
+                let rules = self.rules.clone();
+                detail.update(cx, |detail, cx| detail.refresh(object, rules, cx));
+            }
+        }
+        if let Some(tools) = self.pod_tools.clone() {
+            let key = tools.read(cx).target().clone();
+            if let Some(object) = self.table.read(cx).delegate().object(&key).cloned() {
+                let rules = self.rules.clone();
+                tools.update(cx, |tools, cx| tools.refresh(object, rules, cx));
+            }
+        }
+    }
+
+    pub(crate) fn open_pod_tools(
+        &mut self,
+        key: &ObjectRef,
+        tab: PodToolTab,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.mode != Mode::Objects
+            || !self
+                .kind
+                .as_ref()
+                .is_some_and(|kind| kind.resource.group.is_empty() && kind.resource.kind == "Pod")
+        {
+            return;
+        }
+        let Some(row) = self.table.read(cx).delegate().row_of(key) else {
             return;
         };
-        let key = detail.read(cx).target().clone();
-        let Some(object) = self.table.read(cx).delegate().object(&key).cloned() else {
-            // The object was deleted. The panel keeps showing what it had,
-            // which is more useful than a panel that empties itself the
-            // instant something disappears.
+        let Some(object) = self.table.read(cx).delegate().object(key).cloned() else {
             return;
         };
+        self.table
+            .update(cx, |table, cx| table.scroll_to_row(row, cx));
+        if let Some(tools) = &self.pod_tools
+            && tools.read(cx).target() == key
+        {
+            tools.update(cx, |tools, cx| tools.select(tab, window, cx));
+            cx.notify();
+            return;
+        }
+
+        let session = self.session.clone();
         let rules = self.rules.clone();
-        detail.update(cx, |detail, cx| {
-            detail.refresh(object, rules, cx);
-        });
+        let tools = cx.new(|cx| PodToolsView::new(session, object, rules, tab, window, cx));
+        cx.subscribe(&tools, |view, _, _: &PodToolsClosed, cx| {
+            view.pod_tools = None;
+            cx.notify();
+        })
+        .detach();
+        self.pod_tools = Some(tools);
+        cx.notify();
     }
 
     /// (Re)starts the watch for the current kind and namespace.
@@ -1837,9 +1888,10 @@ impl ClusterView {
         } else {
             0
         };
-
         h_flex()
             .w_full()
+            .flex_wrap()
+            .flex_shrink_0()
             .px_3()
             .py_1p5()
             .gap_3()
@@ -1850,7 +1902,7 @@ impl ClusterView {
             .child(
                 h_flex()
                     .gap_2()
-                    .items_baseline()
+                    .items_center()
                     .child(
                         div()
                             .font_weight(FontWeight::SEMIBOLD)
@@ -2010,6 +2062,34 @@ impl Render for ClusterView {
                                 .border_l_1()
                                 .border_color(cx.theme().border)
                                 .child(detail),
+                        ),
+                )
+                .into_any_element(),
+        };
+
+        let body = match self
+            .pod_tools
+            .clone()
+            .filter(|_| self.mode == Mode::Objects)
+        {
+            None => body,
+            Some(tools) => v_resizable("pod-tools-split")
+                .with_state(&self.pod_tools_split)
+                .child(
+                    resizable_panel()
+                        .size_range(px(120.)..px(10000.))
+                        .child(body),
+                )
+                .child(
+                    resizable_panel()
+                        .size(px(300.))
+                        .size_range(px(160.)..px(10000.))
+                        .child(
+                            div()
+                                .size_full()
+                                .border_t_1()
+                                .border_color(cx.theme().border)
+                                .child(tools),
                         ),
                 )
                 .into_any_element(),

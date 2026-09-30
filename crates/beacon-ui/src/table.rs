@@ -33,6 +33,7 @@ use std::{
 use crate::actions;
 use crate::cluster::ClusterView;
 use crate::detail::DetailTab;
+use crate::pod_tools::PodToolTab;
 use crate::status;
 use crate::theme::BeaconTheme as _;
 
@@ -709,14 +710,21 @@ impl TableDelegate for ResourceTable {
             menu = menu.item(detail_item("View data", &view, &target, DetailTab::Data));
         }
         if is_pod {
-            menu = menu.item(detail_item("View logs", &view, &target, DetailTab::Logs));
+            menu = menu.item(pod_tools_item(
+                "View logs",
+                &view,
+                &target,
+                PodToolTab::Logs,
+            ));
             let may_exec = actions::may_exec(rules.as_deref());
             menu = menu
                 .item(
-                    detail_item("Run command", &view, &target, DetailTab::Exec).disabled(!may_exec),
+                    pod_tools_item("Run command", &view, &target, PodToolTab::Exec)
+                        .disabled(!may_exec),
                 )
                 .item(
-                    detail_item("Open shell", &view, &target, DetailTab::Shell).disabled(!may_exec),
+                    pod_tools_item("Open shell", &view, &target, PodToolTab::Shell)
+                        .disabled(!may_exec),
                 );
 
             let ports = actions::ports(&object.data);
@@ -872,6 +880,21 @@ fn detail_item(
     PopupMenuItem::new(label).on_click(move |_, window, cx| {
         let _ = view.update(cx, |cluster, cx| {
             cluster.open_target(&target, tab, window, cx);
+        });
+    })
+}
+
+fn pod_tools_item(
+    label: &'static str,
+    view: &WeakEntity<ClusterView>,
+    target: &ObjectRef,
+    tab: PodToolTab,
+) -> PopupMenuItem {
+    let view = view.clone();
+    let target = target.clone();
+    PopupMenuItem::new(label).on_click(move |_, window, cx| {
+        let _ = view.update(cx, |cluster, cx| {
+            cluster.open_pod_tools(&target, tab, window, cx);
         });
     })
 }
