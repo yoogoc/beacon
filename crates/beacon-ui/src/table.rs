@@ -22,7 +22,7 @@ use nucleo_matcher::{
     Matcher, Utf32Str,
     pattern::{CaseMatching, Normalization, Pattern},
 };
-use std::sync::Arc;
+use std::{collections::BTreeSet, sync::Arc};
 
 use crate::actions;
 use crate::cluster::ClusterView;
@@ -45,6 +45,8 @@ pub struct ResourceTable {
     sort: Sort,
     /// What the search box contains. Empty means everything.
     filter: String,
+    /// Exact Secret type, independent of the fuzzy name search.
+    secret_type_filter: Option<String>,
     /// Reused across keystrokes: it owns scratch buffers, and allocating one
     /// per rebuild would be the expensive part of filtering.
     matcher: Matcher,
@@ -82,6 +84,7 @@ impl ResourceTable {
             rows: Vec::new(),
             sort: Sort::Natural,
             filter: String::new(),
+            secret_type_filter: None,
             matcher: crate::catalog::matcher(),
             now: Timestamp::now(),
             metrics: Metrics::default(),
@@ -184,6 +187,29 @@ impl ResourceTable {
 
     pub fn filter(&self) -> &str {
         &self.filter
+    }
+
+    /// The Secret types in the current watch, including types hidden by the
+    /// name search or the current type selection.
+    pub fn secret_types(&self) -> Vec<String> {
+        let mut types = BTreeSet::new();
+        for (_, object) in self.store.iter() {
+            types.insert(secret_type(object).to_string());
+        }
+        types.into_iter().collect()
+    }
+
+    pub fn secret_type_filter(&self) -> Option<&str> {
+        self.secret_type_filter.as_deref()
+    }
+
+    pub fn set_secret_type_filter(&mut self, selected: Option<String>) -> bool {
+        if self.secret_type_filter == selected {
+            return false;
+        }
+        self.secret_type_filter = selected;
+        self.reindex();
+        true
     }
 
     /// How many objects the watch holds, before filtering. The table shows
@@ -332,15 +358,26 @@ impl ResourceTable {
     /// An empty filter scores everything zero, which costs one pass and keeps
     /// the two paths through `reindex` identical in shape.
     fn matching(&mut self) -> Vec<(u32, ObjectRef)> {
+        let selected_type = self.secret_type_filter.as_deref();
         if self.filter.is_empty() {
-            return self.store.iter().map(|(key, _)| (0, key.clone())).collect();
+            return self
+                .store
+                .iter()
+                .filter(|(_, object)| {
+                    selected_type.is_none_or(|selected| secret_type(object) == selected)
+                })
+                .map(|(key, _)| (0, key.clone()))
+                .collect();
         }
 
         let pattern = Pattern::parse(&self.filter, CaseMatching::Smart, Normalization::Smart);
         let mut buffer = Vec::new();
         let mut matched = Vec::new();
 
-        for (key, _) in self.store.iter() {
+        for (key, object) in self.store.iter() {
+            if selected_type.is_some_and(|selected| secret_type(object) != selected) {
+                continue;
+            }
             let haystack = key.to_string();
             if let Some(score) =
                 pattern.score(Utf32Str::new(&haystack, &mut buffer), &mut self.matcher)
@@ -388,6 +425,16 @@ impl ResourceTable {
             }),
         ))
     }
+}
+
+/// Kubernetes defaults a Secret with no explicit type to Opaque.
+fn secret_type(object: &DynamicObject) -> &str {
+    object
+        .data
+        .get("type")
+        .and_then(serde_json::Value::as_str)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("Opaque")
 }
 
 /// What a cell sorts by.
@@ -713,6 +760,56 @@ mod tests {
             .data(serde_json::json!({ "spec": { "containers": [{}] } }));
         object.metadata.resource_version = Some("1".into());
         Arc::new(object)
+    }
+
+    fn secret(name: &str, secret_type: Option<&str>) -> Arc<DynamicObject> {
+        let mut data = serde_json::json!({});
+        if let Some(secret_type) = secret_type {
+            data["type"] = serde_json::json!(secret_type);
+        }
+        Arc::new(
+            DynamicObject::new(name, &resources::pod())
+                .within("default")
+                .data(data),
+        )
+    }
+
+    #[test]
+    fn secret_type_filter_is_exact_and_combines_with_name_search() {
+        let mut table = ResourceTable::new(ColumnSet::for_kind("", "Secret", true));
+        table.apply(vec![Delta::Reset(vec![
+            secret("registry-main", Some("kubernetes.io/dockerconfigjson")),
+            secret("registry-alt", Some("example.com/dockerconfigjson")),
+            secret("service-token", Some("kubernetes.io/service-account-token")),
+            secret("plain", None),
+        ])]);
+
+        assert_eq!(
+            table.secret_types(),
+            [
+                "Opaque",
+                "example.com/dockerconfigjson",
+                "kubernetes.io/dockerconfigjson",
+                "kubernetes.io/service-account-token",
+            ]
+        );
+
+        assert!(table.set_secret_type_filter(Some("kubernetes.io/dockerconfigjson".into())));
+        assert_eq!(table.len(), 1);
+        assert_eq!(table.key_at(0).unwrap().name, "registry-main");
+        assert_eq!(table.total(), 4);
+
+        table.set_filter("token");
+        assert_eq!(table.len(), 0, "the name search also applies");
+        table.set_filter("registry");
+        assert_eq!(table.len(), 1);
+        assert_eq!(table.key_at(0).unwrap().name, "registry-main");
+
+        table.set_secret_type_filter(Some("Opaque".into()));
+        table.set_filter("");
+        assert_eq!(table.key_at(0).unwrap().name, "plain");
+        table.set_secret_type_filter(None);
+        assert_eq!(table.len(), 4);
     }
 
     /// Two namespaces watched at once, each listing in its own time. The

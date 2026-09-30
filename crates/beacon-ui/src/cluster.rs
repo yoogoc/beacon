@@ -114,6 +114,8 @@ pub struct ClusterView {
     /// when it actually changed, so a label edit on some namespace does not
     /// rebuild the menu under the user's cursor.
     namespace_names: Vec<SharedString>,
+    /// Whether the Secret type picker is open.
+    secret_type_menu_open: bool,
 
     sidebar_search: Entity<InputState>,
     sidebar_query: String,
@@ -219,6 +221,7 @@ impl ClusterView {
             namespaces: ResourceStore::new(),
             namespace_menu_open: false,
             namespace_names: Vec::new(),
+            secret_type_menu_open: false,
             sidebar_search,
             sidebar_query: String::new(),
             row_search,
@@ -731,10 +734,13 @@ impl ClusterView {
         self.row_search
             .update(cx, |input, cx| input.set_value("", window, cx));
         self.table.update(cx, |state, cx| {
-            if state.delegate_mut().set_filter("") {
+            let delegate = state.delegate_mut();
+            let changed = delegate.set_filter("") | delegate.set_secret_type_filter(None);
+            if changed {
                 cx.notify();
             }
         });
+        self.secret_type_menu_open = false;
         cx.notify();
     }
 
@@ -762,6 +768,10 @@ impl ClusterView {
         tracing::info!(kind = %kind.display_name(), "showing");
         self.mode = Mode::Objects;
         self.kind = Some(kind);
+        self.secret_type_menu_open = false;
+        self.table.update(cx, |state, _| {
+            state.delegate_mut().set_secret_type_filter(None);
+        });
         // The panel is about an object of the previous kind.
         self.detail = None;
         self.watch_objects(window, cx);
@@ -871,6 +881,9 @@ impl ClusterView {
                             cx.notify();
                         });
                         view.refresh_detail(cx);
+                        // The toolbar count and Secret type choices read the
+                        // same store, so they must follow each watch batch.
+                        cx.notify();
                     },
                     window,
                 )
@@ -1549,6 +1562,77 @@ impl ClusterView {
             })
     }
 
+    /// Exact type selection for Secrets, populated from the watched objects
+    /// so custom types appear alongside Kubernetes' built-in ones.
+    fn render_secret_type_picker(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let table = self.table.read(cx);
+        let selected = table.delegate().secret_type_filter().map(str::to_owned);
+        let types = table.delegate().secret_types();
+        let label = selected.clone().unwrap_or_else(|| "All types".to_string());
+        let opening = cx.entity().downgrade();
+        let choosing = opening.clone();
+
+        Popover::new("secret-type-picker")
+            .open(self.secret_type_menu_open)
+            .on_open_change(move |open, _, cx| {
+                let _ = opening.update(cx, |view, cx| {
+                    view.secret_type_menu_open = *open;
+                    cx.notify();
+                });
+            })
+            .trigger(
+                Button::new("secret-type-picker-trigger")
+                    .small()
+                    .outline()
+                    .label(format!("Type: {label}"))
+                    .tooltip("Filter Secrets by type"),
+            )
+            .content(move |_, _, cx| {
+                let choices = std::iter::once(None)
+                    .chain(types.iter().cloned().map(Some))
+                    .map(|value| {
+                        let name = value.as_deref().unwrap_or("All types");
+                        let is_selected = selected == value;
+                        let view = choosing.clone();
+                        div()
+                            .id(SharedString::from(format!("secret-type-{name}")))
+                            .w_full()
+                            .px_2()
+                            .py_1()
+                            .truncate()
+                            .cursor_pointer()
+                            .font_weight(if is_selected {
+                                FontWeight::MEDIUM
+                            } else {
+                                FontWeight::NORMAL
+                            })
+                            .child(name.to_string())
+                            .on_click(move |_, _, cx| {
+                                let value = value.clone();
+                                let _ = view.update(cx, |view, cx| {
+                                    view.table.update(cx, |state, cx| {
+                                        if state.delegate_mut().set_secret_type_filter(value) {
+                                            state.scroll_to_row(0, cx);
+                                            cx.notify();
+                                        }
+                                    });
+                                    view.secret_type_menu_open = false;
+                                    cx.notify();
+                                });
+                            })
+                    });
+
+                div()
+                    .id("secret-type-list")
+                    .w(px(300.))
+                    .max_h(px(360.))
+                    .overflow_y_scroll()
+                    .text_sm()
+                    .text_color(cx.theme().foreground)
+                    .child(v_flex().children(choices))
+            })
+    }
+
     fn render_toolbar(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let (shown, total) = self.counts(cx);
         let title = match self.mode {
@@ -1626,6 +1710,16 @@ impl ClusterView {
                         div()
                             .w(px(220.))
                             .child(Input::new(&self.row_search).small()),
+                    )
+                    .children(
+                        self.kind
+                            .as_ref()
+                            .filter(|kind| {
+                                self.mode == Mode::Objects
+                                    && kind.resource.group.is_empty()
+                                    && kind.resource.kind == "Secret"
+                            })
+                            .map(|_| self.render_secret_type_picker(cx)),
                     )
                     .children(
                         self.kind

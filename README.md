@@ -133,6 +133,10 @@ to the object that was right-clicked.
 
 ## ConfigMaps and Secrets
 
+The Secret list has a type picker populated from the current namespace scope,
+including custom types. It filters by exact type and works alongside the name
+search; **All types** clears that selection.
+
 Both get a **Data** tab: one text box per key, instead of the YAML pane. That
 is the whole point — every value of a Secret is base64, which is not
 something a person can edit, and a ConfigMap's multi-line values are folded
