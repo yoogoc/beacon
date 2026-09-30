@@ -30,7 +30,7 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
 use crate::bridge::Bridge;
-use crate::cluster::{ClusterView, NavigationChanged, OpenResource};
+use crate::cluster::{ClusterView, NavigationChanged, ResourceRequested};
 use crate::palette::{self, Choice, Palette, PaletteEvent};
 use crate::theme::{BeaconTheme as _, Tone, toggle_mode};
 
@@ -89,7 +89,7 @@ struct Tab {
     /// What the kubeconfig said this context's namespace is, passed to the
     /// view when it is built.
     namespace: Option<String>,
-    /// A resource click starts this tab directly on its chosen kind.
+    /// A resource selection starts this tab on its chosen kind.
     initial_kind: Option<Arc<Kind>>,
     /// Carry the source tab's namespace selection into a resource tab.
     initial_scope: Option<BTreeSet<String>>,
@@ -98,7 +98,7 @@ struct Tab {
     _connect: Option<Task<()>>,
     /// Keep the app's sidebar and tab label in sync with this view's selection.
     _navigation: Option<Subscription>,
-    _open_resource: Option<Subscription>,
+    _resource_requests: Option<Subscription>,
 }
 
 enum TabState {
@@ -247,7 +247,7 @@ impl BeaconApp {
         self.open_kind(cluster, None, None, window, cx);
     }
 
-    /// Opens a separate tab for every resource selection, including repeat clicks.
+    /// Opens a separate tab for a resource selection.
     fn open_kind(
         &mut self,
         cluster: ClusterId,
@@ -269,7 +269,7 @@ impl BeaconApp {
             state: TabState::Connecting,
             _connect: None,
             _navigation: None,
-            _open_resource: None,
+            _resource_requests: None,
         });
 
         let index = self.tabs.len() - 1;
@@ -279,7 +279,7 @@ impl BeaconApp {
 
     /// Goes to `cluster`: its tab if one is open, a new tab if not.
     ///
-    /// Resource selection and ⌘T open new tabs; selecting a cluster reuses one.
+    /// The resource context menu and ⌘T open new tabs; selecting a cluster reuses one.
     fn go_to(&mut self, cluster: ClusterId, window: &mut Window, cx: &mut Context<Self>) {
         if self
             .tabs
@@ -291,6 +291,43 @@ impl BeaconApp {
         match self.tabs.iter().position(|tab| tab.cluster == cluster) {
             Some(index) => self.activate(index, window, cx),
             None => self.open(cluster, window, cx),
+        }
+    }
+
+    /// One ordinary tab per cluster and resource kind. Explicit context-menu
+    /// opens may create duplicates; ordinary selection prefers the active one,
+    /// then the most recently opened matching tab.
+    fn go_to_kind(
+        &mut self,
+        cluster: ClusterId,
+        kind: Arc<Kind>,
+        scope: BTreeSet<String>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let matches = |tab: &Tab| {
+            if tab.cluster != cluster {
+                return false;
+            }
+            match &tab.state {
+                TabState::Connected(view) => view.read(cx).shows_kind(&kind),
+                TabState::Connecting => tab
+                    .initial_kind
+                    .as_ref()
+                    .is_some_and(|initial| initial.gvk() == kind.gvk()),
+                TabState::Failed(_) => false,
+            }
+        };
+        let index = self
+            .tabs
+            .get(self.active)
+            .filter(|tab| matches(tab))
+            .map(|_| self.active)
+            .or_else(|| self.tabs.iter().rposition(matches));
+
+        match index {
+            Some(index) => self.activate(index, window, cx),
+            None => self.open_kind(cluster, Some(kind), Some(scope), window, cx),
         }
     }
 
@@ -388,22 +425,32 @@ impl BeaconApp {
 
         let navigation = cx.subscribe(&view, |_, _, _: &NavigationChanged, cx| cx.notify());
         let cluster = self.tabs[index].cluster.clone();
-        let open_resource = cx.subscribe_in(
+        let resource_requests = cx.subscribe_in(
             &view,
             window,
-            move |app, _, event: &OpenResource, window, cx| {
-                app.open_kind(
-                    cluster.clone(),
-                    Some(event.kind.clone()),
-                    Some(event.scope.clone()),
-                    window,
-                    cx,
-                );
+            move |app, _, event: &ResourceRequested, window, cx| {
+                if event.new_tab {
+                    app.open_kind(
+                        cluster.clone(),
+                        Some(event.kind.clone()),
+                        Some(event.scope.clone()),
+                        window,
+                        cx,
+                    );
+                } else {
+                    app.go_to_kind(
+                        cluster.clone(),
+                        event.kind.clone(),
+                        event.scope.clone(),
+                        window,
+                        cx,
+                    );
+                }
             },
         );
         self.tabs[index].state = TabState::Connected(view);
         self.tabs[index]._navigation = Some(navigation);
-        self.tabs[index]._open_resource = Some(open_resource);
+        self.tabs[index]._resource_requests = Some(resource_requests);
         cx.notify();
     }
 
@@ -561,7 +608,7 @@ impl BeaconApp {
         };
 
         cluster.update(cx, |cluster, cx| match choice {
-            Choice::Kind(kind) => cluster.open_resource(kind, cx),
+            Choice::Kind(kind) => cluster.select_resource(kind, cx),
             Choice::Namespace(namespace) => cluster.set_namespace(namespace, window, cx),
             Choice::Object(object) => cluster.reveal(&object, window, cx),
             Choice::Operation(operation) => cluster.start(operation, window, cx),

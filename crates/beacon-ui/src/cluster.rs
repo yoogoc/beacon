@@ -6,7 +6,7 @@
 //!
 //! The view is generic over resource kinds in the same way the layers under it
 //! are. Nothing here knows what a Pod is: each view watches one selected kind,
-//! and the window opens another view when a sidebar resource is chosen.
+//! and the sidebar can either change it or open another view explicitly.
 
 use std::{collections::BTreeSet, sync::Arc, time::Duration};
 
@@ -18,6 +18,7 @@ use beacon_kube::{
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::checkbox::Checkbox;
 use gpui_kit::component::input::{Input, InputEvent, InputState};
+use gpui_kit::component::menu::PopupMenuItem;
 use gpui_kit::component::popover::Popover;
 use gpui_kit::component::resizable::{ResizableState, resizable_panel, v_resizable};
 use gpui_kit::component::sidebar::SidebarMenuItem;
@@ -165,14 +166,15 @@ pub(crate) struct NavigationChanged;
 
 impl EventEmitter<NavigationChanged> for ClusterView {}
 
-/// A resource chosen in the sidebar needs its own tab in the window, with the
-/// same namespace scope as the tab from which it was opened.
-pub(crate) struct OpenResource {
+/// A resource selection carries the current namespace scope and whether the
+/// user explicitly requested another tab.
+pub(crate) struct ResourceRequested {
     pub kind: Arc<Kind>,
     pub scope: BTreeSet<String>,
+    pub new_tab: bool,
 }
 
-impl EventEmitter<OpenResource> for ClusterView {}
+impl EventEmitter<ResourceRequested> for ClusterView {}
 
 impl ClusterView {
     pub fn new(
@@ -589,12 +591,30 @@ impl ClusterView {
         }));
     }
 
-    /// Opens a kind in another tab, whether chosen in the sidebar or palette.
-    pub(crate) fn open_resource(&self, kind: Arc<Kind>, cx: &mut Context<Self>) {
-        cx.emit(OpenResource {
+    fn request_resource(&self, kind: Arc<Kind>, new_tab: bool, cx: &mut Context<Self>) {
+        cx.emit(ResourceRequested {
             kind,
             scope: self.scoped_to.clone(),
+            new_tab,
         });
+    }
+
+    /// Normal selection reuses the existing tab for this cluster and kind.
+    pub(crate) fn select_resource(&self, kind: Arc<Kind>, cx: &mut Context<Self>) {
+        self.request_resource(kind, false, cx);
+    }
+
+    /// The sidebar context menu always creates another tab.
+    pub(crate) fn open_resource(&self, kind: Arc<Kind>, cx: &mut Context<Self>) {
+        self.request_resource(kind, true, cx);
+    }
+
+    pub(crate) fn shows_kind(&self, kind: &Kind) -> bool {
+        self.mode == Mode::Objects
+            && self
+                .kind
+                .as_ref()
+                .is_some_and(|current| current.gvk() == kind.gvk())
     }
 
     /// Scopes to a namespace, or to all of them with `None`.
@@ -1114,8 +1134,8 @@ impl ClusterView {
     }
 
     /// Resource navigation for the expanded cluster in the app's sidebar.
-    /// Each tab still owns its search and selected kind; selecting a resource
-    /// asks the window to open another tab.
+    /// A normal selection activates the existing tab for a kind or opens one;
+    /// the context menu always asks the window to open a separate tab.
     pub(crate) fn sidebar_items(&mut self, cx: &mut Context<Self>) -> Vec<SidebarMenuItem> {
         let current = self.kind.as_ref().map(|kind| kind.gvk());
 
@@ -1167,11 +1187,24 @@ impl ClusterView {
                         .children(entries.into_iter().map(|entry| {
                             let selected = current.as_ref() == Some(&entry.kind.gvk());
                             let kind = entry.kind.clone();
-                            SidebarMenuItem::new(entry.label).active(selected).on_click(
-                                cx.listener(move |view, _, _, cx| {
-                                    view.open_resource(kind.clone(), cx)
-                                }),
-                            )
+                            let menu_kind = kind.clone();
+                            let menu_view = cx.entity().downgrade();
+                            SidebarMenuItem::new(entry.label)
+                                .active(selected)
+                                .on_click(cx.listener(move |view, _, _, cx| {
+                                    view.select_resource(kind.clone(), cx);
+                                }))
+                                .context_menu(move |menu, _, _| {
+                                    let view = menu_view.clone();
+                                    let kind = menu_kind.clone();
+                                    menu.item(PopupMenuItem::new("Open in new tab").on_click(
+                                        move |_, _, cx| {
+                                            let _ = view.update(cx, |view, cx| {
+                                                view.open_resource(kind.clone(), cx);
+                                            });
+                                        },
+                                    ))
+                                })
                         }))
                 })
                 .collect::<Vec<_>>()
