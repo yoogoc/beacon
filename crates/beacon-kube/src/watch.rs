@@ -292,6 +292,11 @@ impl Registry {
 
     /// How many watches are running. The status bar shows it; the tests assert
     /// on it.
+    /// Manual disconnection stops even watches in the idle grace period.
+    pub(crate) fn stop_all(&self) {
+        self.lock_watches().clear();
+    }
+
     pub(crate) fn active(&self) -> usize {
         self.lock_watches().len()
     }
@@ -527,6 +532,34 @@ fn flush(store: &Arc<Mutex<ResourceStore>>, subscribers: &Subscribers, batch: De
 mod tests {
     use super::*;
     use crate::resources;
+
+    #[tokio::test]
+    async fn manual_disconnect_stops_watches_with_live_subscribers_immediately() {
+        let config = kube::Config::new("http://127.0.0.1:9".parse().unwrap());
+        let client = kube::Client::try_from(config).unwrap();
+        let registry = Registry::new(
+            client,
+            tokio::runtime::Handle::current(),
+            Arc::new(HealthState::new(crate::Health::Connected)),
+        );
+        let (sender, mut receiver) = mpsc::unbounded();
+        let task = tokio::spawn(std::future::pending::<()>());
+        registry.lock_watches().insert(
+            WatchKey::namespaced(resources::pod(), "default"),
+            WatchHandle {
+                store: Arc::new(Mutex::new(ResourceStore::new())),
+                listed: Arc::new(AtomicBool::new(false)),
+                subscribers: Arc::new(Mutex::new(HashMap::from([(0, sender)]))),
+                generation: 0,
+                task: task.abort_handle(),
+            },
+        );
+        assert_eq!(registry.active(), 1);
+        registry.stop_all();
+        assert_eq!(registry.active(), 0);
+        assert!(receiver.next().await.is_none());
+        assert!(task.await.unwrap_err().is_cancelled());
+    }
 
     fn pod(name: &str) -> DynamicObject {
         DynamicObject::new(name, &resources::pod()).within("default")

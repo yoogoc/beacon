@@ -320,6 +320,11 @@ impl ClusterView {
         (table.len(), table.total())
     }
 
+    /// Enough navigation to rebuild a tab after its session is replaced.
+    pub(crate) fn navigation(&self) -> (Option<Arc<Kind>>, BTreeSet<String>, Mode) {
+        (self.kind.clone(), self.scoped_to.clone(), self.mode)
+    }
+
     pub fn kind(&self) -> Option<&Kind> {
         self.kind.as_deref()
     }

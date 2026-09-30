@@ -20,6 +20,23 @@ use std::{future::Future, sync::Arc};
 use futures::{Stream, StreamExt as _};
 use gpui_kit::*;
 
+/// Network work that must stop when its foreground owner disappears.
+pub struct Cancellable<T> {
+    task: tokio::task::JoinHandle<T>,
+}
+
+impl<T> Cancellable<T> {
+    pub async fn result(mut self) -> Result<T, tokio::task::JoinError> {
+        (&mut self.task).await
+    }
+}
+
+impl<T> Drop for Cancellable<T> {
+    fn drop(&mut self) {
+        self.task.abort();
+    }
+}
+
 /// Owns the tokio runtime, installed as a GPUI global.
 pub struct Bridge {
     runtime: Arc<tokio::runtime::Runtime>,
@@ -54,6 +71,17 @@ impl Bridge {
     /// a plain producer.
     pub fn handle(&self) -> tokio::runtime::Handle {
         self.runtime.handle().clone()
+    }
+
+    /// Like `run`, but cancelling its owner also aborts the network task.
+    pub fn run_cancellable<F>(&self, future: F) -> Cancellable<F::Output>
+    where
+        F: Future + Send + 'static,
+        F::Output: Send + 'static,
+    {
+        Cancellable {
+            task: self.runtime.spawn(future),
+        }
     }
 
     /// Runs one piece of network work on the runtime.
@@ -107,4 +135,25 @@ where
             }
         }
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Cancellable;
+
+    #[tokio::test]
+    async fn cancelling_foreground_work_aborts_its_network_request() {
+        let task = tokio::spawn(std::future::pending::<()>());
+        let abort = task.abort_handle();
+        let owner = Cancellable { task };
+        drop(owner);
+        tokio::task::yield_now().await;
+        assert!(abort.is_finished());
+    }
+
+    #[tokio::test]
+    async fn cancellable_work_returns_its_result() {
+        let task = tokio::spawn(async { 42 });
+        assert_eq!(Cancellable { task }.result().await.unwrap(), 42);
+    }
 }

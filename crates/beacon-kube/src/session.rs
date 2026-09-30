@@ -429,6 +429,13 @@ impl ClusterSession {
         self.registry.subscribe(key)
     }
 
+    /// End the session's persistent network work even if an in-flight read
+    /// still holds an Arc. A reconnect must build a fresh session.
+    pub fn disconnect(&self) {
+        self.registry.stop_all();
+        self.forwards.stop_all();
+    }
+
     /// How many watches this session is running. Shown in the status bar, and
     /// the thing to assert on when checking that a context switch cleaned up.
     pub fn active_watches(&self) -> usize {
@@ -465,7 +472,7 @@ pub(crate) struct HealthState {
 }
 
 impl HealthState {
-    fn new(initial: Health) -> Self {
+    pub(crate) fn new(initial: Health) -> Self {
         Self {
             sender: watch_channel::Sender::new(initial),
             failing: AtomicUsize::new(0),

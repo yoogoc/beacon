@@ -16,7 +16,7 @@ use std::{
     net::{Ipv4Addr, SocketAddr},
     sync::{
         Arc, Mutex,
-        atomic::{AtomicU64, AtomicUsize, Ordering},
+        atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
     },
 };
 
@@ -81,6 +81,7 @@ impl Drop for Running {
 pub struct Forwards {
     running: Mutex<HashMap<ForwardId, Arc<Running>>>,
     next_id: AtomicU64,
+    stopped: AtomicBool,
 }
 
 impl Forwards {
@@ -137,14 +138,19 @@ impl Forwards {
 
         tracing::info!(forward = %forward.describe(), "forwarding");
 
-        self.running.lock().expect("forwards").insert(
-            id,
-            Arc::new(Running {
-                forward: Mutex::new(forward.clone()),
-                connections,
-                task: task.abort_handle(),
-            }),
-        );
+        let running = Arc::new(Running {
+            forward: Mutex::new(forward.clone()),
+            connections,
+            task: task.abort_handle(),
+        });
+        let mut forwards = self.running.lock().expect("forwards");
+        if self.stopped.load(Ordering::Acquire) {
+            return Err(Error::Forward {
+                what: "could not start forwarding".to_string(),
+                cause: "cluster was disconnected".to_string(),
+            });
+        }
+        forwards.insert(id, running);
 
         Ok(forward)
     }
@@ -169,6 +175,13 @@ impl Forwards {
 
     pub fn is_empty(&self) -> bool {
         self.running.lock().expect("forwards").is_empty()
+    }
+
+    /// Stops the session's forwards and rejects late results from pending opens.
+    pub fn stop_all(&self) {
+        let mut forwards = self.running.lock().expect("forwards");
+        self.stopped.store(true, Ordering::Release);
+        forwards.clear();
     }
 
     /// Stops one forward. Dropping the handle aborts its task, which closes
@@ -339,6 +352,38 @@ mod tests {
                 .collect::<Vec<_>>(),
             [8080, 6379]
         );
+    }
+
+    #[tokio::test]
+    async fn stopping_a_session_closes_listeners_and_rejects_late_opens() {
+        let forwards = Forwards::default();
+        let config = kube::Config::new("http://127.0.0.1:9".parse().unwrap());
+        let client = kube::Client::try_from(config).unwrap();
+        let runtime = tokio::runtime::Handle::current();
+        let opened = forwards
+            .open(
+                client.clone(),
+                &runtime,
+                "default".into(),
+                "test".into(),
+                80,
+                0,
+            )
+            .await
+            .unwrap();
+        assert_eq!(forwards.list().len(), 1);
+        forwards.stop_all();
+        tokio::task::yield_now().await;
+        assert!(forwards.is_empty());
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, opened.local_port))
+            .await
+            .unwrap();
+        drop(listener);
+        let late = forwards
+            .open(client, &runtime, "default".into(), "test".into(), 80, 0)
+            .await;
+        assert!(late.is_err());
+        assert!(forwards.is_empty());
     }
 
     /// A forward to a pod that no longer exists accepts connections and fails

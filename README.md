@@ -86,6 +86,15 @@ Age clock and the ten-second metrics poll, which are a repaint and a request
 that nobody is looking at. Closing a tab drops its watches; the session stays,
 so opening that cluster again does not reconnect.
 
+The **Cluster** resource section appears first. All resources in
+`networking.k8s.io` belong to **Network**, and all resources in
+`admissionregistration.k8s.io` belong to **Config**. Right-click a cluster in
+the sidebar to **Disconnect** or **Reconnect**. Disconnect stops its watches,
+shells and port forwards while keeping its resource tabs and namespace scopes.
+Reconnect authenticates again, refreshes discovery and the server version, and
+restores those tabs on one fresh session. Port forwards and shells must be
+opened again.
+
 EKS contexts named by an ARN appear as their cluster name with an **EKS** badge
 in the sidebar. Custom context aliases stay as written. Hover the badge for the
 region, AWS account and original context; the command palette searches both the

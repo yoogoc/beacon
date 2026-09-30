@@ -12,7 +12,7 @@
 //! costs a view and nothing else.
 
 use std::{
-    collections::{BTreeSet, HashMap},
+    collections::{BTreeSet, HashMap, HashSet},
     sync::Arc,
 };
 
@@ -22,6 +22,7 @@ use beacon_kube::{
 };
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::Input;
+use gpui_kit::component::menu::PopupMenuItem;
 use gpui_kit::component::popover::Popover;
 use gpui_kit::component::sidebar::{Sidebar, SidebarGroup, SidebarMenu, SidebarMenuItem};
 use gpui_kit::component::spinner::Spinner;
@@ -34,7 +35,7 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
 use crate::bridge::Bridge;
-use crate::cluster::{ClusterView, NavigationChanged, ResourceRequested};
+use crate::cluster::{ClusterView, Mode, NavigationChanged, ResourceRequested};
 use crate::palette::{self, Choice, Palette, PaletteEvent};
 use crate::theme::{BeaconTheme as _, Tone, toggle_mode};
 
@@ -97,6 +98,7 @@ struct Tab {
     initial_kind: Option<Arc<Kind>>,
     /// Carry the source tab's namespace selection into a resource tab.
     initial_scope: Option<BTreeSet<String>>,
+    initial_mode: Mode,
     state: TabState,
     /// Dropped with the tab, which abandons a connection nobody is waiting on.
     _connect: Option<Task<()>>,
@@ -106,6 +108,7 @@ struct Tab {
 }
 
 enum TabState {
+    Disconnected,
     Connecting,
     Connected(Entity<ClusterView>),
     Failed(String),
@@ -141,6 +144,10 @@ pub struct BeaconApp {
     /// The *watches* belong to the views, so closing a tab stops what it was
     /// watching.
     sessions: HashMap<ClusterId, Arc<ClusterSession>>,
+    /// Manual disconnection persists until the user explicitly reconnects.
+    disconnected: HashSet<ClusterId>,
+    /// Results from an earlier connection must never resurrect a stopped session.
+    connection_epochs: HashMap<ClusterId, u64>,
 
     tabs: Vec<Tab>,
     /// Index into `tabs`. Meaningless, and never read, while `tabs` is empty.
@@ -188,6 +195,8 @@ impl BeaconApp {
             tab_scroll: ScrollHandle::new(),
             contexts,
             sessions: HashMap::new(),
+            disconnected: HashSet::new(),
+            connection_epochs: HashMap::new(),
             tabs: Vec::new(),
             active: 0,
             next_tab: 0,
@@ -270,6 +279,7 @@ impl BeaconApp {
             namespace,
             initial_kind,
             initial_scope,
+            initial_mode: Mode::Objects,
             state: TabState::Connecting,
             _connect: None,
             _navigation: None,
@@ -315,7 +325,7 @@ impl BeaconApp {
             }
             match &tab.state {
                 TabState::Connected(view) => view.read(cx).shows_kind(&kind),
-                TabState::Connecting => tab
+                TabState::Connecting | TabState::Disconnected => tab
                     .initial_kind
                     .as_ref()
                     .is_some_and(|initial| initial.gvk() == kind.gvk()),
@@ -335,6 +345,60 @@ impl BeaconApp {
         }
     }
 
+    /// Stop every tab on this cluster while preserving its navigation.
+    fn disconnect(&mut self, cluster: &ClusterId, window: &mut Window, cx: &mut Context<Self>) {
+        self.disconnected.insert(cluster.clone());
+        *self.connection_epochs.entry(cluster.clone()).or_default() += 1;
+        self.activity_open = None;
+        self.activity_refresh = None;
+        self.palette_open = false;
+        for tab in self.tabs.iter_mut().filter(|tab| &tab.cluster == cluster) {
+            if let TabState::Connected(view) = &tab.state {
+                let (kind, scope, mode) = view.read(cx).navigation();
+                tab.initial_kind = kind;
+                tab.initial_scope = Some(scope);
+                tab.initial_mode = mode;
+            }
+            tab._connect = None;
+            tab._navigation = None;
+            tab._resource_requests = None;
+            tab.state = TabState::Disconnected;
+        }
+        if let Some(session) = self.sessions.remove(cluster) {
+            session.disconnect();
+        }
+        if self
+            .tabs
+            .get(self.active)
+            .is_some_and(|tab| &tab.cluster == cluster)
+        {
+            self.focus.focus(window, cx);
+        }
+        tracing::info!(context = %cluster, "manually disconnected cluster");
+        cx.notify();
+    }
+
+    /// Replace the client once, then rebuild all tabs on that session.
+    fn reconnect(&mut self, cluster: ClusterId, window: &mut Window, cx: &mut Context<Self>) {
+        self.disconnect(&cluster, window, cx);
+        self.disconnected.remove(&cluster);
+        let index = self
+            .tabs
+            .get(self.active)
+            .filter(|tab| tab.cluster == cluster)
+            .map(|_| self.active)
+            .or_else(|| self.tabs.iter().position(|tab| tab.cluster == cluster));
+        let Some(index) = index else {
+            self.open(cluster, window, cx);
+            return;
+        };
+        for tab in self.tabs.iter_mut().filter(|tab| tab.cluster == cluster) {
+            tab.state = TabState::Connecting;
+        }
+        self.activate(index, window, cx);
+        self.connect(index, window, cx);
+    }
+
     /// Gives tab `index` a view, connecting first if this cluster is new.
     fn connect(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
         let Some(tab) = self.tabs.get(index) else {
@@ -343,6 +407,12 @@ impl BeaconApp {
         let cluster = tab.cluster.clone();
         let namespace = tab.namespace.clone();
         let tab_id = tab.id;
+        if self.disconnected.contains(&cluster) {
+            self.tabs[index].state = TabState::Disconnected;
+            cx.notify();
+            return;
+        }
+        let epoch = *self.connection_epochs.entry(cluster.clone()).or_default();
 
         // Already connected: opening another tab on this cluster is building a
         // view over a session that still has its client, its discovery and its
@@ -353,17 +423,31 @@ impl BeaconApp {
             return;
         }
 
+        // Resource tabs opened while discovery is still running share that
+        // request; its result will fill every waiting tab on this cluster.
+        if self.tabs.iter().enumerate().any(|(other, tab)| {
+            other != index
+                && tab.cluster == cluster
+                && matches!(tab.state, TabState::Connecting)
+                && tab._connect.is_some()
+        }) {
+            self.tabs[index].state = TabState::Connecting;
+            cx.notify();
+            return;
+        }
+
         tracing::info!(context = %cluster, namespace = ?namespace, "connecting");
         self.tabs[index].state = TabState::Connecting;
         cx.notify();
 
         let connecting = {
             let cluster = cluster.clone();
-            Bridge::global(cx).run(async move { ClusterSession::connect(cluster).await })
+            Bridge::global(cx)
+                .run_cancellable(async move { ClusterSession::connect(cluster).await })
         };
 
         let task = cx.spawn_in(window, async move |this, cx| {
-            let result = connecting.await;
+            let result = connecting.result().await;
 
             let _ = this.update_in(cx, |view, window, cx| {
                 // The tab may have been closed, or pointed somewhere else,
@@ -371,7 +455,10 @@ impl BeaconApp {
                 let Some(index) = view.index_of(tab_id) else {
                     return;
                 };
-                if view.tabs[index].cluster != cluster {
+                if view.tabs[index].cluster != cluster
+                    || view.connection_epochs.get(&cluster) != Some(&epoch)
+                    || view.disconnected.contains(&cluster)
+                {
                     return;
                 }
 
@@ -383,20 +470,39 @@ impl BeaconApp {
                         // duplicate is dropped here rather than kept.
                         let session = view
                             .sessions
-                            .entry(cluster)
+                            .entry(cluster.clone())
                             .or_insert_with(|| Arc::new(session))
                             .clone();
-                        let namespace = view.tabs[index].namespace.clone();
-                        view.show(index, session, namespace, window, cx);
+                        let waiting: Vec<_> = view
+                            .tabs
+                            .iter()
+                            .enumerate()
+                            .filter(|(_, tab)| {
+                                tab.cluster == cluster && matches!(tab.state, TabState::Connecting)
+                            })
+                            .map(|(index, _)| index)
+                            .collect();
+                        for index in waiting {
+                            let namespace = view.tabs[index].namespace.clone();
+                            view.show(index, session.clone(), namespace, window, cx);
+                        }
                     }
                     Ok(Err(error)) => {
                         tracing::warn!(context = %cluster, %error, "could not connect");
-                        view.tabs[index].state = TabState::Failed(error.to_string());
+                        for tab in view.tabs.iter_mut().filter(|tab| {
+                            tab.cluster == cluster && matches!(tab.state, TabState::Connecting)
+                        }) {
+                            tab.state = TabState::Failed(error.to_string());
+                        }
                         cx.notify();
                     }
                     Err(error) => {
                         tracing::error!(context = %cluster, %error, "the connect task failed");
-                        view.tabs[index].state = TabState::Failed(error.to_string());
+                        for tab in view.tabs.iter_mut().filter(|tab| {
+                            tab.cluster == cluster && matches!(tab.state, TabState::Connecting)
+                        }) {
+                            tab.state = TabState::Failed(error.to_string());
+                        }
                         cx.notify();
                     }
                 }
@@ -417,9 +523,14 @@ impl BeaconApp {
     ) {
         let initial_kind = self.tabs[index].initial_kind.take();
         let initial_scope = self.tabs[index].initial_scope.take();
+        let initial_mode = self.tabs[index].initial_mode;
         let view = cx.new(|cx| {
             ClusterView::new(session, namespace, initial_kind, initial_scope, window, cx)
         });
+
+        if initial_mode != Mode::Objects {
+            view.update(cx, |view, cx| view.show_mode(initial_mode, window, cx));
+        }
 
         // A tab that connected in the background must not start its timers: a
         // view is visible until told otherwise, and nothing else would tell it.
@@ -490,6 +601,8 @@ impl BeaconApp {
 
         let tab = self.tabs.remove(index);
         tracing::info!(context = %tab.cluster, "closed a tab");
+        let pending_cluster =
+            matches!(tab.state, TabState::Connecting).then(|| tab.cluster.clone());
         drop(tab);
 
         if self.tabs.is_empty() {
@@ -512,6 +625,24 @@ impl BeaconApp {
             view.update(cx, |view, cx| view.set_visible(true, window, cx));
         }
 
+        // A reconnect has one pending request shared by all waiting tabs.
+        // If its owner was closed, let a remaining tab finish the connection.
+        if let Some(cluster) = pending_cluster {
+            let waiting: Vec<_> = self
+                .tabs
+                .iter()
+                .enumerate()
+                .filter(|(_, tab)| {
+                    tab.cluster == cluster && matches!(tab.state, TabState::Connecting)
+                })
+                .map(|(index, tab)| (index, tab._connect.is_some()))
+                .collect();
+            if !waiting.iter().any(|(_, pending)| *pending)
+                && let Some((index, _)) = waiting.first()
+            {
+                self.connect(*index, window, cx);
+            }
+        }
         cx.notify();
     }
 
@@ -740,6 +871,13 @@ impl BeaconApp {
             let color = self.cluster_color(&id, cx);
             let connected = self.sessions.contains_key(&id);
             let target = id.clone();
+            let menu_target = id.clone();
+            let menu_view = cx.entity().downgrade();
+            let can_disconnect = connected
+                || self
+                    .tabs
+                    .iter()
+                    .any(|tab| tab.cluster == id && matches!(tab.state, TabState::Connecting));
             let is_eks = self
                 .context_entry(&id)
                 .is_some_and(|entry| entry.eks().is_some());
@@ -775,6 +913,27 @@ impl BeaconApp {
                             Tooltip::new(description.clone()).build(window, cx)
                         })
                 })
+                .context_menu(move |menu, _, _| {
+                    let target = menu_target.clone();
+                    let view = menu_view.clone();
+                    let reconnect_target = menu_target.clone();
+                    let reconnect_view = menu_view.clone();
+                    menu.item(
+                        PopupMenuItem::new("Disconnect")
+                            .disabled(!can_disconnect)
+                            .on_click(move |_, window, cx| {
+                                let _ =
+                                    view.update(cx, |app, cx| app.disconnect(&target, window, cx));
+                            }),
+                    )
+                    .item(
+                        PopupMenuItem::new("Reconnect").on_click(move |_, window, cx| {
+                            let _ = reconnect_view.update(cx, |app, cx| {
+                                app.reconnect(reconnect_target.clone(), window, cx)
+                            });
+                        }),
+                    )
+                })
                 .on_click(cx.listener(move |view, _, window, cx| {
                     view.go_to(target.clone(), window, cx);
                 }))
@@ -809,6 +968,16 @@ impl BeaconApp {
             let color = self.cluster_color(&tab.cluster, cx);
             let what = match &tab.state {
                 TabState::Connected(view) => view.read(cx).title(),
+                TabState::Disconnected => {
+                    if tab.initial_mode == Mode::Objects {
+                        tab.initial_kind
+                            .as_ref()
+                            .map(|kind| SharedString::from(kind.resource.kind.clone()))
+                            .unwrap_or_else(|| SharedString::from("Objects"))
+                    } else {
+                        SharedString::from(tab.initial_mode.label())
+                    }
+                }
                 TabState::Connecting => SharedString::from("connecting"),
                 TabState::Failed(_) => SharedString::from("unreachable"),
             };
@@ -893,6 +1062,11 @@ impl BeaconApp {
             .map(|tab| (&tab.cluster, &tab.state));
 
         let (tone, headline, detail) = match (state, &self.contexts) {
+            (Some((id, TabState::Disconnected)), _) => (
+                Tone::Unknown,
+                format!("Disconnected from {}", self.cluster_display_name(id)),
+                "Right-click the cluster in the sidebar and choose Reconnect.".to_string(),
+            ),
             (Some((id, TabState::Connecting)), _) => (
                 Tone::Progressing,
                 format!("Connecting to {}", self.cluster_display_name(id)),
@@ -1155,6 +1329,11 @@ impl BeaconApp {
             .unwrap_or_default();
         let (tone, status, watches) = match active.map(|tab| &tab.state) {
             None => (Tone::Unknown, "no tab open".to_string(), 0),
+            Some(TabState::Disconnected) => (
+                Tone::Unknown,
+                format!("{} · disconnected", name.unwrap_or_default()),
+                0,
+            ),
             Some(TabState::Connecting) => (
                 Tone::Progressing,
                 format!("{} · connecting", name.unwrap_or_default()),

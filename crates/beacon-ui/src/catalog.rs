@@ -41,12 +41,12 @@ pub enum Category {
 
 impl Category {
     pub const ALL: [Self; 7] = [
+        Self::Cluster,
         Self::Workloads,
         Self::Config,
         Self::Network,
         Self::Storage,
         Self::AccessControl,
-        Self::Cluster,
         Self::Other,
     ];
 
@@ -101,11 +101,13 @@ fn placement(kind: &Kind) -> (Category, u8) {
             "admissionregistration.k8s.io",
             "MutatingWebhookConfiguration" | "ValidatingWebhookConfiguration",
         ) => (Config, 4),
+        ("admissionregistration.k8s.io", _) => (Config, 5),
 
         ("", "Service") => (Network, 0),
         ("networking.k8s.io", "Ingress") => (Network, 1),
         ("networking.k8s.io", "NetworkPolicy") => (Network, 2),
         ("networking.k8s.io", "IngressClass") => (Network, 3),
+        ("networking.k8s.io", _) => (Network, 5),
         ("", "Endpoints") => (Network, 4),
         ("discovery.k8s.io", "EndpointSlice") => (Network, 4),
 
@@ -450,14 +452,31 @@ mod tests {
         assert_eq!(
             headings(&catalog()),
             [
+                "Cluster",
                 "Workloads",
                 "Config",
                 "Access Control",
-                "Cluster",
                 "argoproj.io",
                 "k3s.cattle.io",
             ]
         );
+    }
+
+    #[test]
+    fn all_networking_and_admission_resources_stay_in_their_categories() {
+        let catalog = Catalog::new(&[
+            kind("networking.k8s.io", "IPAddress"),
+            kind("networking.k8s.io", "ServiceCIDR"),
+            kind("admissionregistration.k8s.io", "ValidatingAdmissionPolicy"),
+            kind(
+                "admissionregistration.k8s.io",
+                "MutatingAdmissionPolicyBinding",
+            ),
+        ]);
+        assert_eq!(headings(&catalog), ["Config", "Network"]);
+        assert_eq!(section(&catalog, Category::Network).len(), 2);
+        assert_eq!(section(&catalog, Category::Config).len(), 2);
+        assert_eq!(catalog.search("networking.k8s.io", &mut matcher()).len(), 2);
     }
 
     #[test]
