@@ -86,6 +86,13 @@ Age clock and the ten-second metrics poll, which are a repaint and a request
 that nobody is looking at. Closing a tab drops its watches; the session stays,
 so opening that cluster again does not reconnect.
 
+EKS contexts named by an ARN appear as their cluster name with an **EKS** badge
+in the sidebar. Custom context aliases stay as written. Hover the badge for the
+region, AWS account and original context; the command palette searches both the
+readable name and the original ARN. The bottom status bar shows the active
+cluster name and the Kubernetes version reported by its API server, with the
+server address and connection details in its tooltip.
+
 Click **watches** in the bottom-right status bar to inspect the current
 cluster's watches: resource kind, namespace, selectors, cached object count,
 and subscriber count. Idle watches stay visible until their 30-second grace

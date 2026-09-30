@@ -96,7 +96,11 @@ pub(crate) fn watches(session: &ClusterSession, cx: &App) -> AnyElement {
 
     panel(
         format!("Watches ({})", watches.len()),
-        session.id().to_string(),
+        format!(
+            "{} · Kubernetes {}",
+            session.id().display_name(),
+            session.version()
+        ),
         cx,
     )
     .child(

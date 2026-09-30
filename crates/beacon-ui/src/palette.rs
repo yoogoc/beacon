@@ -21,7 +21,7 @@
 
 use std::sync::Arc;
 
-use beacon_kube::{ClusterId, Kind, ObjectRef, Operation};
+use beacon_kube::{ClusterId, Kind, ObjectRef, Operation, config::ContextEntry};
 use gpui_kit::component::Disableable as _;
 use gpui_kit::component::command::{Command, CommandItem, CommandState};
 use gpui_kit::component::{ActiveTheme as _, v_flex};
@@ -163,7 +163,7 @@ impl EventEmitter<PaletteEvent> for Palette {}
 pub struct Sources {
     pub kinds: Vec<Arc<Kind>>,
     pub namespaces: Vec<String>,
-    pub clusters: Vec<ClusterId>,
+    pub clusters: Vec<ContextEntry>,
     pub objects: Vec<ObjectRef>,
     /// What can be done to the selected object, already marked with whether
     /// this user may do it. Empty when nothing is selected.
@@ -240,7 +240,12 @@ impl Palette {
                 .sources
                 .clusters
                 .iter()
-                .map(|cluster| (cluster.to_string(), Choice::Cluster(cluster.clone())))
+                .map(|cluster| {
+                    (
+                        format!("{} {}", cluster.label(), cluster.id),
+                        Choice::Cluster(cluster.id.clone()),
+                    )
+                })
                 .collect(),
             Section::Commands => self
                 .sources
@@ -293,7 +298,13 @@ impl Palette {
             Choice::Kind(kind) => SharedString::from(kind.display_name()),
             Choice::Namespace(None) => SharedString::from("All namespaces"),
             Choice::Namespace(Some(namespace)) => SharedString::from(namespace.clone()),
-            Choice::Cluster(cluster) => SharedString::from(cluster.to_string()),
+            Choice::Cluster(cluster) => SharedString::from(
+                self.sources
+                    .clusters
+                    .iter()
+                    .find(|entry| &entry.id == cluster)
+                    .map_or_else(|| cluster.display_name().to_string(), ContextEntry::label),
+            ),
             Choice::Action(action) => SharedString::from(action.label()),
             Choice::Operation(operation) => SharedString::from(operation.describe()),
             Choice::Forward { remote_port } => {

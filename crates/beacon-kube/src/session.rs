@@ -71,6 +71,8 @@ pub struct ClusterSession {
     /// The API server URL, which is what distinguishes two contexts that have
     /// confusingly similar names.
     server: String,
+    /// The exact Kubernetes git version returned during connection, including vendor suffixes.
+    version: String,
     client: Client,
     runtime: tokio::runtime::Handle,
     discovery: Discovery,
@@ -137,6 +139,7 @@ impl ClusterSession {
         Ok(Self {
             id,
             server,
+            version: version.git_version,
             client,
             runtime,
             discovery,
@@ -409,6 +412,10 @@ impl ClusterSession {
 
     pub fn server(&self) -> &str {
         &self.server
+    }
+
+    pub fn version(&self) -> &str {
+        &self.version
     }
 
     /// Observes the connection's health. The current value is available

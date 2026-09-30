@@ -59,6 +59,11 @@ impl ClusterId {
     pub fn as_str(&self) -> &str {
         &self.0
     }
+
+    /// Only the presentation is shortened; Display and as_str retain the context ID.
+    pub fn display_name(&self) -> &str {
+        config::EksCluster::parse(&self.0).map_or(self.as_str(), |eks| eks.name)
+    }
 }
 
 impl fmt::Display for ClusterId {

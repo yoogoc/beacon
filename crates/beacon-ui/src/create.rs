@@ -186,7 +186,7 @@ impl Render for CreateView {
                             .text_color(cx.theme().muted_foreground)
                             .child(format!(
                                 "Cluster: {} · {} · {}",
-                                self.session.id(),
+                                self.session.id().display_name(),
                                 scope,
                                 self.kind.resource.api_version
                             )),

@@ -6,6 +6,39 @@ use kube::config::Kubeconfig;
 
 use crate::{ClusterId, Result};
 
+/// The readable identity inside an EKS cluster ARN. It never replaces a context ID.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EksCluster<'a> {
+    pub name: &'a str,
+    pub region: &'a str,
+    pub account_id: &'a str,
+}
+
+impl<'a> EksCluster<'a> {
+    pub fn parse(value: &'a str) -> Option<Self> {
+        let mut parts = value.splitn(6, ':');
+        if parts.next()? != "arn" || parts.next()?.is_empty() || parts.next()? != "eks" {
+            return None;
+        }
+        let region = parts.next()?;
+        let account_id = parts.next()?;
+        let name = parts.next()?.strip_prefix("cluster/")?;
+        if region.is_empty()
+            || account_id.is_empty()
+            || name.is_empty()
+            || name.contains(['/', ':'])
+            || value.chars().any(char::is_whitespace)
+        {
+            return None;
+        }
+        Some(Self {
+            name,
+            region,
+            account_id,
+        })
+    }
+}
+
 /// One connectable context, flattened into what the UI actually displays.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ContextEntry {
@@ -19,6 +52,35 @@ pub struct ContextEntry {
 }
 
 impl ContextEntry {
+    /// Recognises EKS even when the user gave its context a custom alias.
+    pub fn eks(&self) -> Option<EksCluster<'_>> {
+        EksCluster::parse(&self.cluster).or_else(|| EksCluster::parse(self.id.as_str()))
+    }
+
+    /// Custom aliases stay as written; ARN context names become cluster names.
+    pub fn display_name(&self) -> &str {
+        self.id.display_name()
+    }
+
+    /// The actual EKS name, or the context name for other clusters.
+    pub fn cluster_name(&self) -> &str {
+        self.eks()
+            .map_or_else(|| self.display_name(), |eks| eks.name)
+    }
+
+    /// Region and account distinguish EKS clusters with the same short name.
+    pub fn label(&self) -> String {
+        match self.eks() {
+            Some(eks) => format!(
+                "{} · EKS · {} · {}",
+                self.display_name(),
+                eks.region,
+                eks.account_id
+            ),
+            None => self.display_name().to_string(),
+        }
+    }
+
     /// The namespace a fresh connection should start in.
     pub fn initial_namespace(&self) -> &str {
         self.namespace.as_deref().unwrap_or("default")
@@ -114,6 +176,79 @@ contexts:
 
     fn sample() -> Contexts {
         Contexts::from_kubeconfig(&Kubeconfig::from_yaml(SAMPLE).expect("sample parses"))
+    }
+
+    #[test]
+    fn recognises_eks_arns_across_aws_partitions() {
+        for (partition, region) in [
+            ("aws", "us-east-1"),
+            ("aws-cn", "cn-north-1"),
+            ("aws-us-gov", "us-gov-west-1"),
+        ] {
+            let arn = format!("arn:{partition}:eks:{region}:123456789012:cluster/web-dev-cluster");
+            let eks = EksCluster::parse(&arn).unwrap();
+            assert_eq!(eks.name, "web-dev-cluster");
+            assert_eq!(eks.region, region);
+            assert_eq!(eks.account_id, "123456789012");
+            let id = ClusterId::new(&arn);
+            assert_eq!(id.display_name(), "web-dev-cluster");
+            assert_eq!(id.as_str(), arn);
+            assert_eq!(id.to_string(), arn);
+        }
+    }
+
+    #[test]
+    fn ordinary_names_and_other_arns_are_not_shortened() {
+        for name in [
+            "default",
+            "aliyun-dev",
+            "arn:aws:ec2:us-east-1:123456789012:cluster/test",
+            "arn:aws:eks:us-east-1:123456789012:nodegroup/test/group/id",
+            "arn:aws:eks:us-east-1:123456789012:cluster/",
+            "arn:aws:eks::123456789012:cluster/test",
+            "arn:aws:eks:us-east-1::cluster/test",
+            "arn:aws:eks:us-east-1:123456789012:cluster/test/extra",
+            "arn:aws:eks:us-east-1:123456789012:cluster/test:extra",
+            "arn:aws:eks:us-east-1:123456789012:cluster/test name",
+        ] {
+            assert!(EksCluster::parse(name).is_none(), "{name}");
+            assert_eq!(ClusterId::new(name).display_name(), name);
+        }
+    }
+
+    #[test]
+    fn recognises_aliased_eks_without_replacing_the_context() {
+        let entry = ContextEntry {
+            id: ClusterId::new("dev"),
+            cluster: "arn:aws:eks:us-east-1:123456789012:cluster/web-dev-cluster".into(),
+            user: None,
+            namespace: None,
+            is_current: false,
+        };
+        assert_eq!(entry.display_name(), "dev");
+        assert_eq!(entry.cluster_name(), "web-dev-cluster");
+        assert_eq!(entry.label(), "dev · EKS · us-east-1 · 123456789012");
+        assert_eq!(entry.id.as_str(), "dev");
+    }
+
+    #[test]
+    fn same_eks_name_in_different_accounts_keeps_distinct_identities() {
+        let entries: Vec<_> = ["123456789012", "987654321012"]
+            .into_iter()
+            .map(|account| {
+                let arn = format!("arn:aws:eks:us-east-1:{account}:cluster/dev");
+                ContextEntry {
+                    id: ClusterId::new(&arn),
+                    cluster: arn,
+                    user: None,
+                    namespace: None,
+                    is_current: false,
+                }
+            })
+            .collect();
+        assert_eq!(entries[0].display_name(), entries[1].display_name());
+        assert_ne!(entries[0].id, entries[1].id);
+        assert_ne!(entries[0].label(), entries[1].label());
     }
 
     #[test]

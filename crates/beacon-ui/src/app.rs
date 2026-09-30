@@ -16,13 +16,17 @@ use std::{
     sync::Arc,
 };
 
-use beacon_kube::{ClusterId, ClusterSession, Kind, config::Contexts};
+use beacon_kube::{
+    ClusterId, ClusterSession, Kind,
+    config::{ContextEntry, Contexts},
+};
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::Input;
 use gpui_kit::component::popover::Popover;
 use gpui_kit::component::sidebar::{Sidebar, SidebarGroup, SidebarMenu, SidebarMenuItem};
 use gpui_kit::component::spinner::Spinner;
 use gpui_kit::component::tab::{Tab as TabItem, TabBar};
+use gpui_kit::component::tooltip::Tooltip;
 use gpui_kit::component::{
     ActiveTheme as _, Icon, IconName, Sizable as _, TitleBar, h_flex, v_flex,
 };
@@ -560,13 +564,7 @@ impl BeaconApp {
         sources.clusters = self
             .contexts
             .as_ref()
-            .map(|contexts| {
-                contexts
-                    .entries()
-                    .iter()
-                    .map(|entry| entry.id.clone())
-                    .collect()
-            })
+            .map(|contexts| contexts.entries().to_vec())
             .unwrap_or_default();
 
         self.palette.update(cx, |palette, cx| {
@@ -673,6 +671,26 @@ impl BeaconApp {
         )
     }
 
+    fn context_entry(&self, id: &ClusterId) -> Option<&ContextEntry> {
+        self.contexts.as_ref().ok()?.get(id)
+    }
+
+    fn cluster_display_name<'a>(&'a self, id: &'a ClusterId) -> &'a str {
+        self.context_entry(id)
+            .map_or_else(|| id.display_name(), ContextEntry::display_name)
+    }
+
+    fn cluster_description(&self, id: &ClusterId) -> String {
+        match self.context_entry(id) {
+            Some(entry) => format!(
+                "{}\nContext: {id}\nCluster: {}",
+                entry.label(),
+                entry.cluster
+            ),
+            None => format!("Context: {id}"),
+        }
+    }
+
     /// Stable cluster colours tie each tab to its row in the sidebar.
     fn cluster_color(&self, id: &ClusterId, cx: &App) -> Hsla {
         let index = self
@@ -722,7 +740,12 @@ impl BeaconApp {
             let color = self.cluster_color(&id, cx);
             let connected = self.sessions.contains_key(&id);
             let target = id.clone();
-            SidebarMenuItem::new(id.to_string())
+            let is_eks = self
+                .context_entry(&id)
+                .is_some_and(|entry| entry.eks().is_some());
+            let description = self.cluster_description(&id);
+            let tooltip_id = SharedString::from(format!("cluster-info-{id}"));
+            SidebarMenuItem::new(self.cluster_display_name(&id).to_string())
                 .icon(Icon::new(IconName::Globe).text_color(color))
                 .active(selected)
                 .click_to_open(true)
@@ -733,18 +756,24 @@ impl BeaconApp {
                     Vec::new()
                 })
                 .suffix(move |_, cx| {
-                    if connected {
-                        div()
-                            .size(px(7.))
-                            .rounded_full()
-                            .bg(cx.theme().tone(Tone::Healthy))
-                            .into_any_element()
-                    } else {
-                        div()
-                            .text_color(cx.theme().muted_foreground)
-                            .child("›")
-                            .into_any_element()
-                    }
+                    let description = description.clone();
+                    h_flex()
+                        .id(tooltip_id.clone())
+                        .gap_2()
+                        .text_color(cx.theme().muted_foreground)
+                        .when(is_eks, |row| row.child(div().text_xs().child("EKS")))
+                        .child(if connected {
+                            div()
+                                .size(px(7.))
+                                .rounded_full()
+                                .bg(cx.theme().tone(Tone::Healthy))
+                                .into_any_element()
+                        } else {
+                            div().child("›").into_any_element()
+                        })
+                        .tooltip(move |window, cx| {
+                            Tooltip::new(description.clone()).build(window, cx)
+                        })
                 })
                 .on_click(cx.listener(move |view, _, window, cx| {
                     view.go_to(target.clone(), window, cx);
@@ -783,7 +812,7 @@ impl BeaconApp {
                 TabState::Connecting => SharedString::from("connecting"),
                 TabState::Failed(_) => SharedString::from("unreachable"),
             };
-            let accessible_name = format!("{what} · {}", tab.cluster);
+            let accessible_name = format!("{what} · {}", self.cluster_display_name(&tab.cluster));
 
             TabItem::new()
                 .prefix(
@@ -866,12 +895,12 @@ impl BeaconApp {
         let (tone, headline, detail) = match (state, &self.contexts) {
             (Some((id, TabState::Connecting)), _) => (
                 Tone::Progressing,
-                format!("Connecting to {id}"),
+                format!("Connecting to {}", self.cluster_display_name(id)),
                 "Authenticating and reaching the API server.".to_string(),
             ),
             (Some((id, TabState::Failed(diagnosis))), _) => (
                 Tone::Critical,
-                format!("Could not connect to {id}"),
+                format!("Could not connect to {}", self.cluster_display_name(id)),
                 diagnosis.clone(),
             ),
             (_, Err(error)) => (
@@ -1042,7 +1071,7 @@ impl BeaconApp {
                                 .flex_1()
                                 .min_w_0()
                                 .font_weight(FontWeight::MEDIUM)
-                                .child(id.to_string()),
+                                .child(self.cluster_display_name(&id).to_string()),
                         )
                         .when(current, |row| {
                             row.child(
@@ -1058,7 +1087,22 @@ impl BeaconApp {
                     div()
                         .text_xs()
                         .text_color(cx.theme().muted_foreground)
-                        .child(session.server().to_string()),
+                        .child(format!(
+                            "Kubernetes {} · {}",
+                            session.version(),
+                            session.server()
+                        )),
+                )
+                .when_some(
+                    self.context_entry(&id).and_then(ContextEntry::eks),
+                    |row, eks| {
+                        row.child(
+                            div()
+                                .text_xs()
+                                .text_color(cx.theme().muted_foreground)
+                                .child(format!("EKS · {} · {}", eks.region, eks.account_id)),
+                        )
+                    },
                 )
                 .child(div().text_xs().child(format!(
                     "{} · {tabs} tabs · {} watches · {} forwarding",
@@ -1101,29 +1145,54 @@ impl BeaconApp {
     }
 
     fn render_status_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let (tone, status, watches) = match self.tabs.get(self.active).map(|tab| &tab.state) {
+        let active = self.tabs.get(self.active);
+        let name = active.map(|tab| {
+            self.context_entry(&tab.cluster)
+                .map_or_else(|| tab.cluster.display_name(), ContextEntry::cluster_name)
+        });
+        let mut description = active
+            .map(|tab| self.cluster_description(&tab.cluster))
+            .unwrap_or_default();
+        let (tone, status, watches) = match active.map(|tab| &tab.state) {
             None => (Tone::Unknown, "no tab open".to_string(), 0),
-            Some(TabState::Connecting) => (Tone::Progressing, "connecting".to_string(), 0),
-            Some(TabState::Failed(_)) => (Tone::Critical, "disconnected".to_string(), 0),
+            Some(TabState::Connecting) => (
+                Tone::Progressing,
+                format!("{} · connecting", name.unwrap_or_default()),
+                0,
+            ),
+            Some(TabState::Failed(reason)) => {
+                description.push_str(&format!("\n{reason}"));
+                (
+                    Tone::Critical,
+                    format!("{} · disconnected", name.unwrap_or_default()),
+                    0,
+                )
+            }
             Some(TabState::Connected(cluster)) => {
                 let cluster = cluster.read(cx);
+                let session = cluster.session();
                 let health = cluster.health();
-                let detail = health
-                    .reason()
-                    .map(|reason| format!("{} — {reason}", health.label()))
-                    .unwrap_or_else(|| health.label().to_string());
-                let mut status = format!("{} · {detail}", cluster.session().server());
+                description.push_str(&format!("\nAPI server: {}", session.server()));
+                if let Some(reason) = health.reason() {
+                    description.push_str(&format!("\n{reason}"));
+                }
+                let mut status = format!(
+                    "{} · Kubernetes {} · {}",
+                    name.unwrap_or_default(),
+                    session.version(),
+                    health.label()
+                );
                 if self.tabs.len() > 1 {
                     status.push_str(&format!(" · {} tabs", self.tabs.len()));
                 }
-                let forwards = cluster.session().forwards().len();
+                let forwards = session.forwards().len();
                 if forwards > 0 {
                     status.push_str(&format!(" · {forwards} forwarding"));
                 }
                 (
                     crate::activity::health_tone(health),
                     status,
-                    cluster.session().active_watches(),
+                    session.active_watches(),
                 )
             }
         };
@@ -1158,7 +1227,16 @@ impl BeaconApp {
                             .rounded_full()
                             .bg(cx.theme().tone(tone)),
                     )
-                    .child(div().min_w_0().truncate().child(status))
+                    .child(
+                        div()
+                            .id("cluster-status")
+                            .min_w_0()
+                            .truncate()
+                            .child(status)
+                            .tooltip(move |window, cx| {
+                                Tooltip::new(description.clone()).build(window, cx)
+                            }),
+                    )
                     .child(div().flex_shrink_0().child(self.render_activity_menu(
                         ActivityMenu::Watches,
                         watches,
