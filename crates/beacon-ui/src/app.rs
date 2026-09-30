@@ -583,6 +583,11 @@ impl BeaconApp {
                         cx,
                     );
                 }
+                if let Some(target) = &event.target
+                    && let Some(view) = app.cluster()
+                {
+                    view.update(cx, |view, cx| view.reveal_owner(target.clone(), window, cx));
+                }
             },
         );
         self.tabs[index].state = TabState::Connected(view);

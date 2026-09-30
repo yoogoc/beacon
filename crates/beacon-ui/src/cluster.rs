@@ -31,7 +31,7 @@ use nucleo_matcher::Matcher;
 use crate::bridge::{Bridge, drain_into};
 use crate::catalog::{Catalog, Entry};
 use crate::create::{CreateEvent, CreateView};
-use crate::detail::{DetailClosed, DetailTab, DetailView};
+use crate::detail::{DetailClosed, DetailTab, DetailView, OwnerRequested};
 use crate::palette::Sources;
 use crate::pod_tools::{PodToolTab, PodToolsClosed, PodToolsView};
 use crate::prompt::{Ask, Prompt, PromptEvent};
@@ -128,6 +128,8 @@ pub struct ClusterView {
     /// The panel for the selected object. `None` means nothing is selected, or
     /// the user closed it.
     detail: Option<Entity<DetailView>>,
+    /// An owner jump waits for the target kind's initial list before selecting.
+    pending_reveal: Option<ObjectRef>,
     /// Kept across selections so that closing and reopening the panel does not
     /// reset the split the user dragged.
     split: Entity<ResizableState>,
@@ -183,6 +185,7 @@ pub(crate) struct ResourceRequested {
     pub kind: Arc<Kind>,
     pub scope: BTreeSet<String>,
     pub new_tab: bool,
+    pub target: Option<ObjectRef>,
 }
 
 impl EventEmitter<ResourceRequested> for ClusterView {}
@@ -236,6 +239,7 @@ impl ClusterView {
             row_search,
             table,
             detail: None,
+            pending_reveal: None,
             split,
             pod_tools: None,
             pod_tools_split: cx.new(|_| ResizableState::default()),
@@ -762,6 +766,7 @@ impl ClusterView {
             kind,
             scope: self.scoped_to.clone(),
             new_tab,
+            target: None,
         });
     }
 
@@ -825,6 +830,7 @@ impl ClusterView {
             return;
         }
         tracing::info!(namespaces = ?scope, "scoping");
+        self.pending_reveal = None;
         self.scoped_to = scope;
         self.watch_objects(window, cx);
         self.load_columns(window, cx);
@@ -840,6 +846,37 @@ impl ClusterView {
         self.clear_filter(window, cx);
 
         self.open_target(key, DetailTab::Overview, window, cx);
+    }
+
+    pub(crate) fn reveal_owner(
+        &mut self,
+        target: ObjectRef,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(namespace) = &target.namespace {
+            self.rescope(BTreeSet::from([namespace.clone()]), window, cx);
+        }
+        self.clear_filter(window, cx);
+        self.pending_reveal = Some(target);
+        let listed = !self.table.read(cx).delegate().is_loading();
+        self.reveal_pending(listed, window, cx);
+    }
+
+    fn reveal_pending(&mut self, listed: bool, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(target) = self.pending_reveal.clone() else {
+            return;
+        };
+        if self.table.read(cx).delegate().row_of(&target).is_some() {
+            self.pending_reveal = None;
+            self.reveal(&target, window, cx);
+        } else if listed {
+            self.pending_reveal = None;
+            self.outcome = Some(Outcome::Failed(format!(
+                "Owner {target} is no longer available"
+            )));
+            cx.notify();
+        }
     }
 
     /// Opens the exact row and detail section chosen from its context menu.
@@ -889,6 +926,7 @@ impl ClusterView {
         if in_shell {
             return;
         }
+        self.pending_reveal = None;
         if self.pod_tools.take().is_some() || self.detail.take().is_some() {
             cx.notify();
         }
@@ -954,6 +992,7 @@ impl ClusterView {
         // The panel is about an object of the previous kind.
         self.detail = None;
         self.pod_tools = None;
+        self.pending_reveal = None;
         self.watch_objects(window, cx);
         self.load_columns(window, cx);
         cx.emit(NavigationChanged);
@@ -963,6 +1002,7 @@ impl ClusterView {
     /// Opens the detail panel on a row, reusing the existing panel when it is
     /// already showing that object.
     fn open_detail(&mut self, row: usize, window: &mut Window, cx: &mut Context<Self>) {
+        self.pending_reveal = None;
         let Some(kind) = self.kind.clone() else {
             return;
         };
@@ -987,6 +1027,16 @@ impl ClusterView {
         cx.subscribe(&detail, |view, _, _: &DetailClosed, cx| {
             view.detail = None;
             cx.notify();
+        })
+        .detach();
+
+        cx.subscribe(&detail, |_, _, event: &OwnerRequested, cx| {
+            cx.emit(ResourceRequested {
+                kind: event.kind.clone(),
+                scope: event.target.namespace.iter().cloned().collect(),
+                new_tab: false,
+                target: Some(event.target.clone()),
+            });
         })
         .detach();
 
@@ -1092,8 +1142,9 @@ impl ClusterView {
                 drain_into(
                     cx,
                     subscription,
-                    move |view, batch, _window, cx| {
+                    move |view, batch, window, cx| {
                         let namespace = namespace.clone();
+                        let listed = batch.iter().any(|delta| matches!(delta, Delta::Reset(_)));
                         view.table.update(cx, |state, cx| {
                             // The first batch from *any* of the namespaces ends
                             // the skeleton, rather than waiting for all of
@@ -1104,6 +1155,7 @@ impl ClusterView {
                             cx.notify();
                         });
                         view.refresh_detail(cx);
+                        view.reveal_pending(listed, window, cx);
                         // The toolbar count and Secret type choices read the
                         // same store, so they must follow each watch batch.
                         cx.notify();

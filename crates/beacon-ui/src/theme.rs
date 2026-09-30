@@ -27,6 +27,8 @@ pub enum Tone {
 }
 
 pub trait BeaconTheme {
+    /// Foreground for links that navigate to another resource.
+    fn resource_link(&self) -> Hsla;
     /// Foreground colour for a status label.
     fn tone(&self, tone: Tone) -> Hsla;
     /// Background for a status pill, at the low contrast a dense table wants.
@@ -38,6 +40,14 @@ pub trait BeaconTheme {
 }
 
 impl BeaconTheme for Theme {
+    fn resource_link(&self) -> Hsla {
+        if self.is_dark() {
+            gpui_kit::component::blue_400()
+        } else {
+            gpui_kit::component::blue_600()
+        }
+    }
+
     fn tone(&self, tone: Tone) -> Hsla {
         match tone {
             Tone::Healthy => self.success,

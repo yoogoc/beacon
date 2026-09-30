@@ -63,6 +63,9 @@ that width for the current window. Resource details open beside the table with
 a draggable vertical divider. Overview fields are stacked vertically. Labels
 and annotations each display one `key=value` entry per row, with the first five
 shown by default and a button to expand or collapse the remaining entries.
+Overview values support text selection and copying. Name and namespace appear
+in the detail header only. Click the colored owner value to jump to its resource
+and details, reusing an existing tab for the same cluster and resource kind.
 
 Pod Logs, Exec and Shell open in a separate panel below the resource list.
 Open them from the Pod row's context menu. The panel has its own tabs, Pod

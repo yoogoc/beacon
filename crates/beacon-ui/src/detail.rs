@@ -14,6 +14,7 @@ use beacon_kube::{
     Applied, ClusterSession, Conflict, DataEntry, DynamicObject, Kind, ObjectRef, Operation,
     ResourceStore, Rules, WatchKey, data,
 };
+use gpui_kit::base::{Link, SelectableText, TextSelection};
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::{Editor, EditorState, Textarea, TextareaState};
 use gpui_kit::component::spinner::Spinner;
@@ -151,6 +152,13 @@ pub struct DetailView {
 pub struct DetailClosed;
 
 impl EventEmitter<DetailClosed> for DetailView {}
+
+pub(crate) struct OwnerRequested {
+    pub kind: Arc<Kind>,
+    pub target: ObjectRef,
+}
+
+impl EventEmitter<OwnerRequested> for DetailView {}
 
 impl DetailView {
     pub fn new(
@@ -491,17 +499,14 @@ impl DetailView {
                             .flex_1()
                             .min_w_0()
                             .gap_1()
-                            .child(
-                                div()
-                                    .text_sm()
-                                    .font_weight(FontWeight::SEMIBOLD)
-                                    .child(self.target.name.clone()),
-                            )
+                            .child(div().text_sm().font_weight(FontWeight::SEMIBOLD).child(
+                                SelectableText::new("detail-name", self.target.name.clone()),
+                            ))
                             .child(
                                 div()
                                     .text_xs()
                                     .text_color(cx.theme().muted_foreground)
-                                    .child(subtitle),
+                                    .child(SelectableText::new("detail-subtitle", subtitle)),
                             ),
                     )
                     .child(
@@ -551,17 +556,14 @@ impl DetailView {
             .as_ref()
             .map(|at| format!("{} ago ({})", format_age(at, self.now), at.0));
 
-        sections = sections.child(self.section(
-            "Metadata",
-            vec![
-                ("Name", Some(self.target.name.clone())),
-                ("Namespace", self.target.namespace.clone()),
-                ("Created", created),
-                ("UID", metadata.uid.clone()),
-                ("Owner", self.owner()),
-            ],
-            cx,
-        ));
+        sections = sections.child(
+            self.section(
+                "Metadata",
+                vec![("Created", created), ("UID", metadata.uid.clone())],
+                cx,
+            )
+            .child(self.render_owners(cx)),
+        );
 
         if let Some(labels) = &metadata.labels
             && !labels.is_empty()
@@ -660,6 +662,7 @@ impl DetailView {
         };
 
         v_flex()
+            .id(("certificate", index))
             .w_full()
             .gap_3()
             .p_3()
@@ -672,12 +675,9 @@ impl DetailView {
                     .gap_2()
                     .items_center()
                     .child(div().font_weight(FontWeight::SEMIBOLD).child(title))
-                    .child(
-                        div()
-                            .text_xs()
-                            .text_color(cx.theme().tone(tone))
-                            .child(certificate.validity_at(now)),
-                    ),
+                    .child(div().text_xs().text_color(cx.theme().tone(tone)).child(
+                        SelectableText::new("validity", certificate.validity_at(now)),
+                    )),
             )
             .child(self.section(
                 "Identity",
@@ -717,24 +717,30 @@ impl DetailView {
                     .w_full()
                     .gap_1p5()
                     .child(self.heading("Extensions", cx))
-                    .children(certificate.extensions.iter().map(|extension| {
-                        v_flex()
-                            .w_full()
-                            .gap_0p5()
-                            .child(div().text_sm().font_weight(FontWeight::MEDIUM).child(
-                                if extension.critical {
-                                    format!("{} · critical", extension.name)
-                                } else {
-                                    extension.name.clone()
-                                },
-                            ))
-                            .child(
-                                div()
-                                    .text_xs()
-                                    .text_color(cx.theme().muted_foreground)
-                                    .child(extension.details.clone()),
-                            )
-                    })),
+                    .children(certificate.extensions.iter().enumerate().map(
+                        |(index, extension)| {
+                            v_flex()
+                                .id(("extension", index))
+                                .w_full()
+                                .gap_0p5()
+                                .child(div().text_sm().font_weight(FontWeight::MEDIUM).child(
+                                    if extension.critical {
+                                        format!("{} · critical", extension.name)
+                                    } else {
+                                        extension.name.clone()
+                                    },
+                                ))
+                                .child(
+                                    div()
+                                        .text_xs()
+                                        .text_color(cx.theme().muted_foreground)
+                                        .child(SelectableText::new(
+                                            "details",
+                                            extension.details.clone(),
+                                        )),
+                                )
+                        },
+                    )),
             )
             .child(
                 v_flex()
@@ -749,7 +755,10 @@ impl DetailView {
                             .bg(cx.theme().muted.opacity(0.5))
                             .font_family("monospace")
                             .text_xs()
-                            .child(certificate.public_key_pem.clone()),
+                            .child(SelectableText::new(
+                                "public-key-pem",
+                                certificate.public_key_pem.clone(),
+                            )),
                     ),
             )
             .into_any_element()
@@ -762,13 +771,16 @@ impl DetailView {
         title: &'static str,
         rows: Vec<(impl Into<SharedString>, Option<String>)>,
         cx: &mut Context<Self>,
-    ) -> impl IntoElement {
+    ) -> Stateful<Div> {
         v_flex()
+            .id(title)
             .gap_1()
             .w_full()
             .child(self.heading(title, cx))
             .children(rows.into_iter().map(|(label, value)| {
+                let label: SharedString = label.into();
                 v_flex()
+                    .id(label.clone())
                     .w_full()
                     .min_w_0()
                     .gap_0p5()
@@ -777,14 +789,18 @@ impl DetailView {
                         div()
                             .text_xs()
                             .text_color(cx.theme().muted_foreground)
-                            .child(label.into()),
+                            .child(label),
                     )
                     .child(match value {
-                        Some(value) => div().w_full().text_sm().whitespace_normal().child(value),
+                        Some(value) => div()
+                            .w_full()
+                            .text_sm()
+                            .whitespace_normal()
+                            .child(SelectableText::new("value", value)),
                         None => div()
                             .text_sm()
                             .text_color(cx.theme().muted_foreground)
-                            .child("<none>"),
+                            .child(SelectableText::new("value", "<none>")),
                     })
             }))
     }
@@ -827,7 +843,10 @@ impl DetailView {
                     .bg(cx.theme().muted.opacity(0.5))
                     .text_sm()
                     .whitespace_normal()
-                    .child(format!("{key}={value}"))
+                    .child(SelectableText::new(
+                        SharedString::from(format!("{}-{key}", group.title())),
+                        format!("{key}={value}"),
+                    ))
             }))
             .when(entries.len() > PREVIEW_LIMIT, |this| {
                 this.child(
@@ -868,6 +887,7 @@ impl DetailView {
                 };
 
                 v_flex()
+                    .id(SharedString::from(format!("container-{}", container.name)))
                     .w_full()
                     .gap_0p5()
                     .p_2()
@@ -879,19 +899,26 @@ impl DetailView {
                             .gap_2()
                             .items_center()
                             .text_sm()
-                            .child(div().font_weight(FontWeight::MEDIUM).child(container.name))
+                            .child(
+                                div()
+                                    .font_weight(FontWeight::MEDIUM)
+                                    .child(SelectableText::new("name", container.name)),
+                            )
                             .child(
                                 div()
                                     .text_xs()
                                     .text_color(cx.theme().tone(tone))
-                                    .child(container.state),
+                                    .child(SelectableText::new("state", container.state)),
                             )
                             .when(container.restarts > 0, |this| {
                                 this.child(
                                     div()
                                         .text_xs()
                                         .text_color(cx.theme().muted_foreground)
-                                        .child(format!("{} restarts", container.restarts)),
+                                        .child(SelectableText::new(
+                                            "restarts",
+                                            format!("{} restarts", container.restarts),
+                                        )),
                                 )
                             }),
                     )
@@ -899,7 +926,7 @@ impl DetailView {
                         div()
                             .text_xs()
                             .text_color(cx.theme().muted_foreground)
-                            .child(container.image),
+                            .child(SelectableText::new("image", container.image)),
                     )
             }))
     }
@@ -1342,9 +1369,78 @@ impl DetailView {
 
     // MARK: reading the object
 
-    fn owner(&self) -> Option<String> {
-        let owner = self.object.metadata.owner_references.as_ref()?.first()?;
-        Some(format!("{}/{}", owner.kind, owner.name))
+    fn render_owners(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let owners = self
+            .object
+            .metadata
+            .owner_references
+            .as_deref()
+            .unwrap_or_default();
+        v_flex()
+            .w_full()
+            .gap_0p5()
+            .py_1()
+            .child(
+                div()
+                    .text_xs()
+                    .text_color(cx.theme().muted_foreground)
+                    .child("Owner"),
+            )
+            .when(owners.is_empty(), |this| {
+                this.child(
+                    div()
+                        .text_sm()
+                        .text_color(cx.theme().muted_foreground)
+                        .child(SelectableText::new("no-owner", "<none>")),
+                )
+            })
+            .children(owners.iter().enumerate().map(|(index, owner)| {
+                let kind = owner_kind(
+                    self.session.discovery().kinds(),
+                    &owner.api_version,
+                    &owner.kind,
+                )
+                .cloned()
+                .map(Arc::new);
+                let label = format!("{}/{}", owner.kind, owner.name);
+                let target = kind.as_ref().map(|kind| {
+                    ObjectRef::new(
+                        if kind.namespaced {
+                            self.target.namespace.clone()
+                        } else {
+                            None
+                        },
+                        owner.name.clone(),
+                    )
+                });
+                div()
+                    .id(("owner", index))
+                    .w_full()
+                    .text_sm()
+                    .whitespace_normal()
+                    .child(match kind.zip(target) {
+                        Some((kind, target)) => Link::new("open-owner")
+                            .accessibility_label(label.clone())
+                            .cursor_pointer()
+                            .text_color(cx.theme().resource_link())
+                            .hover(|this| this.underline())
+                            .child(SelectableText::new("value", label))
+                            .on_activate(cx.listener(move |_, event, window, cx| {
+                                // A selection gesture still lets the owner value be copied.
+                                if matches!(event, ClickEvent::Mouse(_))
+                                    && !TextSelection::selected_text(window, cx).is_empty()
+                                {
+                                    return;
+                                }
+                                cx.emit(OwnerRequested {
+                                    kind: kind.clone(),
+                                    target: target.clone(),
+                                });
+                            }))
+                            .into_any_element(),
+                        None => SelectableText::new("value", label).into_any_element(),
+                    })
+            }))
     }
 
     /// The containers of a Pod, merged with what their statuses say.
@@ -1487,6 +1583,15 @@ impl Render for DetailView {
     }
 }
 
+/// Owner references may use an older API version; navigation uses the served
+/// preferred version but must still match the API group, including for CRDs.
+fn owner_kind<'a>(kinds: &'a [Kind], api_version: &str, name: &str) -> Option<&'a Kind> {
+    let group = api_version.rsplit_once('/').map_or("", |(group, _)| group);
+    kinds
+        .iter()
+        .find(|kind| kind.resource.group == group && kind.resource.kind == name)
+}
+
 fn tls_certificates(
     kind: &Kind,
     object: &DynamicObject,
@@ -1521,8 +1626,38 @@ fn reformat(yaml: &str) -> Result<String, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{container_state, reformat, scalars};
+    use super::{container_state, owner_kind, reformat, scalars};
+    use beacon_kube::{ApiResource, GroupVersionKind, Kind};
     use serde_json::json;
+
+    fn served_kind(group: &str, name: &str) -> Kind {
+        Kind {
+            resource: ApiResource::from_gvk_with_plural(
+                &GroupVersionKind::gvk(group, "v1", name),
+                &format!("{}s", name.to_lowercase()),
+            ),
+            namespaced: true,
+            verbs: vec!["list".into(), "watch".into()],
+        }
+    }
+
+    #[test]
+    fn owner_navigation_matches_group_and_uses_served_version() {
+        let kinds = [
+            served_kind("example.io", "ReplicaSet"),
+            served_kind("apps", "ReplicaSet"),
+        ];
+        let owner = owner_kind(&kinds, "apps/v1beta2", "ReplicaSet").unwrap();
+        assert_eq!(owner.resource.group, "apps");
+        assert_eq!(owner.resource.version, "v1");
+        assert!(owner_kind(&kinds, "unknown.io/v1", "ReplicaSet").is_none());
+    }
+
+    #[test]
+    fn core_owner_does_not_resolve_to_a_same_named_custom_kind() {
+        let kinds = [served_kind("example.io", "Node"), served_kind("", "Node")];
+        assert_eq!(owner_kind(&kinds, "v1", "Node").unwrap().resource.group, "");
+    }
 
     /// Flow style is expanded, and the keys stay in the order they were
     /// written -- a formatter that silently alphabetised somebody's manifest
