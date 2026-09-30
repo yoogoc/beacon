@@ -24,13 +24,14 @@ pub fn tone(status: &str) -> Tone {
     }
 
     match status {
-        "Running" | "Active" | "Bound" | "Ready" => Tone::Healthy,
+        "Running" | "Active" | "Bound" | "Ready" | "Available" => Tone::Healthy,
 
         // Finished and inert. Not a problem, but not worth the eye it would
         // draw in a list where half the rows are completed jobs.
-        "Completed" | "Succeeded" | "Terminated" => Tone::Unknown,
+        "Completed" | "Succeeded" | "Terminated" | "Paused" | "Scaled to zero" => Tone::Unknown,
 
-        "Pending"
+        "Progressing"
+        | "Pending"
         | "ContainerCreating"
         | "PodInitializing"
         | "Terminating"

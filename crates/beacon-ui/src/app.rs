@@ -30,9 +30,7 @@ use gpui_kit::component::sidebar::{Sidebar, SidebarGroup, SidebarMenu, SidebarMe
 use gpui_kit::component::spinner::Spinner;
 use gpui_kit::component::tab::{Tab as TabItem, TabBar};
 use gpui_kit::component::tooltip::Tooltip;
-use gpui_kit::component::{
-    ActiveTheme as _, Icon, IconName, Sizable as _, TitleBar, h_flex, v_flex,
-};
+use gpui_kit::component::{ActiveTheme as _, IconName, Sizable as _, TitleBar, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
@@ -47,6 +45,7 @@ gpui_kit::actions!(
     [
         TogglePalette,
         OpenAppLogs,
+        OpenShortcuts,
         Quit,
         NewTab,
         CloseTab,
@@ -66,6 +65,8 @@ const TAB_WIDTH: Pixels = px(190.);
 /// a tab shortcut that stops working once you click into the table.
 pub fn init(log_directory: PathBuf, cx: &mut App) {
     app_logs::init(log_directory, cx);
+    crate::shortcuts::init(cx);
+    cx.on_action(|_: &OpenShortcuts, cx| crate::shortcuts::open(cx));
     cx.on_action(|_: &OpenAppLogs, cx| app_logs::open(cx));
     cx.on_action(|_: &Quit, cx| cx.quit());
 
@@ -78,6 +79,7 @@ pub fn init(log_directory: PathBuf, cx: &mut App) {
         ]),
         Menu::new("File").items([MenuItem::action("Close", CloseTab)]),
         Menu::new("View").items([MenuItem::action("App logs", OpenAppLogs)]),
+        Menu::new("Help").items([MenuItem::action("Keyboard shortcuts", OpenShortcuts)]),
     ]);
     let modifier = if cfg!(target_os = "macos") {
         "cmd"
@@ -86,6 +88,7 @@ pub fn init(log_directory: PathBuf, cx: &mut App) {
     };
 
     cx.bind_keys([
+        KeyBinding::new("f1", OpenShortcuts, None),
         KeyBinding::new(&format!("{modifier}-q"), Quit, None),
         KeyBinding::new(&format!("{modifier}-k"), TogglePalette, None),
         KeyBinding::new(&format!("{modifier}-shift-l"), OpenAppLogs, None),
@@ -746,6 +749,11 @@ impl BeaconApp {
                 self.close(self.active, window, cx);
                 return;
             }
+            Choice::Action(palette::Action::OpenShortcuts) => {
+                crate::shortcuts::open(cx);
+                cx.notify();
+                return;
+            }
             Choice::Action(palette::Action::OpenAppLogs) => {
                 app_logs::open(cx);
                 cx.notify();
@@ -783,6 +791,7 @@ impl BeaconApp {
             | Choice::Action(
                 palette::Action::ToggleTheme
                 | palette::Action::OpenAppLogs
+                | palette::Action::OpenShortcuts
                 | palette::Action::NewTab
                 | palette::Action::CloseTab,
             ) => {}
@@ -853,6 +862,7 @@ impl BeaconApp {
                                     .label("View")
                                     .dropdown_menu(|menu, _, _| {
                                         menu.menu("App logs", Box::new(OpenAppLogs))
+                                            .menu("Keyboard shortcuts", Box::new(OpenShortcuts))
                                     }),
                             )
                         }),
@@ -949,7 +959,7 @@ impl BeaconApp {
             let description = self.cluster_description(&id);
             let tooltip_id = SharedString::from(format!("cluster-info-{id}"));
             SidebarMenuItem::new(self.cluster_display_name(&id).to_string())
-                .icon(Icon::new(IconName::Globe).text_color(color))
+                .icon(crate::icons::kubernetes().text_color(color))
                 .active(selected)
                 .click_to_open(true)
                 .default_open(selected)

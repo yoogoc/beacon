@@ -13,6 +13,7 @@
 
 pub mod age;
 pub mod builtin;
+pub mod containers;
 pub mod event;
 pub mod path;
 pub mod pod;
@@ -191,6 +192,8 @@ pub enum ColumnWidth {
 pub enum ColumnSource {
     Name,
     Namespace,
+    /// Per-container Pod health, rendered as dots by the UI.
+    Containers,
     /// Derived from `metadata.creationTimestamp`.
     Age,
     /// A field path from a CRD's `additionalPrinterColumns`, evaluated against
@@ -211,6 +214,7 @@ impl std::fmt::Debug for ColumnSource {
         match self {
             Self::Name => f.write_str("Name"),
             Self::Namespace => f.write_str("Namespace"),
+            Self::Containers => f.write_str("Containers"),
             Self::Age => f.write_str("Age"),
             Self::JsonPath { expression, kind } => {
                 write!(f, "JsonPath({expression:?}, {kind:?})")
@@ -252,6 +256,7 @@ impl ColumnDef {
         match &self.source {
             ColumnSource::Name => cell.metadata.name.clone().into(),
             ColumnSource::Namespace => cell.metadata.namespace.clone().into(),
+            ColumnSource::Containers => CellValue::text(containers::description(cell.data)),
             ColumnSource::Age => cell
                 .metadata
                 .creation_timestamp
@@ -483,6 +488,7 @@ mod tests {
             [
                 "Name",
                 "Namespace",
+                "Containers",
                 "Ready",
                 "Status",
                 "Restarts",
@@ -520,13 +526,13 @@ mod tests {
     #[test]
     fn the_pod_columns_compute_what_kubectl_prints() {
         let data = json!({
-            "spec": { "containers": [{}, {}] },
+            "spec": { "containers": [{"name":"api"}, {"name":"worker"}] },
             "status": {
                 "phase": "Running",
                 "conditions": [{ "type": "Ready", "status": "True" }],
                 "containerStatuses": [
-                    { "ready": true, "restartCount": 0, "state": { "running": {} } },
-                    { "ready": true, "restartCount": 0, "state": { "running": {} } }
+                    { "name":"api", "ready": true, "restartCount": 0, "state": { "running": {} } },
+                    { "name":"worker", "ready": true, "restartCount": 0, "state": { "running": {} } }
                 ]
             }
         });
@@ -548,7 +554,15 @@ mod tests {
         assert_eq!(
             values,
             [
-                "api-7f9", "payments", "2/2", "Running", "0", "<none>", "<none>", "3d"
+                "api-7f9",
+                "payments",
+                "api: Running · Ready · 0 restarts\nworker: Running · Ready · 0 restarts",
+                "2/2",
+                "Running",
+                "0",
+                "<none>",
+                "<none>",
+                "3d"
             ]
         );
     }

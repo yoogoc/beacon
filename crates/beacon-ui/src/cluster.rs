@@ -24,7 +24,9 @@ use gpui_kit::component::resizable::{ResizableState, h_resizable, resizable_pane
 use gpui_kit::component::sidebar::SidebarMenuItem;
 use gpui_kit::component::spinner::Spinner;
 use gpui_kit::component::table::{TableEvent, TableState};
-use gpui_kit::component::{ActiveTheme as _, Disableable as _, Sizable as _, h_flex, v_flex};
+use gpui_kit::component::{
+    ActiveTheme as _, Disableable as _, Icon, IconName, Sizable as _, h_flex, v_flex,
+};
 use gpui_kit::*;
 use nucleo_matcher::Matcher;
 
@@ -32,6 +34,7 @@ use crate::bridge::{Bridge, drain_into};
 use crate::catalog::{Catalog, Entry};
 use crate::create::{CreateEvent, CreateView};
 use crate::detail::{DetailClosed, DetailTab, DetailView, OwnerRequested};
+use crate::filters::Field;
 use crate::palette::Sources;
 use crate::pod_tools::{PodToolTab, PodToolsClosed, PodToolsView};
 use crate::prompt::{Ask, Prompt, PromptEvent};
@@ -117,7 +120,7 @@ pub struct ClusterView {
     /// rebuild the menu under the user's cursor.
     namespace_names: Vec<SharedString>,
     /// Whether the Secret type picker is open.
-    secret_type_menu_open: bool,
+    filter_menu_open: Option<Field>,
 
     sidebar_search: Entity<InputState>,
     sidebar_query: String,
@@ -233,7 +236,7 @@ impl ClusterView {
             namespaces: ResourceStore::new(),
             namespace_menu_open: false,
             namespace_names: Vec::new(),
-            secret_type_menu_open: false,
+            filter_menu_open: None,
             sidebar_search,
             sidebar_query: String::new(),
             row_search,
@@ -948,12 +951,12 @@ impl ClusterView {
             .update(cx, |input, cx| input.set_value("", window, cx));
         self.table.update(cx, |state, cx| {
             let delegate = state.delegate_mut();
-            let changed = delegate.set_filter("") | delegate.set_secret_type_filter(None);
+            let changed = delegate.set_filter("") | delegate.clear_field_filters();
             if changed {
                 cx.notify();
             }
         });
-        self.secret_type_menu_open = false;
+        self.filter_menu_open = None;
         cx.notify();
     }
 
@@ -985,9 +988,9 @@ impl ClusterView {
         tracing::info!(kind = %kind.display_name(), "showing");
         self.mode = Mode::Objects;
         self.kind = Some(kind);
-        self.secret_type_menu_open = false;
+        self.filter_menu_open = None;
         self.table.update(cx, |state, _| {
-            state.delegate_mut().set_secret_type_filter(None);
+            state.delegate_mut().clear_field_filters();
         });
         // The panel is about an object of the previous kind.
         self.detail = None;
@@ -1430,46 +1433,60 @@ impl ClusterView {
         // A query replaces the sections with a flat ranked list: with a hundred
         // kinds, the answer to "where is it" should not be "in one of seven
         // collapsed groups".
-        let sections: Vec<(SharedString, Vec<Entry>, bool, bool)> = if self.sidebar_query.is_empty()
-        {
-            self.catalog
-                .sections()
-                .iter()
-                .map(|(section, entries)| {
-                    let open = section.starts_open()
-                        || entries
-                            .iter()
-                            .any(|entry| current.as_ref() == Some(&entry.kind.gvk()));
-                    (
-                        section.label(),
-                        entries.clone(),
-                        open,
-                        section.is_custom_group(),
-                    )
-                })
-                .collect()
-        } else {
-            let matches = self.catalog.search(&self.sidebar_query, &mut self.matcher);
-            vec![(SharedString::from("Matches"), matches, true, false)]
-        };
+        let sections: Vec<(SharedString, Vec<Entry>, bool, bool, Icon)> =
+            if self.sidebar_query.is_empty() {
+                self.catalog
+                    .sections()
+                    .iter()
+                    .map(|(section, entries)| {
+                        let open = section.starts_open()
+                            || entries
+                                .iter()
+                                .any(|entry| current.as_ref() == Some(&entry.kind.gvk()));
+                        (
+                            section.label(),
+                            entries.clone(),
+                            open,
+                            section.is_custom_group(),
+                            crate::icons::section(section),
+                        )
+                    })
+                    .collect()
+            } else {
+                let matches = self.catalog.search(&self.sidebar_query, &mut self.matcher);
+                vec![(
+                    SharedString::from("Matches"),
+                    matches,
+                    true,
+                    false,
+                    Icon::new(IconName::Search),
+                )]
+            };
 
-        let (cluster_sections, custom_sections): (Vec<_>, Vec<_>) =
-            sections.into_iter().partition(|(_, _, _, custom)| !custom);
+        let (cluster_sections, custom_sections): (Vec<_>, Vec<_>) = sections
+            .into_iter()
+            .partition(|(_, _, _, custom, _)| !custom);
 
         let mode = self.mode;
         let tools = [Mode::Releases, Mode::Forwards].map(|item| {
             SidebarMenuItem::new(item.label())
+                .icon(Icon::new(if item == Mode::Releases {
+                    IconName::Inbox
+                } else {
+                    IconName::Network
+                }))
                 .active(mode == item)
                 .on_click(cx.listener(move |view, _, window, cx| {
                     view.show_mode(item, window, cx);
                 }))
         });
 
-        let menu = |sections: Vec<(SharedString, Vec<Entry>, bool, bool)>| {
+        let menu = |sections: Vec<(SharedString, Vec<Entry>, bool, bool, Icon)>| {
             sections
                 .into_iter()
-                .map(|(label, entries, open, _)| {
+                .map(|(label, entries, open, _, icon)| {
                     SidebarMenuItem::new(label)
+                        .icon(icon)
                         .click_to_toggle(true)
                         .default_open(open)
                         .children(entries.into_iter().map(|entry| {
@@ -1498,7 +1515,7 @@ impl ClusterView {
                 .collect::<Vec<_>>()
         };
 
-        let custom_open = custom_sections.iter().any(|(_, entries, _, _)| {
+        let custom_open = custom_sections.iter().any(|(_, entries, _, _, _)| {
             entries
                 .iter()
                 .any(|entry| current.as_ref() == Some(&entry.kind.gvk()))
@@ -1511,6 +1528,7 @@ impl ClusterView {
         if !custom_sections.is_empty() {
             items.push(
                 SidebarMenuItem::new("Custom resources")
+                    .icon(crate::icons::custom())
                     .click_to_toggle(true)
                     .default_open(custom_open)
                     .children(menu(custom_sections)),
@@ -1518,6 +1536,7 @@ impl ClusterView {
         }
         items.push(
             SidebarMenuItem::new("Cluster tools")
+                .icon(crate::icons::tools())
                 .click_to_toggle(true)
                 .default_open(mode != Mode::Objects)
                 .children(tools),
@@ -1837,40 +1856,47 @@ impl ClusterView {
             })
     }
 
-    /// Exact type selection for Secrets, populated from the watched objects
-    /// so custom types appear alongside Kubernetes' built-in ones.
-    fn render_secret_type_picker(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    /// Exact facets come from all watched objects, including currently hidden rows.
+    fn render_field_picker(&self, field: Field, cx: &mut Context<Self>) -> impl IntoElement {
         let table = self.table.read(cx);
-        let selected = table.delegate().secret_type_filter().map(str::to_owned);
-        let types = table.delegate().secret_types();
-        let label = selected.clone().unwrap_or_else(|| "All types".to_string());
+        let selected = table.delegate().field_filter(field).map(str::to_owned);
+        let mut types = table.delegate().filter_values(field);
+        if let Some(value) = &selected
+            && !types.contains(value)
+        {
+            types.push(value.clone());
+            types.sort();
+        }
+        let label = selected.clone().unwrap_or_else(|| "All".to_string());
         let opening = cx.entity().downgrade();
         let choosing = opening.clone();
 
-        Popover::new("secret-type-picker")
-            .open(self.secret_type_menu_open)
+        Popover::new(SharedString::from(format!("filter-{field:?}")))
+            .open(self.filter_menu_open == Some(field))
             .on_open_change(move |open, _, cx| {
                 let _ = opening.update(cx, |view, cx| {
-                    view.secret_type_menu_open = *open;
+                    view.filter_menu_open = if *open { Some(field) } else { None };
                     cx.notify();
                 });
             })
             .trigger(
-                Button::new("secret-type-picker-trigger")
+                Button::new(SharedString::from(format!("filter-trigger-{field:?}")))
                     .small()
                     .outline()
-                    .label(format!("Type: {label}"))
-                    .tooltip("Filter Secrets by type"),
+                    .label(format!("{}: {label}", field.label()))
+                    .tooltip(format!("Filter by {}", field.label().to_lowercase())),
             )
             .content(move |_, _, cx| {
                 let choices = std::iter::once(None)
                     .chain(types.iter().cloned().map(Some))
                     .map(|value| {
-                        let name = value.as_deref().unwrap_or("All types");
+                        let name = value.as_deref().unwrap_or("All");
                         let is_selected = selected == value;
                         let view = choosing.clone();
                         div()
-                            .id(SharedString::from(format!("secret-type-{name}")))
+                            .id(SharedString::from(format!("filter-{field:?}-{name}")))
+                            .role(Role::Button)
+                            .aria_label(name.to_string())
                             .w_full()
                             .px_2()
                             .py_1()
@@ -1886,19 +1912,19 @@ impl ClusterView {
                                 let value = value.clone();
                                 let _ = view.update(cx, |view, cx| {
                                     view.table.update(cx, |state, cx| {
-                                        if state.delegate_mut().set_secret_type_filter(value) {
+                                        if state.delegate_mut().set_field_filter(field, value) {
                                             state.scroll_to_row(0, cx);
                                             cx.notify();
                                         }
                                     });
-                                    view.secret_type_menu_open = false;
+                                    view.filter_menu_open = None;
                                     cx.notify();
                                 });
                             })
                     });
 
                 div()
-                    .id("secret-type-list")
+                    .id(SharedString::from(format!("filter-list-{field:?}")))
                     .w(px(300.))
                     .max_h(px(360.))
                     .overflow_y_scroll()
@@ -1970,6 +1996,7 @@ impl ClusterView {
             )
             .child(
                 h_flex()
+                    .flex_wrap()
                     .gap_2()
                     .items_center()
                     // What the last write said. It lives here rather than in a
@@ -2040,12 +2067,10 @@ impl ClusterView {
                     .children(
                         self.kind
                             .as_ref()
-                            .filter(|kind| {
-                                self.mode == Mode::Objects
-                                    && kind.resource.group.is_empty()
-                                    && kind.resource.kind == "Secret"
-                            })
-                            .map(|_| self.render_secret_type_picker(cx)),
+                            .filter(|_| self.mode == Mode::Objects)
+                            .into_iter()
+                            .flat_map(|kind| Field::for_kind(kind))
+                            .map(|field| self.render_field_picker(field, cx).into_any_element()),
                     )
                     .children(
                         self.kind

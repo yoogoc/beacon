@@ -66,6 +66,24 @@ shown by default and a button to expand or collapse the remaining entries.
 Overview values support text selection and copying. Name and namespace appear
 in the detail header only. Click the colored owner value to jump to its resource
 and details, reusing an existing tab for the same cluster and resource kind.
+Pod owners initially show their ReplicaSet; an asynchronous read replaces that
+link with the ReplicaSet's owner when available. Missing permissions or a missing
+parent leave the original link available.
+
+Overview includes nested spec and status fields, with expandable sections for
+large objects. Pod and workload template containers include ports, requests and
+limits, probes, environment, mounts, security settings and runtime details.
+Regular, init and ephemeral containers have separate cards. Pod tables display
+filled container markers and hollow init markers, colored by current health;
+hover over the markers to read every container's state and readiness.
+
+Exact list filters combine with the name search and namespace scope: Pod and
+Deployment status, Service type, Ingress class, PVC status / volume / access mode /
+storage class / volume mode, and CRD scope. CRD scope is also a table column.
+
+Open **Help → Keyboard shortcuts**, press **F1**, or search `> keyboard` in the
+command palette for a searchable guide with shortcut functions and focus-specific
+behavior. The guide reads the current platform's installed key bindings.
 
 Pod Logs, Exec and Shell open in a separate panel below the resource list.
 Open them from the Pod row's context menu. The panel has its own tabs, Pod

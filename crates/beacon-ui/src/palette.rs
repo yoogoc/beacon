@@ -101,6 +101,7 @@ impl Section {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Action {
     OpenAppLogs,
+    OpenShortcuts,
     NewTab,
     CloseTab,
     ToggleTheme,
@@ -110,8 +111,9 @@ pub enum Action {
 }
 
 impl Action {
-    const ALL: [Self; 7] = [
+    const ALL: [Self; 8] = [
         Self::OpenAppLogs,
+        Self::OpenShortcuts,
         Self::NewTab,
         Self::CloseTab,
         Self::ToggleTheme,
@@ -123,6 +125,7 @@ impl Action {
     fn label(&self) -> &'static str {
         match self {
             Self::OpenAppLogs => "Open app logs",
+            Self::OpenShortcuts => "Keyboard shortcuts",
             Self::NewTab => "Open another tab on this cluster",
             Self::CloseTab => "Close this tab",
             Self::ToggleTheme => "Toggle light and dark",

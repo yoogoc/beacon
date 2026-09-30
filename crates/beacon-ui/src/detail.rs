@@ -7,7 +7,10 @@
 //! stripped. Events is what the cluster has *said* about it, which is almost
 //! always where the answer is when something is wrong.
 
-use std::sync::Arc;
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    sync::Arc,
+};
 
 use beacon_columns::{EventSummary, Timestamp, format_age, format_duration};
 use beacon_kube::{
@@ -122,6 +125,11 @@ pub struct DetailView {
     tab: DetailTab,
     labels_expanded: bool,
     annotations_expanded: bool,
+    expanded_sections: BTreeSet<String>,
+    overview_sections: crate::overview::Sections,
+    resolved_owners: BTreeMap<String, Vec<OwnerLink>>,
+    owner_sources: Vec<OwnerLink>,
+    _owners_task: Option<Task<()>>,
 
     yaml: Yaml,
     /// The Data tab's editors, built when it is first opened.
@@ -170,6 +178,8 @@ impl DetailView {
         cx: &mut Context<Self>,
     ) -> Self {
         let certificates = tls_certificates(&kind, &object);
+        let overview_sections =
+            crate::overview::sections(&kind.resource.group, &kind.resource.kind, &object.data);
         let yaml_editor = cx.new(|cx| EditorState::new(window, cx).language("yaml"));
 
         let mut this = Self {
@@ -182,6 +192,11 @@ impl DetailView {
             tab: DetailTab::Overview,
             labels_expanded: false,
             annotations_expanded: false,
+            expanded_sections: BTreeSet::new(),
+            overview_sections,
+            resolved_owners: BTreeMap::new(),
+            owner_sources: Vec::new(),
+            _owners_task: None,
             yaml: Yaml::Unopened,
             data: Data::Unopened,
             revealed: false,
@@ -197,6 +212,7 @@ impl DetailView {
             _clock: Task::ready(()),
         };
 
+        this.resolve_pod_owners(cx);
         this.watch_events(window, cx);
         this.start_clock(cx);
         this
@@ -218,7 +234,13 @@ impl DetailView {
         cx: &mut Context<Self>,
     ) {
         self.certificates = tls_certificates(&self.kind, &object);
+        self.overview_sections = crate::overview::sections(
+            &self.kind.resource.group,
+            &self.kind.resource.kind,
+            &object.data,
+        );
         self.object = object;
+        self.resolve_pod_owners(cx);
         self.rules = rules;
         cx.notify();
     }
@@ -559,7 +581,27 @@ impl DetailView {
         sections = sections.child(
             self.section(
                 "Metadata",
-                vec![("Created", created), ("UID", metadata.uid.clone())],
+                vec![
+                    ("Created", created),
+                    ("UID", metadata.uid.clone()),
+                    ("Generation", metadata.generation.map(|v| v.to_string())),
+                    ("Resource version", metadata.resource_version.clone()),
+                    (
+                        "Deletion timestamp",
+                        metadata
+                            .deletion_timestamp
+                            .as_ref()
+                            .map(|v| v.0.to_string()),
+                    ),
+                    (
+                        "Finalizers",
+                        metadata
+                            .finalizers
+                            .as_ref()
+                            .filter(|v| !v.is_empty())
+                            .map(|v| v.join(", ")),
+                    ),
+                ],
                 cx,
             )
             .child(self.render_owners(cx)),
@@ -581,18 +623,8 @@ impl DetailView {
             sections = sections.child(self.container_section(containers, cx));
         }
 
-        let status = scalars(self.object.data.get("status"));
-        if !status.is_empty() {
-            sections = sections.child(
-                self.section(
-                    "Status",
-                    status
-                        .into_iter()
-                        .map(|(key, value)| (key, Some(value)))
-                        .collect(),
-                    cx,
-                ),
-            );
+        for (title, rows) in &self.overview_sections {
+            sections = sections.child(self.structured_section(title, rows, cx));
         }
 
         div()
@@ -768,19 +800,20 @@ impl DetailView {
     /// hidden: "this object has no owner" is information.
     fn section(
         &self,
-        title: &'static str,
+        title: impl Into<SharedString>,
         rows: Vec<(impl Into<SharedString>, Option<String>)>,
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
+        let title: SharedString = title.into();
         v_flex()
-            .id(title)
+            .id(title.clone())
             .gap_1()
             .w_full()
             .child(self.heading(title, cx))
-            .children(rows.into_iter().map(|(label, value)| {
+            .children(rows.into_iter().enumerate().map(|(index, (label, value))| {
                 let label: SharedString = label.into();
                 v_flex()
-                    .id(label.clone())
+                    .id(("overview-field", index))
                     .w_full()
                     .min_w_0()
                     .gap_0p5()
@@ -805,12 +838,12 @@ impl DetailView {
             }))
     }
 
-    fn heading(&self, title: &'static str, cx: &mut Context<Self>) -> impl IntoElement {
+    fn heading(&self, title: impl Into<SharedString>, cx: &mut Context<Self>) -> impl IntoElement {
         div()
             .text_xs()
             .font_weight(FontWeight::SEMIBOLD)
             .text_color(cx.theme().muted_foreground)
-            .child(title.to_uppercase())
+            .child(title.into().to_uppercase())
     }
 
     fn metadata_entries(
@@ -899,11 +932,12 @@ impl DetailView {
                             .gap_2()
                             .items_center()
                             .text_sm()
-                            .child(
-                                div()
-                                    .font_weight(FontWeight::MEDIUM)
-                                    .child(SelectableText::new("name", container.name)),
-                            )
+                            .child(div().font_weight(FontWeight::MEDIUM).child(
+                                SelectableText::new(
+                                    "name",
+                                    format!("{}{}", container.category, container.name),
+                                ),
+                            ))
                             .child(
                                 div()
                                     .text_xs()
@@ -928,6 +962,20 @@ impl DetailView {
                             .text_color(cx.theme().muted_foreground)
                             .child(SelectableText::new("image", container.image)),
                     )
+                    .child(self.structured_section_key(
+                        "Configuration",
+                        &format!("{}-{}-configuration", container.category, container.name),
+                        &container.fields,
+                        cx,
+                    ))
+                    .when(!container.status_fields.is_empty(), |card| {
+                        card.child(self.structured_section_key(
+                            "Runtime",
+                            &format!("{}-{}-runtime", container.category, container.name),
+                            &container.status_fields,
+                            cx,
+                        ))
+                    })
             }))
     }
 
@@ -1370,12 +1418,16 @@ impl DetailView {
     // MARK: reading the object
 
     fn render_owners(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let owners = self
-            .object
-            .metadata
-            .owner_references
-            .as_deref()
-            .unwrap_or_default();
+        let direct = owner_links(&self.object);
+        let owners: Vec<_> = direct
+            .into_iter()
+            .flat_map(|owner| {
+                self.resolved_owners
+                    .get(&owner.uid)
+                    .cloned()
+                    .unwrap_or_else(|| vec![owner])
+            })
+            .collect();
         v_flex()
             .w_full()
             .gap_0p5()
@@ -1448,60 +1500,193 @@ impl DetailView {
     /// `None` for anything that is not a Pod, which is what keeps the section
     /// out of a Deployment's overview.
     fn containers(&self) -> Option<Vec<ContainerLine>> {
-        if self.kind.resource.kind != "Pod" || !self.kind.resource.group.is_empty() {
-            return None;
+        let path =
+            crate::overview::pod_spec_path(&self.kind.resource.group, &self.kind.resource.kind)?;
+        let spec = self.object.data.pointer(path)?;
+        let mut containers = Vec::new();
+        for (spec_key, status_key, category) in [
+            ("containers", "containerStatuses", ""),
+            ("initContainers", "initContainerStatuses", "Init · "),
+            (
+                "ephemeralContainers",
+                "ephemeralContainerStatuses",
+                "Ephemeral · ",
+            ),
+        ] {
+            for container in spec
+                .get(spec_key)
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+            {
+                let name = container["name"].as_str().unwrap_or_default();
+                let status =
+                    if self.kind.resource.kind == "Pod" && self.kind.resource.group.is_empty() {
+                        self.object.data["status"][status_key]
+                            .as_array()
+                            .into_iter()
+                            .flatten()
+                            .find(|status| status["name"].as_str() == Some(name))
+                    } else {
+                        None
+                    };
+                let mut fields = container.clone();
+                if let Value::Object(fields) = &mut fields {
+                    fields.remove("name");
+                    fields.remove("image");
+                }
+                containers.push(ContainerLine {
+                    name: name.to_string(),
+                    category,
+                    image: container["image"]
+                        .as_str()
+                        .unwrap_or("<no image>")
+                        .to_string(),
+                    ready: status.and_then(|s| s["ready"].as_bool()).unwrap_or(false),
+                    restarts: status.and_then(|s| s["restartCount"].as_i64()).unwrap_or(0),
+                    state: status.map(container_state).unwrap_or_else(|| {
+                        if self.kind.resource.kind == "Pod" {
+                            "Pending"
+                        } else {
+                            "Template"
+                        }
+                        .into()
+                    }),
+                    fields: {
+                        let mut rows = crate::overview::rows(&fields);
+                        rows.sort_by_key(|(key, _)| match key.split(" / ").next() {
+                            Some("ports") => 0,
+                            Some("resources") => 1,
+                            Some("readinessProbe" | "livenessProbe" | "startupProbe") => 2,
+                            _ => 3,
+                        });
+                        rows
+                    },
+                    status_fields: status.map(crate::overview::rows).unwrap_or_default(),
+                });
+            }
         }
+        Some(containers)
+    }
 
-        let spec = self.object.data.get("spec")?;
-        let specs = spec.get("containers")?.as_array()?;
-        let statuses = self
-            .object
-            .data
-            .get("status")
-            .and_then(|status| status.get("containerStatuses"))
-            .and_then(Value::as_array);
+    fn structured_section(
+        &self,
+        title: &str,
+        rows: &[(String, Option<String>)],
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        self.structured_section_key(title, title, rows, cx)
+    }
 
-        Some(
-            specs
-                .iter()
-                .map(|container| {
-                    let name = container
-                        .get("name")
-                        .and_then(Value::as_str)
-                        .unwrap_or_default();
-                    let status = statuses.and_then(|statuses| {
-                        statuses
-                            .iter()
-                            .find(|status| status.get("name").and_then(Value::as_str) == Some(name))
-                    });
-
-                    ContainerLine {
-                        name: name.to_string(),
-                        image: container
-                            .get("image")
-                            .and_then(Value::as_str)
-                            .unwrap_or("<no image>")
-                            .to_string(),
-                        ready: status
-                            .and_then(|status| status.get("ready"))
-                            .and_then(Value::as_bool)
-                            .unwrap_or(false),
-                        restarts: status
-                            .and_then(|status| status.get("restartCount"))
-                            .and_then(Value::as_i64)
-                            .unwrap_or(0),
-                        state: status
-                            .map(container_state)
-                            .unwrap_or_else(|| "Pending".into()),
-                    }
-                })
-                .collect(),
+    fn structured_section_key(
+        &self,
+        title: &str,
+        section_key: &str,
+        rows: &[(String, Option<String>)],
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        if rows.is_empty() {
+            return div().into_any_element();
+        }
+        let expanded = self.expanded_sections.contains(section_key);
+        let shown = if expanded {
+            rows.len()
+        } else {
+            rows.len().min(12)
+        };
+        let key = section_key.to_string();
+        self.section(
+            SharedString::from(title.to_string()),
+            rows[..shown].to_vec(),
+            cx,
         )
+        .when(rows.len() > 12, |section| {
+            section.child(
+                Button::new("toggle-fields")
+                    .ghost()
+                    .small()
+                    .label(if expanded {
+                        "Show less".into()
+                    } else {
+                        format!("Show {} more fields", rows.len() - shown)
+                    })
+                    .on_click(cx.listener(move |view, _, _, cx| {
+                        if !view.expanded_sections.remove(&key) {
+                            view.expanded_sections.insert(key.clone());
+                        }
+                        cx.notify();
+                    })),
+            )
+        })
+        .into_any_element()
+    }
+
+    /// Start a foreground-safe one-shot read whenever the Pod's owner identities change.
+    fn resolve_pod_owners(&mut self, cx: &mut Context<Self>) {
+        if !self.kind.resource.group.is_empty() || self.kind.resource.kind != "Pod" {
+            return;
+        }
+        let owners = owner_links(&self.object);
+        if owners == self.owner_sources {
+            return;
+        }
+        self.owner_sources = owners.clone();
+        self.resolved_owners.clear();
+        self._owners_task = None;
+        let targets: Vec<_> = owners
+            .into_iter()
+            .filter(|owner| owner.kind == "ReplicaSet" && owner.api_version.starts_with("apps/"))
+            .filter_map(|owner| {
+                owner_kind(
+                    self.session.discovery().kinds(),
+                    &owner.api_version,
+                    &owner.kind,
+                )
+                .cloned()
+                .map(|kind| (owner, kind.resource))
+            })
+            .collect();
+        if targets.is_empty() {
+            return;
+        }
+        let session = self.session.clone();
+        let namespace = self.target.namespace.clone();
+        let fetching = Bridge::global(cx).run(async move {
+            let mut resolved = BTreeMap::new();
+            for (owner, resource) in targets {
+                if let Ok(replica_set) = session
+                    .clone()
+                    .get_object(resource, namespace.clone(), owner.name.clone())
+                    .await
+                {
+                    // A replacement with the same name is not this Pod's owner.
+                    let parents = replica_set_parents(&owner, &replica_set);
+                    if !parents.is_empty() {
+                        resolved.insert(owner.uid, parents);
+                    }
+                }
+            }
+            resolved
+        });
+        let sources = self.owner_sources.clone();
+        self._owners_task = Some(cx.spawn(async move |this, cx| {
+            if let Ok(resolved) = fetching.await {
+                let _ = this.update(cx, |view, cx| {
+                    if view.owner_sources == sources {
+                        view.resolved_owners = resolved;
+                        cx.notify();
+                    }
+                });
+            }
+        }));
     }
 }
 
 struct ContainerLine {
     name: String,
+    category: &'static str,
+    fields: Vec<(String, Option<String>)>,
+    status_fields: Vec<(String, Option<String>)>,
     image: String,
     ready: bool,
     restarts: i64,
@@ -1541,30 +1726,6 @@ fn container_state(status: &Value) -> String {
     "Unknown".into()
 }
 
-/// The scalar fields of an object, flattened one level.
-///
-/// Nested objects and arrays are left to the YAML tab; what is useful here is
-/// the handful of numbers and strings that answer "what is it doing" --
-/// replica counts, a phase, a cluster IP.
-fn scalars(node: Option<&Value>) -> Vec<(String, String)> {
-    let Some(Value::Object(fields)) = node else {
-        return Vec::new();
-    };
-
-    fields
-        .iter()
-        .filter_map(|(key, value)| {
-            let rendered = match value {
-                Value::String(text) if !text.is_empty() => text.clone(),
-                Value::Number(number) => number.to_string(),
-                Value::Bool(flag) => flag.to_string(),
-                _ => return None,
-            };
-            Some((key.clone(), rendered))
-        })
-        .collect()
-}
-
 impl Render for DetailView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let body = match self.tab {
@@ -1581,6 +1742,37 @@ impl Render for DetailView {
             .child(self.render_header(cx))
             .child(div().flex_1().overflow_hidden().child(body))
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct OwnerLink {
+    api_version: String,
+    kind: String,
+    name: String,
+    uid: String,
+}
+
+fn replica_set_parents(owner: &OwnerLink, replica_set: &DynamicObject) -> Vec<OwnerLink> {
+    if replica_set.metadata.uid.as_deref() != Some(owner.uid.as_str()) {
+        return Vec::new();
+    }
+    owner_links(replica_set)
+}
+
+fn owner_links(object: &DynamicObject) -> Vec<OwnerLink> {
+    object
+        .metadata
+        .owner_references
+        .as_deref()
+        .unwrap_or_default()
+        .iter()
+        .map(|owner| OwnerLink {
+            api_version: owner.api_version.clone(),
+            kind: owner.kind.clone(),
+            name: owner.name.clone(),
+            uid: owner.uid.clone(),
+        })
+        .collect()
 }
 
 /// Owner references may use an older API version; navigation uses the served
@@ -1626,7 +1818,7 @@ fn reformat(yaml: &str) -> Result<String, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{container_state, owner_kind, reformat, scalars};
+    use super::{container_state, owner_kind, owner_links, reformat, replica_set_parents};
     use beacon_kube::{ApiResource, GroupVersionKind, Kind};
     use serde_json::json;
 
@@ -1639,6 +1831,22 @@ mod tests {
             namespaced: true,
             verbs: vec!["list".into(), "watch".into()],
         }
+    }
+
+    #[test]
+    fn resolving_a_replica_set_requires_the_same_uid_and_preserves_fallback() {
+        let pod = serde_json::from_value(json!({"apiVersion":"v1","kind":"Pod","metadata":{"name":"pod","ownerReferences":[{"apiVersion":"apps/v1","kind":"ReplicaSet","name":"rs","uid":"rs-uid"}]}})).unwrap();
+        let owner = owner_links(&pod).remove(0);
+        let mut replica_set = serde_json::from_value(json!({"apiVersion":"apps/v1","kind":"ReplicaSet","metadata":{"name":"rs","uid":"rs-uid","ownerReferences":[{"apiVersion":"apps/v1","kind":"Deployment","name":"app","uid":"app-uid"}]}})).unwrap();
+        assert_eq!(
+            replica_set_parents(&owner, &replica_set)[0].kind,
+            "Deployment"
+        );
+        replica_set.metadata.uid = Some("replacement".into());
+        assert!(replica_set_parents(&owner, &replica_set).is_empty());
+        replica_set.metadata.uid = Some("rs-uid".into());
+        replica_set.metadata.owner_references = None;
+        assert!(replica_set_parents(&owner, &replica_set).is_empty());
     }
 
     #[test]
@@ -1712,36 +1920,5 @@ mod tests {
     fn a_container_with_no_state_is_unknown() {
         assert_eq!(container_state(&json!({})), "Unknown");
         assert_eq!(container_state(&json!({ "state": {} })), "Unknown");
-    }
-
-    /// The Status section is a glance, not a dump: nested structure belongs to
-    /// the YAML tab.
-    #[test]
-    fn only_scalars_reach_the_status_section() {
-        let status = json!({
-            "phase": "Running",
-            "replicas": 3,
-            "paused": true,
-            "empty": "",
-            "conditions": [{ "type": "Ready" }],
-            "loadBalancer": { "ingress": [] }
-        });
-
-        let mut found = scalars(Some(&status));
-        found.sort();
-        assert_eq!(
-            found,
-            [
-                ("paused".to_string(), "true".to_string()),
-                ("phase".to_string(), "Running".to_string()),
-                ("replicas".to_string(), "3".to_string()),
-            ]
-        );
-    }
-
-    #[test]
-    fn a_missing_status_is_no_rows() {
-        assert!(scalars(None).is_empty());
-        assert!(scalars(Some(&json!("not an object"))).is_empty());
     }
 }

@@ -40,6 +40,11 @@ pub fn column_set(group: &str, kind: &str, namespaced: bool) -> Option<ColumnSet
         ("", "PersistentVolumeClaim") => persistent_volume_claim(),
         ("", "ServiceAccount") => service_account(),
         ("apps", "Deployment") => deployment(),
+        ("apiextensions.k8s.io", "CustomResourceDefinition") => {
+            vec![computed("Scope", 130.0, |cell| {
+                CellValue::from(at(cell.data, &["spec", "scope"]).and_then(Value::as_str))
+            })]
+        }
         ("apps", "StatefulSet") => stateful_set(),
         ("apps", "DaemonSet") => daemon_set(),
         ("apps", "ReplicaSet") => replica_set(),
@@ -129,8 +134,13 @@ fn flexible(header: &str, share: f32, compute: fn(&Cell<'_>) -> CellValue) -> Co
 // MARK: workloads
 
 fn pod_columns() -> Vec<ColumnDef> {
-    // The three Pod columns are computed together; see `pod::summarize`.
+    // Pod health is accompanied by one marker per declared container.
     vec![
+        ColumnDef::new(
+            "Containers",
+            ColumnWidth::Fixed(120.0),
+            ColumnSource::Containers,
+        ),
         computed("Ready", 68.0, |cell| {
             CellValue::text(pod::summarize(cell.metadata, cell.data, cell.now).ready)
         }),
@@ -147,6 +157,9 @@ fn pod_columns() -> Vec<ColumnDef> {
 
 fn deployment() -> Vec<ColumnDef> {
     vec![
+        computed("Status", 140.0, |cell| {
+            CellValue::text(deployment_status(cell.metadata, cell.data))
+        }),
         computed("Ready", 72.0, |cell| {
             ratio(
                 number(cell.data, &["status", "readyReplicas"]),
@@ -160,6 +173,53 @@ fn deployment() -> Vec<ColumnDef> {
             count(cell.data, &["status", "availableReplicas"])
         }),
     ]
+}
+
+/// Rollout status shared by the Deployment column and exact filter.
+pub fn deployment_status(
+    metadata: &k8s_openapi::apimachinery::pkg::apis::meta::v1::ObjectMeta,
+    data: &Value,
+) -> String {
+    if metadata.deletion_timestamp.is_some() {
+        return "Terminating".into();
+    }
+    if at(data, &["spec", "paused"]).and_then(Value::as_bool) == Some(true) {
+        return "Paused".into();
+    }
+    let conditions = at(data, &["status", "conditions"]).and_then(Value::as_array);
+    if conditions.into_iter().flatten().any(|c| {
+        (c["type"] == "Progressing" && c["status"] == "False")
+            || (c["type"] == "ReplicaFailure" && c["status"] == "True")
+    }) {
+        return "Failed".into();
+    }
+    let desired = number(data, &["spec", "replicas"]).unwrap_or(1);
+    let current = number(data, &["status", "replicas"]).unwrap_or(0);
+    let observed = number(data, &["status", "observedGeneration"]).unwrap_or(0);
+    if metadata
+        .generation
+        .is_some_and(|generation| observed < generation)
+    {
+        return "Progressing".into();
+    }
+    if desired == 0 {
+        return if current == 0 {
+            "Scaled to zero"
+        } else {
+            "Progressing"
+        }
+        .into();
+    }
+    if number(data, &["status", "updatedReplicas"]).unwrap_or(0) == desired
+        && number(data, &["status", "availableReplicas"]).unwrap_or(0) >= desired
+        && number(data, &["status", "readyReplicas"]).unwrap_or(0) >= desired
+        && current == desired
+    {
+        "Available"
+    } else {
+        "Progressing"
+    }
+    .into()
 }
 
 fn stateful_set() -> Vec<ColumnDef> {
@@ -744,12 +804,13 @@ mod tests {
     }
 
     #[test]
-    fn deployment_matches_kubectl() {
+    fn deployment_includes_rollout_status_and_kubectl_counters() {
         assert_eq!(
             headers("apps", "Deployment", true),
             [
                 "Name",
                 "Namespace",
+                "Status",
                 "Ready",
                 "Up-to-date",
                 "Available",
@@ -765,12 +826,37 @@ mod tests {
                     "status": { "readyReplicas": 2, "updatedReplicas": 3, "availableReplicas": 2 }
                 })
             ),
-            ["2/3", "3", "2"]
+            ["Progressing", "2/3", "3", "2"]
         );
     }
 
     /// A deployment scaled to zero reports no counters at all. Empty cells
     /// there would read as "unknown" when the answer is zero.
+    #[test]
+    fn deployment_status_handles_stale_generation_failure_pause_and_rollout() {
+        let mut metadata = k8s_openapi::apimachinery::pkg::apis::meta::v1::ObjectMeta {
+            generation: Some(3),
+            ..Default::default()
+        };
+        let mut data = json!({"spec":{"replicas":2},"status":{"replicas":2,"readyReplicas":2,"availableReplicas":2,"updatedReplicas":2,"observedGeneration":2}});
+        assert_eq!(deployment_status(&metadata, &data), "Progressing");
+        data["status"]["observedGeneration"] = json!(3);
+        assert_eq!(deployment_status(&metadata, &data), "Available");
+        data["status"]["conditions"] =
+            json!([{"type":"Progressing","status":"False","reason":"ProgressDeadlineExceeded"}]);
+        assert_eq!(deployment_status(&metadata, &data), "Failed");
+        data["spec"]["paused"] = json!(true);
+        assert_eq!(deployment_status(&metadata, &data), "Paused");
+        metadata.deletion_timestamp = Some(k8s_openapi::apimachinery::pkg::apis::meta::v1::Time(
+            crate::Timestamp::now(),
+        ));
+        assert_eq!(deployment_status(&metadata, &data), "Terminating");
+        assert_eq!(
+            headers("apiextensions.k8s.io", "CustomResourceDefinition", false),
+            ["Name", "Scope", "Age"]
+        );
+    }
+
     #[test]
     fn absent_replica_counters_are_zero() {
         assert_eq!(
@@ -779,7 +865,7 @@ mod tests {
                 "Deployment",
                 json!({ "spec": { "replicas": 0 }, "status": {} })
             ),
-            ["0/0", "0", "0"]
+            ["Scaled to zero", "0/0", "0", "0"]
         );
     }
 

@@ -19,7 +19,9 @@ use beacon_kube::{
 use gpui_kit::component::checkbox::Checkbox;
 use gpui_kit::component::menu::{PopupMenu, PopupMenuItem};
 use gpui_kit::component::table::{Column, ColumnSort, TableDelegate, TableState};
+use gpui_kit::component::tooltip::Tooltip;
 use gpui_kit::component::{ActiveTheme as _, Disableable as _, h_flex};
+use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use nucleo_matcher::{
     Matcher, Utf32Str,
@@ -33,9 +35,10 @@ use std::{
 use crate::actions;
 use crate::cluster::ClusterView;
 use crate::detail::DetailTab;
+use crate::filters::Field;
 use crate::pod_tools::PodToolTab;
 use crate::status;
-use crate::theme::BeaconTheme as _;
+use crate::theme::{BeaconTheme as _, Tone};
 
 /// A `Flex` column's share, converted to the starting pixel width the table
 /// component wants. Columns are resizable afterwards, so this only has to be a
@@ -54,8 +57,8 @@ pub struct ResourceTable {
     sort: Sort,
     /// What the search box contains. Empty means everything.
     filter: String,
-    /// Exact Secret type, independent of the fuzzy name search.
-    secret_type_filter: Option<String>,
+    /// Exact facets combine with each other and the fuzzy name search.
+    field_filters: BTreeMap<Field, String>,
     /// Reused across keystrokes: it owns scratch buffers, and allocating one
     /// per rebuild would be the expensive part of filtering.
     matcher: Matcher,
@@ -94,7 +97,7 @@ impl ResourceTable {
             checked: BTreeMap::new(),
             sort: Sort::Natural,
             filter: String::new(),
-            secret_type_filter: None,
+            field_filters: BTreeMap::new(),
             matcher: crate::catalog::matcher(),
             now: Timestamp::now(),
             metrics: Metrics::default(),
@@ -199,25 +202,37 @@ impl ResourceTable {
         &self.filter
     }
 
-    /// The Secret types in the current watch, including types hidden by the
-    /// name search or the current type selection.
-    pub fn secret_types(&self) -> Vec<String> {
-        let mut types = BTreeSet::new();
-        for (_, object) in self.store.iter() {
-            types.insert(secret_type(object).to_string());
-        }
-        types.into_iter().collect()
+    pub(crate) fn filter_values(&self, field: Field) -> Vec<String> {
+        self.store
+            .iter()
+            .flat_map(|(_, object)| field.values(object, self.now))
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect()
     }
 
-    pub fn secret_type_filter(&self) -> Option<&str> {
-        self.secret_type_filter.as_deref()
+    pub(crate) fn field_filter(&self, field: Field) -> Option<&str> {
+        self.field_filters.get(&field).map(String::as_str)
     }
 
-    pub fn set_secret_type_filter(&mut self, selected: Option<String>) -> bool {
-        if self.secret_type_filter == selected {
+    pub(crate) fn set_field_filter(&mut self, field: Field, selected: Option<String>) -> bool {
+        if self.field_filters.get(&field) == selected.as_ref() {
             return false;
         }
-        self.secret_type_filter = selected;
+        if let Some(value) = selected {
+            self.field_filters.insert(field, value);
+        } else {
+            self.field_filters.remove(&field);
+        }
+        self.reindex();
+        true
+    }
+
+    pub(crate) fn clear_field_filters(&mut self) -> bool {
+        if self.field_filters.is_empty() {
+            return false;
+        }
+        self.field_filters.clear();
         self.reindex();
         true
     }
@@ -446,14 +461,18 @@ impl ResourceTable {
     /// An empty filter scores everything zero, which costs one pass and keeps
     /// the two paths through `reindex` identical in shape.
     fn matching(&mut self) -> Vec<(u32, ObjectRef)> {
-        let selected_type = self.secret_type_filter.as_deref();
+        let filters = &self.field_filters;
+        let now = self.now;
+        let accepts = |object: &DynamicObject| {
+            filters
+                .iter()
+                .all(|(field, value)| field.values(object, now).contains(value))
+        };
         if self.filter.is_empty() {
             return self
                 .store
                 .iter()
-                .filter(|(_, object)| {
-                    selected_type.is_none_or(|selected| secret_type(object) == selected)
-                })
+                .filter(|(_, object)| accepts(object))
                 .map(|(key, _)| (0, key.clone()))
                 .collect();
         }
@@ -463,7 +482,7 @@ impl ResourceTable {
         let mut matched = Vec::new();
 
         for (key, object) in self.store.iter() {
-            if selected_type.is_some_and(|selected| secret_type(object) != selected) {
+            if !accepts(object) {
                 continue;
             }
             let haystack = key.to_string();
@@ -513,16 +532,6 @@ impl ResourceTable {
             }),
         ))
     }
-}
-
-/// Kubernetes defaults a Secret with no explicit type to Opaque.
-fn secret_type(object: &DynamicObject) -> &str {
-    object
-        .data
-        .get("type")
-        .and_then(serde_json::Value::as_str)
-        .filter(|value| !value.is_empty())
-        .unwrap_or("Opaque")
 }
 
 /// What a cell sorts by.
@@ -825,6 +834,47 @@ impl TableDelegate for ResourceTable {
             return h_flex().into_any_element();
         };
 
+        if matches!(definition.source, ColumnSource::Containers) {
+            let Some(object) = self.key_at(row).and_then(|key| self.object(key)) else {
+                return h_flex().into_any_element();
+            };
+            let containers = beacon_columns::containers::summarize(&object.data);
+            let summary = beacon_columns::containers::description(&object.data);
+            return h_flex()
+                .id(("container-states", row))
+                .size_full()
+                .items_center()
+                .gap_1()
+                .flex_wrap()
+                .aria_label(summary.clone())
+                .children(
+                    containers
+                        .into_iter()
+                        .enumerate()
+                        .map(|(index, container)| {
+                            use beacon_columns::containers::ContainerHealth::*;
+                            let color = match container.health {
+                                Ready => cx.theme().tone(Tone::Healthy),
+                                Running => cx.theme().tone(Tone::Warning),
+                                Waiting => cx.theme().resource_link(),
+                                Failed => cx.theme().tone(Tone::Critical),
+                                Completed if container.init => cx.theme().tone(Tone::Healthy),
+                                Completed | Unknown => cx.theme().muted_foreground,
+                            };
+                            div()
+                                .id(("container-dot", index))
+                                .size(px(9.))
+                                .flex_shrink_0()
+                                .rounded_full()
+                                .border_1()
+                                .border_color(color)
+                                .when(!container.init, |dot| dot.bg(color))
+                        }),
+                )
+                .tooltip(move |window, cx| Tooltip::new(summary.clone()).build(window, cx))
+                .into_any_element();
+        }
+
         let color = if value.is_missing() {
             cx.theme().muted_foreground
         } else if definition.header == "Status" {
@@ -905,6 +955,7 @@ mod tests {
     // `gpui_kit`, whose test-support build exports its own `#[test]`, and a
     // glob would shadow Rust's.
     use super::{ResourceTable, SortKey};
+    use crate::filters::Field;
     use beacon_columns::{CellValue, ColumnSet};
     use beacon_kube::{Delta, DynamicObject, resources};
     use gpui_kit::component::table::ColumnSort;
@@ -1013,6 +1064,42 @@ mod tests {
     }
 
     #[test]
+    fn claim_filters_combine_modes_scope_search_and_watch_updates() {
+        let claim = |name: &str, phase: &str, class: &str, modes: Vec<&str>| {
+            let mut object = (*named("default", name)).clone();
+            object.data = serde_json::json!({"spec":{"volumeName":"pv-one","storageClassName":class,"accessModes":modes,"volumeMode":"Filesystem"},"status":{"phase":phase}});
+            Arc::new(object)
+        };
+        let mut table = ResourceTable::new(ColumnSet::fallback(true));
+        table.apply(vec![Delta::Reset(vec![
+            claim(
+                "one",
+                "Bound",
+                "fast",
+                vec!["ReadWriteOnce", "ReadOnlyMany"],
+            ),
+            claim("two", "Pending", "slow", vec!["ReadWriteMany"]),
+        ])]);
+        table.set_field_filter(Field::ClaimStatus, Some("Bound".into()));
+        table.set_field_filter(Field::StorageClass, Some("fast".into()));
+        table.set_field_filter(Field::AccessMode, Some("ReadOnlyMany".into()));
+        assert_eq!(table.len(), 1);
+        assert_eq!(
+            table.filter_values(Field::ClaimStatus),
+            ["Bound", "Pending"]
+        );
+        table.set_filter("two");
+        assert_eq!(table.len(), 0);
+        table.set_filter("");
+        let mut changed = (*claim("one", "Lost", "fast", vec!["ReadOnlyMany"])).clone();
+        changed.metadata.resource_version = Some("new".into());
+        table.apply(vec![Delta::Upsert(Arc::new(changed))]);
+        assert_eq!(table.len(), 0);
+        table.clear_field_filters();
+        assert_eq!(table.len(), 2);
+    }
+
+    #[test]
     fn secret_type_filter_is_exact_and_combines_with_name_search() {
         let mut table = ResourceTable::new(ColumnSet::for_kind("", "Secret", true));
         table.apply(vec![Delta::Reset(vec![
@@ -1023,7 +1110,7 @@ mod tests {
         ])]);
 
         assert_eq!(
-            table.secret_types(),
+            table.filter_values(Field::SecretType),
             [
                 "Opaque",
                 "example.com/dockerconfigjson",
@@ -1032,7 +1119,10 @@ mod tests {
             ]
         );
 
-        assert!(table.set_secret_type_filter(Some("kubernetes.io/dockerconfigjson".into())));
+        assert!(table.set_field_filter(
+            Field::SecretType,
+            Some("kubernetes.io/dockerconfigjson".into())
+        ));
         assert_eq!(table.len(), 1);
         assert_eq!(table.key_at(0).unwrap().name, "registry-main");
         assert_eq!(table.total(), 4);
@@ -1043,10 +1133,10 @@ mod tests {
         assert_eq!(table.len(), 1);
         assert_eq!(table.key_at(0).unwrap().name, "registry-main");
 
-        table.set_secret_type_filter(Some("Opaque".into()));
+        table.set_field_filter(Field::SecretType, Some("Opaque".into()));
         table.set_filter("");
         assert_eq!(table.key_at(0).unwrap().name, "plain");
-        table.set_secret_type_filter(None);
+        table.set_field_filter(Field::SecretType, None);
         assert_eq!(table.len(), 4);
     }
 
@@ -1135,7 +1225,13 @@ mod tests {
     #[test]
     fn a_chosen_sort_survives_a_filter() {
         let mut table = filled(200);
-        table.sort_by(4, ColumnSort::Ascending);
+        let restarts = table
+            .columns
+            .columns
+            .iter()
+            .position(|column| column.header == "Restarts")
+            .expect("Restarts column");
+        table.sort_by(restarts, ColumnSort::Ascending);
         table.set_filter("pod-001");
 
         assert!(table.len() < 200, "the filter narrowed something");
@@ -1163,15 +1259,21 @@ mod tests {
         let mut table = filled(5_000);
         assert_eq!(table.len(), 5_000);
 
-        // Column 4 is Restarts, which is `5000 - index`.
-        table.sort_by(4, ColumnSort::Ascending);
+        // Restarts is `5000 - index`.
+        let restarts = table
+            .columns
+            .columns
+            .iter()
+            .position(|column| column.header == "Restarts")
+            .expect("Restarts column");
+        table.sort_by(restarts, ColumnSort::Ascending);
         assert_eq!(table.rows.first().expect("rows").name, "pod-04999");
         assert_eq!(table.rows.last().expect("rows").name, "pod-00000");
 
-        table.sort_by(4, ColumnSort::Descending);
+        table.sort_by(restarts, ColumnSort::Descending);
         assert_eq!(table.rows.first().expect("rows").name, "pod-00000");
 
-        table.sort_by(4, ColumnSort::Default);
+        table.sort_by(restarts, ColumnSort::Default);
         assert_eq!(table.rows.first().expect("rows").name, "pod-00000");
         assert_eq!(
             table.rows.first().expect("rows").namespace.as_deref(),
