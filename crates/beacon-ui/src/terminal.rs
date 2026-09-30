@@ -231,11 +231,7 @@ impl TerminalView {
         let command = self.command(cx);
         tracing::info!(context = %self.session.id(), namespace = %self.namespace, pod = %self.pod, ?command, "opening a shell");
 
-        let handle = crate::bridge::Bridge::global(cx).handle();
-        let (shell, output) = beacon_kube::terminal::attach(
-            self.session.client().clone(),
-            &handle,
-            self.session.id().to_string(),
+        let (shell, output) = self.session.terminal(
             self.namespace.clone(),
             self.pod.clone(),
             self.container.clone(),

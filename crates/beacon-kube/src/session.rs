@@ -74,6 +74,8 @@ pub struct ClusterSession {
     /// The exact Kubernetes git version returned during connection, including vendor suffixes.
     version: String,
     client: Client,
+    connection: crate::connection::ConnectionOptions,
+    transport: crate::connection::Transport,
     runtime: tokio::runtime::Handle,
     discovery: Discovery,
     /// Filled in one kind at a time, as somebody opens them.
@@ -94,14 +96,50 @@ impl ClusterSession {
     /// `exec` context means running a subprocess, and it then makes a request.
     /// The runtime it runs on is the one every watch will use.
     pub async fn connect(id: ClusterId) -> Result<Self> {
+        Self::connect_with(id, crate::connection::ConnectionOptions::default()).await
+    }
+
+    pub async fn connect_with(
+        id: ClusterId,
+        connection: crate::connection::ConnectionOptions,
+    ) -> Result<Self> {
+        connection.validate().map_err(|diagnosis| Error::Connect {
+            context: id.to_string(),
+            diagnosis,
+        })?;
         let options = KubeConfigOptions {
             context: Some(id.as_str().to_string()),
             ..Default::default()
         };
 
-        let config = Config::from_kubeconfig(&options)
+        let mut config_copy =
+            kube::config::Kubeconfig::read().map_err(|error| Error::connect(&id, &error))?;
+        connection
+            .proxy
+            .prepare_kubeconfig(&mut config_copy, id.as_str())
+            .map_err(|diagnosis| Error::Connect {
+                context: id.to_string(),
+                diagnosis,
+            })?;
+        let transport = crate::connection::Transport::new(
+            config_copy.clone(),
+            id.as_str(),
+            connection.proxy.clone(),
+        )
+        .map_err(|diagnosis| Error::Connect {
+            context: id.to_string(),
+            diagnosis,
+        })?;
+        let mut config = Config::from_custom_kubeconfig(config_copy, &options)
             .await
             .map_err(|error| Error::connect(&id, &error))?;
+        connection
+            .proxy
+            .apply(&mut config)
+            .map_err(|diagnosis| Error::Connect {
+                context: id.to_string(),
+                diagnosis,
+            })?;
         let server = config.cluster_url.to_string();
 
         let client = Client::try_from(config).map_err(|error| Error::connect(&id, &error))?;
@@ -141,6 +179,8 @@ impl ClusterSession {
             server,
             version: version.git_version,
             client,
+            connection,
+            transport,
             runtime,
             discovery,
             printer_columns: Mutex::new(PrinterColumns::default()),
@@ -316,15 +356,40 @@ impl ClusterSession {
         container: Option<String>,
         command: Vec<String>,
     ) -> Result<exec::Output> {
-        exec::run(
+        exec::run_with_transport(
             &self.client,
             self.id.as_str(),
             &namespace,
             &pod,
             container.as_deref(),
             &command,
+            &self.transport,
         )
         .await
+    }
+
+    pub fn terminal(
+        &self,
+        namespace: String,
+        pod: String,
+        container: Option<String>,
+        command: Vec<String>,
+    ) -> (
+        crate::terminal::Terminal,
+        impl futures::Stream<Item = crate::terminal::TerminalEvent> + use<>,
+    ) {
+        crate::terminal::attach_with_transport(
+            self.client.clone(),
+            &self.runtime,
+            crate::terminal::Target {
+                context: self.id.to_string(),
+                namespace,
+                pod,
+                container,
+            },
+            command,
+            self.transport.clone(),
+        )
     }
 
     /// CPU and memory for everything metrics-server knows about.
@@ -332,7 +397,19 @@ impl ClusterSession {
     /// Not cached: usage is the one thing here that is only interesting when
     /// it is current. The caller refreshes it on a timer.
     pub async fn metrics(self: Arc<Self>) -> Metrics {
-        metrics::fetch(&self.client).await
+        match &self.connection.metrics {
+            crate::connection::MetricsSource::Kubernetes => metrics::fetch(&self.client).await,
+            crate::connection::MetricsSource::Disabled => Metrics::default(),
+            crate::connection::MetricsSource::Prometheus(config) => {
+                match metrics::fetch_prometheus(&self.connection.proxy, config).await {
+                    Ok(metrics) => metrics,
+                    Err(error) => {
+                        tracing::warn!(context=%self.id, %error, "metrics source failed");
+                        Metrics::default()
+                    }
+                }
+            }
+        }
     }
 
     /// Helm releases, newest revision of each.

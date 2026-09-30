@@ -19,6 +19,9 @@ serde_json.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 portable-pty.workspace = true
+reqwest.workspace = true
+url.workspace = true
+tempfile.workspace = true
 
 # The example is the headless proof that this crate stands on its own.
 [dev-dependencies]

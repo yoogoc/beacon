@@ -46,6 +46,7 @@ gpui_kit::actions!(
         TogglePalette,
         OpenAppLogs,
         OpenShortcuts,
+        OpenSettings,
         Quit,
         NewTab,
         CloseTab,
@@ -64,7 +65,10 @@ const TAB_WIDTH: Pixels = px(190.);
 /// palette is no use if it only opens when nothing is selected, and neither is
 /// a tab shortcut that stops working once you click into the table.
 pub fn init(log_directory: PathBuf, cx: &mut App) {
+    crate::settings::init(cx);
+    crate::preferences::init(cx);
     app_logs::init(log_directory, cx);
+    cx.on_action(|_: &OpenSettings, cx| crate::preferences::application(cx));
     crate::shortcuts::init(cx);
     cx.on_action(|_: &OpenShortcuts, cx| crate::shortcuts::open(cx));
     cx.on_action(|_: &OpenAppLogs, cx| app_logs::open(cx));
@@ -73,6 +77,8 @@ pub fn init(log_directory: PathBuf, cx: &mut App) {
     #[cfg(target_os = "macos")]
     cx.set_menus([
         Menu::new("Beacon").items([
+            MenuItem::action("Settings…", OpenSettings),
+            MenuItem::separator(),
             MenuItem::os_submenu("Services", SystemMenuType::Services),
             MenuItem::separator(),
             MenuItem::action("Quit Beacon", Quit),
@@ -89,6 +95,7 @@ pub fn init(log_directory: PathBuf, cx: &mut App) {
 
     cx.bind_keys([
         KeyBinding::new("f1", OpenShortcuts, None),
+        KeyBinding::new(&format!("{modifier}-,"), OpenSettings, None),
         KeyBinding::new(&format!("{modifier}-q"), Quit, None),
         KeyBinding::new(&format!("{modifier}-k"), TogglePalette, None),
         KeyBinding::new(&format!("{modifier}-shift-l"), OpenAppLogs, None),
@@ -161,6 +168,7 @@ pub struct BeaconApp {
     sidebar_collapsed: bool,
     sidebar_split: Entity<ResizableState>,
     contexts: Result<Contexts, String>,
+    preferences: crate::settings::Preferences,
 
     /// Every cluster connected in this session, shared by every tab on it.
     ///
@@ -216,12 +224,26 @@ impl BeaconApp {
             },
         );
 
+        let settings = crate::settings::store(cx);
+        let preferences = settings.read(cx).preferences.clone();
+        let preferences_events = cx.subscribe_in(
+            &settings,
+            window,
+            |view, state, event: &crate::settings::Changed, window, cx| {
+                view.preferences = state.read(cx).preferences.clone();
+                if let Some(cluster) = &event.0 {
+                    view.reconnect(cluster.clone(), window, cx);
+                }
+                cx.notify();
+            },
+        );
         let this = Self {
             focus: cx.focus_handle(),
             tab_scroll: ScrollHandle::new(),
             sidebar_collapsed: false,
             sidebar_split: cx.new(|_| ResizableState::default()),
             contexts,
+            preferences,
             sessions: HashMap::new(),
             disconnected: HashSet::new(),
             connection_epochs: HashMap::new(),
@@ -232,7 +254,7 @@ impl BeaconApp {
             palette_open: false,
             activity_open: None,
             activity_refresh: None,
-            _subscriptions: vec![palette_events],
+            _subscriptions: vec![palette_events, preferences_events],
         };
 
         // Something has to hold focus before any binding can resolve. The
@@ -465,10 +487,12 @@ impl BeaconApp {
         self.tabs[index].state = TabState::Connecting;
         cx.notify();
 
+        let connection = self.preferences.connection(&cluster);
         let connecting = {
             let cluster = cluster.clone();
-            Bridge::global(cx)
-                .run_cancellable(async move { ClusterSession::connect(cluster).await })
+            Bridge::global(cx).run_cancellable(async move {
+                ClusterSession::connect_with(cluster, connection).await
+            })
         };
 
         let task = cx.spawn_in(window, async move |this, cx| {
@@ -724,6 +748,13 @@ impl BeaconApp {
             .map(|contexts| contexts.entries().to_vec())
             .unwrap_or_default();
 
+        sources.cluster_aliases = self
+            .preferences
+            .clusters
+            .iter()
+            .filter(|(_, c)| !c.alias.is_empty())
+            .map(|(id, c)| (ClusterId::new(id), c.alias.clone()))
+            .collect();
         self.palette.update(cx, |palette, cx| {
             palette.open(sources, window, cx);
         });
@@ -747,6 +778,10 @@ impl BeaconApp {
             }
             Choice::Action(palette::Action::CloseTab) => {
                 self.close(self.active, window, cx);
+                return;
+            }
+            Choice::Action(palette::Action::OpenSettings) => {
+                crate::preferences::application(cx);
                 return;
             }
             Choice::Action(palette::Action::OpenShortcuts) => {
@@ -790,6 +825,7 @@ impl BeaconApp {
             Choice::Cluster(_)
             | Choice::Action(
                 palette::Action::ToggleTheme
+                | palette::Action::OpenSettings
                 | palette::Action::OpenAppLogs
                 | palette::Action::OpenShortcuts
                 | palette::Action::NewTab
@@ -859,9 +895,10 @@ impl BeaconApp {
                                 Button::new("view-menu")
                                     .ghost()
                                     .small()
-                                    .label("View")
+                                    .label("Menu")
                                     .dropdown_menu(|menu, _, _| {
-                                        menu.menu("App logs", Box::new(OpenAppLogs))
+                                        menu.menu("Settings…", Box::new(OpenSettings))
+                                            .menu("App logs", Box::new(OpenAppLogs))
                                             .menu("Keyboard shortcuts", Box::new(OpenShortcuts))
                                     }),
                             )
@@ -882,6 +919,11 @@ impl BeaconApp {
     }
 
     fn cluster_display_name<'a>(&'a self, id: &'a ClusterId) -> &'a str {
+        if let Some(settings) = self.preferences.clusters.get(id.as_str())
+            && !settings.alias.is_empty()
+        {
+            return &settings.alias;
+        }
         self.context_entry(id)
             .map_or_else(|| id.display_name(), ContextEntry::display_name)
     }
@@ -956,10 +998,16 @@ impl BeaconApp {
             let is_eks = self
                 .context_entry(&id)
                 .is_some_and(|entry| entry.eks().is_some());
+            let icon = self
+                .preferences
+                .clusters
+                .get(id.as_str())
+                .map(|c| c.icon.clone())
+                .unwrap_or_default();
             let description = self.cluster_description(&id);
             let tooltip_id = SharedString::from(format!("cluster-info-{id}"));
             SidebarMenuItem::new(self.cluster_display_name(&id).to_string())
-                .icon(crate::icons::kubernetes().text_color(color))
+                .icon(crate::settings::icon(&icon).text_color(color))
                 .active(selected)
                 .click_to_open(true)
                 .default_open(selected)
@@ -993,7 +1041,14 @@ impl BeaconApp {
                     let view = menu_view.clone();
                     let reconnect_target = menu_target.clone();
                     let reconnect_view = menu_view.clone();
+                    let settings_target = menu_target.clone();
                     menu.item(
+                        PopupMenuItem::new("Cluster settings…").on_click(move |_, _, cx| {
+                            crate::preferences::cluster(settings_target.clone(), cx)
+                        }),
+                    )
+                    .separator()
+                    .item(
                         PopupMenuItem::new("Disconnect")
                             .disabled(!can_disconnect)
                             .on_click(move |_, window, cx| {
@@ -1430,6 +1485,11 @@ impl BeaconApp {
     fn render_status_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let active = self.tabs.get(self.active);
         let name = active.map(|tab| {
+            if let Some(settings) = self.preferences.clusters.get(tab.cluster.as_str())
+                && !settings.alias.is_empty()
+            {
+                return settings.alias.as_str();
+            }
             self.context_entry(&tab.cluster)
                 .map_or_else(|| tab.cluster.display_name(), ContextEntry::cluster_name)
         });

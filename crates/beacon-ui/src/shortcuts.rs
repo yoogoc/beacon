@@ -194,6 +194,7 @@ fn describe(name: &str, scope: &str) -> (String, String) {
             "Find resources, switch namespaces or clusters, and run commands using @, #, ctx and >."
         }
         "OpenAppLogs" => "Open the application's own logs in a separate window.",
+        "OpenSettings" => "Open application preferences for themes, fonts and the global proxy.",
         "OpenShortcuts" => "Open this searchable guide to shortcuts and their functions.",
         "NewTab" => {
             "Open another tab for the current cluster; without a cluster, open the cluster picker."

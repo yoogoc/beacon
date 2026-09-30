@@ -110,6 +110,39 @@ pub fn attach(
     container: Option<String>,
     command: Vec<String>,
 ) -> (Terminal, impl Stream<Item = TerminalEvent> + use<>) {
+    attach_with_transport(
+        client,
+        runtime,
+        Target {
+            context,
+            namespace,
+            pod,
+            container,
+        },
+        command,
+        crate::connection::Transport::default(),
+    )
+}
+
+pub(crate) struct Target {
+    pub context: String,
+    pub namespace: String,
+    pub pod: String,
+    pub container: Option<String>,
+}
+pub(crate) fn attach_with_transport(
+    client: kube::Client,
+    runtime: &tokio::runtime::Handle,
+    target: Target,
+    command: Vec<String>,
+    transport: crate::connection::Transport,
+) -> (Terminal, impl Stream<Item = TerminalEvent> + use<>) {
+    let Target {
+        context,
+        namespace,
+        pod,
+        container,
+    } = target;
     let (input_tx, mut input_rx) = mpsc::unbounded::<Vec<u8>>();
     let (resize_tx, mut resize_rx) = mpsc::unbounded::<(u16, u16)>();
     let (events_tx, events_rx) = mpsc::unbounded();
@@ -127,7 +160,7 @@ pub fn attach(
             Ok(Err(error)) if can_fallback(&error) => {
                 tracing::info!(%context, %namespace, %pod, %error, "WebSocket exec refused; falling back to kubectl/SPDY");
                 let target = crate::kubectl::Target {
-                    context: &context, namespace: &namespace, pod: &pod, container: container.as_deref(),
+                    context: &context, namespace: &namespace, pod: &pod, container: container.as_deref(), transport: &transport,
                 };
                 if let Err(error) = crate::kubectl::attach(target, &command, &mut input_rx, &mut resize_rx, &events_tx).await {
                     let _ = events_tx.unbounded_send(TerminalEvent::Failed(error));

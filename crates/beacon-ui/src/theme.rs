@@ -6,7 +6,7 @@
 //! picks a literal colour. Changing how "degraded" looks is a change here and
 //! nowhere else.
 
-use gpui_kit::component::{ActiveTheme as _, Theme, ThemeMode};
+use gpui_kit::component::Theme;
 use gpui_kit::*;
 
 /// The state of a thing we are showing, independent of the resource kind.
@@ -41,11 +41,7 @@ pub trait BeaconTheme {
 
 impl BeaconTheme for Theme {
     fn resource_link(&self) -> Hsla {
-        if self.is_dark() {
-            gpui_kit::component::blue_400()
-        } else {
-            gpui_kit::component::blue_600()
-        }
+        self.link
     }
 
     fn tone(&self, tone: Tone) -> Hsla {
@@ -76,10 +72,5 @@ impl BeaconTheme for Theme {
 
 /// Flips between light and dark, following whatever the window currently uses.
 pub fn toggle_mode(window: &mut Window, cx: &mut App) {
-    let next = if cx.theme().is_dark() {
-        ThemeMode::Light
-    } else {
-        ThemeMode::Dark
-    };
-    Theme::change(next, Some(window), cx);
+    crate::settings::toggle(window, cx);
 }

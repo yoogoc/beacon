@@ -36,7 +36,7 @@ nothing in a container emits any, and the sixteen ANSI colours come from a
 real palette rather than from theme tokens, which had collapsed them onto
 eight. Ports
 forward to localhost and keep running while you work elsewhere. CPU and memory
-come from metrics-server, Helm releases are read straight out of the cluster,
+come from metrics-server or a configured Prometheus source, Helm releases are read straight out of the cluster,
 and every cluster you connect to stays connected. See
 [docs/DESIGN.md](docs/DESIGN.md) for the architecture and the milestone plan.
 
@@ -258,6 +258,49 @@ ctx         clusters — its tab, or a new one
 Matching is fuzzy within a section: `@dep` finds Deployment, `#kube-sys` finds
 kube-system.
 
+## Settings
+
+On macOS, open **Beacon → Settings…** in the native menu bar. On Windows and
+Linux, open **Menu → Settings…** in the application menu. **⌘,** / **Ctrl+,**
+or the command palette's **Open settings** command opens the same window.
+
+Choose Light, Dark, or a named custom theme. Custom themes can change text and
+monospace fonts and sizes, plus individual UI colors, including each button
+variant's text, background, hover and active colors. Select a color token and
+enter a hex value; an empty value inherits the base theme. Saving a new theme
+name keeps another local theme available in **Saved themes**. Saving applies
+the theme to all open windows and restores it on the next launch.
+
+Preferences live in the platform configuration directory
+(`~/Library/Application Support/dev.beacon.Beacon/settings.json` on macOS).
+Custom themes also have separate JSON files in its `themes` directory.
+**Open config folder** shows that directory. Writes replace files atomically;
+on Unix the preferences and theme files are private to the current user.
+
+The global proxy supports kubeconfig/environment defaults, direct connections,
+or an explicit HTTP, HTTPS or SOCKS5 URL. Right-click a sidebar cluster and
+choose **Cluster settings…** to set an alias, a preset or imported SVG icon, a
+connection proxy, and a metrics source. Cluster proxy settings override the
+global proxy; **Use global proxy** inherits it. An explicit proxy overrides
+`NO_PROXY`; **Direct** bypasses kubeconfig and environment proxy settings.
+These overrides also reach credential helper subprocesses and the local
+kubectl Shell/Exec fallback, without changing the original kubeconfig or the
+process environment. SOCKS5 does not support kubectl's SPDY fallback.
+
+Metrics source defaults to **Kubernetes Metrics API**, with **Prometheus**
+and **Disabled** available. Prometheus accepts a base URL, an optional bearer
+token, and four editable instant-vector queries. CPU results use cores and
+memory results use bytes. Pod vectors need `namespace` and `pod` labels; node
+vectors need `node`. Include a cluster selector when one Prometheus server
+contains several clusters. **Test metrics source** checks the configured
+queries using the selected proxy before saving.
+
+Aliases and icons apply immediately. Connection proxy and metrics changes
+apply on the next connection; **Save and reconnect** reconnects that cluster
+while preserving its resource tabs. Cluster identities remain the original
+kubeconfig context names.
+
+
 ## Running
 
 ```sh
@@ -265,7 +308,8 @@ cargo run -p beacon
 ```
 
 Logs go to the platform data directory (`~/Library/Application Support/dev.beacon.Beacon/logs`
-on macOS). Choose **View → App logs** in the top menu bar, press **⌘⇧L**
+on macOS). Choose **View → App logs** on macOS or **Menu → App logs** on
+Windows/Linux, press **⌘⇧L**
 (**Ctrl+Shift+L** on Windows/Linux), or choose **Open app logs** in the
 command palette to open a separate log window. Reopening focuses the existing
 window. It follows the latest daily file,

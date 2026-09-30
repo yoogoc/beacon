@@ -95,6 +95,27 @@ pub async fn run(
     container: Option<&str>,
     command: &[String],
 ) -> Result<Output> {
+    run_with_transport(
+        client,
+        context,
+        namespace,
+        pod,
+        container,
+        command,
+        &crate::connection::Transport::default(),
+    )
+    .await
+}
+
+pub(crate) async fn run_with_transport(
+    client: &kube::Client,
+    context: &str,
+    namespace: &str,
+    pod: &str,
+    container: Option<&str>,
+    command: &[String],
+    transport: &crate::connection::Transport,
+) -> Result<Output> {
     if command.is_empty() {
         return Err(Error::Forward {
             what: "nothing to run".to_string(),
@@ -123,6 +144,7 @@ pub async fn run(
                     namespace,
                     pod,
                     container,
+                    transport,
                 },
                 command,
             )

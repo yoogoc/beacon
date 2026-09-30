@@ -7,6 +7,7 @@
 
 pub mod access;
 pub mod config;
+pub mod connection;
 pub mod data;
 pub mod discovery;
 pub mod error;

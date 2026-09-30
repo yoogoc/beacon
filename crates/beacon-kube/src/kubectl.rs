@@ -16,6 +16,7 @@ fn command(
     pod: &str,
     container: Option<&str>,
     argv: &[String],
+    transport: &crate::connection::Transport,
 ) -> CommandBuilder {
     let mut command = CommandBuilder::new("kubectl");
     command.args([
@@ -31,6 +32,13 @@ fn command(
     ]);
     if let Some(container) = container {
         command.args(["--container", container]);
+    }
+    if let Some(config) = &transport.config {
+        command.arg("--kubeconfig");
+        command.arg(config.path());
+    }
+    for (name, value) in transport.environment() {
+        command.env(name, value);
     }
     command.arg("--");
     command.args(argv);
@@ -170,6 +178,7 @@ pub(crate) struct Target<'a> {
     pub namespace: &'a str,
     pub pod: &'a str,
     pub container: Option<&'a str>,
+    pub transport: &'a crate::connection::Transport,
 }
 
 pub(crate) async fn run(target: Target<'_>, argv: &[String]) -> crate::Result<crate::exec::Output> {
@@ -192,6 +201,9 @@ pub(crate) async fn run(target: Target<'_>, argv: &[String]) -> crate::Result<cr
     if let Some(container) = target.container {
         command.args(["--container", container]);
     }
+    if let Some(config) = &target.transport.config {
+        command.arg("--kubeconfig").arg(config.path());
+    }
     command
         .arg("--")
         .args(argv)
@@ -200,6 +212,9 @@ pub(crate) async fn run(target: Target<'_>, argv: &[String]) -> crate::Result<cr
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .kill_on_drop(true);
+    for (name, value) in target.transport.environment() {
+        command.env(name, value);
+    }
     let mut child = command.spawn().map_err(failure)?;
     let stdout = child.stdout.take();
     let stderr = child.stderr.take();
@@ -248,6 +263,7 @@ pub(crate) async fn attach(
         target.pod,
         target.container,
         argv,
+        target.transport,
     );
     let runtime = tokio::runtime::Handle::current();
     let mut process = tokio::task::spawn_blocking(move || spawn(command, &runtime))
@@ -309,6 +325,7 @@ mod tests {
                 "-c".into(),
                 "printf '$HOME; hello world'".into(),
             ],
+            &crate::connection::Transport::default(),
         );
         let args: Vec<_> = command
             .get_argv()

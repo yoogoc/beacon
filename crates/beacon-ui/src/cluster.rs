@@ -370,6 +370,7 @@ impl ClusterView {
                 names
             },
             clusters: Vec::new(),
+            cluster_aliases: Default::default(),
             objects: self.table.read(cx).delegate().keys(),
             operations: self.operations(cx),
             ports: self.selected_ports(cx),

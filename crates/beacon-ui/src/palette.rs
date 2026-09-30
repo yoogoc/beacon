@@ -102,6 +102,7 @@ impl Section {
 pub enum Action {
     OpenAppLogs,
     OpenShortcuts,
+    OpenSettings,
     NewTab,
     CloseTab,
     ToggleTheme,
@@ -111,9 +112,10 @@ pub enum Action {
 }
 
 impl Action {
-    const ALL: [Self; 8] = [
+    const ALL: [Self; 9] = [
         Self::OpenAppLogs,
         Self::OpenShortcuts,
+        Self::OpenSettings,
         Self::NewTab,
         Self::CloseTab,
         Self::ToggleTheme,
@@ -126,6 +128,7 @@ impl Action {
         match self {
             Self::OpenAppLogs => "Open app logs",
             Self::OpenShortcuts => "Keyboard shortcuts",
+            Self::OpenSettings => "Application settings",
             Self::NewTab => "Open another tab on this cluster",
             Self::CloseTab => "Close this tab",
             Self::ToggleTheme => "Toggle light and dark",
@@ -170,6 +173,7 @@ pub struct Sources {
     pub kinds: Vec<Arc<Kind>>,
     pub namespaces: Vec<String>,
     pub clusters: Vec<ContextEntry>,
+    pub cluster_aliases: std::collections::HashMap<ClusterId, String>,
     pub objects: Vec<ObjectRef>,
     /// What can be done to the selected object, already marked with whether
     /// this user may do it. Empty when nothing is selected.
@@ -255,7 +259,16 @@ impl Palette {
                 .iter()
                 .map(|cluster| {
                     (
-                        format!("{} {}", cluster.label(), cluster.id),
+                        format!(
+                            "{} {} {}",
+                            self.sources
+                                .cluster_aliases
+                                .get(&cluster.id)
+                                .map(String::as_str)
+                                .unwrap_or_default(),
+                            cluster.label(),
+                            cluster.id
+                        ),
                         Choice::Cluster(cluster.id.clone()),
                     )
                 })
@@ -313,10 +326,16 @@ impl Palette {
             Choice::Namespace(Some(namespace)) => SharedString::from(namespace.clone()),
             Choice::Cluster(cluster) => SharedString::from(
                 self.sources
-                    .clusters
-                    .iter()
-                    .find(|entry| &entry.id == cluster)
-                    .map_or_else(|| cluster.display_name().to_string(), ContextEntry::label),
+                    .cluster_aliases
+                    .get(cluster)
+                    .map(|alias| format!("{alias} · {}", cluster.display_name()))
+                    .unwrap_or_else(|| {
+                        self.sources
+                            .clusters
+                            .iter()
+                            .find(|entry| &entry.id == cluster)
+                            .map_or_else(|| cluster.display_name().to_string(), ContextEntry::label)
+                    }),
             ),
             Choice::Action(action) => SharedString::from(action.label()),
             Choice::Operation(operation) => SharedString::from(operation.describe()),

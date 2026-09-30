@@ -354,3 +354,203 @@ mod tests {
         assert_eq!(metrics.len(), 2);
     }
 }
+
+/// Prometheus queries return CPU in cores and memory in bytes. Pod vectors
+/// must carry namespace/pod labels; node vectors must carry a node label.
+pub async fn fetch_prometheus(
+    proxy: &crate::connection::Proxy,
+    config: &crate::connection::Prometheus,
+) -> Result<Metrics, String> {
+    config.validate()?;
+    let client = proxy
+        .http_client()
+        .map_err(|_| "Could not create the metrics HTTP client.".to_string())?;
+    let (pod_cpu, pod_memory, node_cpu, node_memory) = tokio::join!(
+        prometheus_query(&client, config, &config.pod_cpu),
+        prometheus_query(&client, config, &config.pod_memory),
+        prometheus_query(&client, config, &config.node_cpu),
+        prometheus_query(&client, config, &config.node_memory),
+    );
+    let mut metrics = Metrics::default();
+    for (response, pod, cpu) in [
+        (pod_cpu?, true, true),
+        (pod_memory?, true, false),
+        (node_cpu?, false, true),
+        (node_memory?, false, false),
+    ] {
+        merge_vector(&mut metrics, &response, pod, cpu)?;
+    }
+    Ok(metrics)
+}
+
+async fn prometheus_query(
+    client: &reqwest::Client,
+    config: &crate::connection::Prometheus,
+    query: &str,
+) -> Result<Value, String> {
+    let endpoint = format!("{}/api/v1/query", config.url.trim_end_matches('/'));
+    let mut request = client.get(endpoint).query(&[("query", query)]);
+    if !config.bearer_token.is_empty() {
+        request = request.bearer_auth(&config.bearer_token);
+    }
+    let response = request.send().await.map_err(|_| {
+        "Could not reach Prometheus. Check its URL, proxy and TLS certificate.".to_string()
+    })?;
+    if !response.status().is_success() {
+        return Err(format!(
+            "Prometheus returned HTTP {}.",
+            response.status().as_u16()
+        ));
+    }
+    let data: Value = response
+        .json()
+        .await
+        .map_err(|_| "Prometheus returned invalid JSON.".to_string())?;
+    if data["status"] != "success" {
+        return Err(
+            "Prometheus could not evaluate a query. Check the configured PromQL expressions."
+                .into(),
+        );
+    }
+    Ok(data)
+}
+
+fn merge_vector(
+    metrics: &mut Metrics,
+    response: &Value,
+    pod: bool,
+    cpu: bool,
+) -> Result<(), String> {
+    if response["data"]["resultType"] != "vector" {
+        return Err("Metrics queries must return instant vectors.".into());
+    }
+    let entries = response["data"]["result"]
+        .as_array()
+        .ok_or("Prometheus response has no result vector.")?;
+    for entry in entries {
+        let labels = &entry["metric"];
+        let key = if pod {
+            match (
+                labels["namespace"].as_str().filter(|v| !v.is_empty()),
+                labels["pod"].as_str().filter(|v| !v.is_empty()),
+            ) {
+                (Some(namespace), Some(name)) => format!("{namespace}/{name}"),
+                _ => return Err("Pod queries must return namespace and pod labels.".into()),
+            }
+        } else {
+            labels["node"]
+                .as_str()
+                .filter(|v| !v.is_empty())
+                .ok_or("Node queries must return a node label.")?
+                .to_string()
+        };
+        let Some(value) = entry["value"][1]
+            .as_str()
+            .and_then(|v| v.parse::<f64>().ok())
+            .filter(|v| v.is_finite() && *v >= 0.)
+        else {
+            continue;
+        };
+        let usage = metrics.usage.entry(key).or_default();
+        if cpu {
+            usage.cpu_millis = usage
+                .cpu_millis
+                .saturating_add((value * 1000.).round() as i64);
+        } else {
+            usage.memory_bytes = usage.memory_bytes.saturating_add(value.round() as i64);
+        }
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod prometheus_tests {
+    use super::*;
+    use serde_json::json;
+    #[test]
+    fn vectors_merge_by_resource_and_reject_missing_labels() {
+        let mut metrics = Metrics::default();
+        let vector = |metric: Value, value: &str| json!({"data":{"resultType":"vector","result":[{"metric":metric,"value":[123,value]}]}});
+        merge_vector(
+            &mut metrics,
+            &vector(json!({"namespace":"default","pod":"api"}), "0.125"),
+            true,
+            true,
+        )
+        .unwrap();
+        merge_vector(
+            &mut metrics,
+            &vector(json!({"namespace":"default","pod":"api"}), "1048576"),
+            true,
+            false,
+        )
+        .unwrap();
+        merge_vector(
+            &mut metrics,
+            &vector(json!({"node":"worker"}), "1.5"),
+            false,
+            true,
+        )
+        .unwrap();
+        assert_eq!(
+            metrics.get(Some("default"), "api"),
+            Some(Usage {
+                cpu_millis: 125,
+                memory_bytes: 1048576
+            })
+        );
+        assert_eq!(metrics.get(None, "worker").unwrap().cpu_millis, 1500);
+        assert!(
+            merge_vector(
+                &mut metrics,
+                &vector(json!({"instance":"worker:9100"}), "1"),
+                false,
+                true
+            )
+            .is_err()
+        );
+        merge_vector(
+            &mut metrics,
+            &vector(json!({"node":"worker"}), "NaN"),
+            false,
+            true,
+        )
+        .unwrap();
+        assert_eq!(metrics.get(None, "worker").unwrap().cpu_millis, 1500);
+    }
+    #[tokio::test]
+    async fn http_queries_keep_base_path_and_auth_and_merge_results() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            for _ in 0..4 {
+                let (mut socket, _) = listener.accept().await.unwrap();
+                let mut request = vec![0; 8192];
+                let n = socket.read(&mut request).await.unwrap();
+                let request = String::from_utf8_lossy(&request[..n]).to_lowercase();
+                assert!(request.starts_with("get /prometheus/api/v1/query?query="));
+                assert!(request.contains("authorization: bearer test-token"));
+                let body = r#"{"status":"success","data":{"resultType":"vector","result":[]}}"#;
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    body.len(),
+                    body
+                );
+                socket.write_all(response.as_bytes()).await.unwrap();
+            }
+        });
+        let config = crate::connection::Prometheus {
+            url: format!("http://{addr}/prometheus"),
+            bearer_token: "test-token".into(),
+            ..Default::default()
+        };
+        assert!(
+            fetch_prometheus(&crate::connection::Proxy::Direct, &config)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        server.await.unwrap();
+    }
+}

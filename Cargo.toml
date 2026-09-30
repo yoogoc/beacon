@@ -29,7 +29,7 @@ gpui-kit = { version = "=0.6.4", features = ["tree-sitter-yaml"] }
 # toolchain dependency. `http-proxy` is not optional in practice: kube reads
 # HTTPS_PROXY from the environment and refuses to connect at all when it is set
 # and the feature is off, which is most corporate laptops.
-kube = { version = "4.0", features = ["runtime", "ws", "gzip", "oidc", "http-proxy"] }
+kube = { version = "4.0", features = ["runtime", "ws", "gzip", "oidc", "http-proxy", "socks5"] }
 k8s-openapi = { version = "0.28", features = ["latest"] }
 
 # Async. kube/hyper need a tokio reactor; GPUI has its own executor. These two
@@ -64,6 +64,9 @@ tracing = "0.1"
 tracing-appender = "0.2"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 directories = "6"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "socks"] }
+url = "2"
+tempfile = "3"
 
 [profile.dev]
 # GPUI in debug is slow enough to matter when scrolling a few thousand rows.
