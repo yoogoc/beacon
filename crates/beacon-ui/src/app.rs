@@ -13,6 +13,7 @@
 
 use std::{
     collections::{BTreeSet, HashMap, HashSet},
+    path::PathBuf,
     sync::Arc,
 };
 
@@ -22,7 +23,7 @@ use beacon_kube::{
 };
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::Input;
-use gpui_kit::component::menu::PopupMenuItem;
+use gpui_kit::component::menu::{DropdownMenu as _, PopupMenuItem};
 use gpui_kit::component::popover::Popover;
 use gpui_kit::component::sidebar::{Sidebar, SidebarGroup, SidebarMenu, SidebarMenuItem};
 use gpui_kit::component::spinner::Spinner;
@@ -34,6 +35,7 @@ use gpui_kit::component::{
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
+use crate::app_logs;
 use crate::bridge::Bridge;
 use crate::cluster::{ClusterView, Mode, NavigationChanged, ResourceRequested};
 use crate::palette::{self, Choice, Palette, PaletteEvent};
@@ -43,6 +45,8 @@ gpui_kit::actions!(
     beacon,
     [
         TogglePalette,
+        OpenAppLogs,
+        Quit,
         NewTab,
         CloseTab,
         NextTab,
@@ -59,7 +63,21 @@ const TAB_WIDTH: Pixels = px(190.);
 /// Bound without a context, so they work wherever focus happens to be -- the
 /// palette is no use if it only opens when nothing is selected, and neither is
 /// a tab shortcut that stops working once you click into the table.
-pub fn init(cx: &mut App) {
+pub fn init(log_directory: PathBuf, cx: &mut App) {
+    app_logs::init(log_directory, cx);
+    cx.on_action(|_: &OpenAppLogs, cx| app_logs::open(cx));
+    cx.on_action(|_: &Quit, cx| cx.quit());
+
+    #[cfg(target_os = "macos")]
+    cx.set_menus([
+        Menu::new("Beacon").items([
+            MenuItem::os_submenu("Services", SystemMenuType::Services),
+            MenuItem::separator(),
+            MenuItem::action("Quit Beacon", Quit),
+        ]),
+        Menu::new("File").items([MenuItem::action("Close", CloseTab)]),
+        Menu::new("View").items([MenuItem::action("App logs", OpenAppLogs)]),
+    ]);
     let modifier = if cfg!(target_os = "macos") {
         "cmd"
     } else {
@@ -67,7 +85,9 @@ pub fn init(cx: &mut App) {
     };
 
     cx.bind_keys([
+        KeyBinding::new(&format!("{modifier}-q"), Quit, None),
         KeyBinding::new(&format!("{modifier}-k"), TogglePalette, None),
+        KeyBinding::new(&format!("{modifier}-shift-l"), OpenAppLogs, None),
         KeyBinding::new(&format!("{modifier}-t"), NewTab, None),
         KeyBinding::new(&format!("{modifier}-w"), CloseTab, None),
         // Not `cmd-shift-[` and friends: ctrl-tab is the one pair that means
@@ -723,6 +743,11 @@ impl BeaconApp {
                 self.close(self.active, window, cx);
                 return;
             }
+            Choice::Action(palette::Action::OpenAppLogs) => {
+                app_logs::open(cx);
+                cx.notify();
+                return;
+            }
             Choice::Action(palette::Action::ToggleTheme) => {
                 toggle_mode(window, cx);
                 cx.notify();
@@ -753,7 +778,10 @@ impl BeaconApp {
             // Handled above, before the cluster was required.
             Choice::Cluster(_)
             | Choice::Action(
-                palette::Action::ToggleTheme | palette::Action::NewTab | palette::Action::CloseTab,
+                palette::Action::ToggleTheme
+                | palette::Action::OpenAppLogs
+                | palette::Action::NewTab
+                | palette::Action::CloseTab,
             ) => {}
         });
 
@@ -791,7 +819,20 @@ impl BeaconApp {
                 .justify_between()
                 .px_2()
                 .gap_3()
-                .child(div().font_weight(FontWeight::SEMIBOLD).child("Beacon"))
+                .child(
+                    h_flex()
+                        .gap_3()
+                        .child(div().font_weight(FontWeight::SEMIBOLD).child("Beacon"))
+                        .child(
+                            Button::new("view-menu")
+                                .ghost()
+                                .small()
+                                .label("View")
+                                .dropdown_menu(|menu, _, _| {
+                                    menu.menu("App logs", Box::new(OpenAppLogs))
+                                }),
+                        ),
+                )
                 .child(
                     Button::new("toggle-theme")
                         .ghost()

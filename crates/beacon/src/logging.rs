@@ -15,9 +15,15 @@ use tracing_subscriber::{EnvFilter, fmt, prelude::*};
 /// `hyper` at debug level are particularly loud once watches are running.
 const DEFAULT_FILTER: &str = "beacon=info,beacon_ui=info,beacon_kube=info,warn";
 
-/// Installs the subscriber. The returned guard flushes the file writer, so it
-/// must stay alive for the whole of `main`.
-pub fn init() -> anyhow::Result<WorkerGuard> {
+/// The actual log directory and the guard that flushes the file writer.
+/// Keep this alive for the whole of `main`.
+pub struct Logging {
+    pub directory: PathBuf,
+    _guard: WorkerGuard,
+}
+
+/// Installs the subscriber and exposes its directory to the log viewer.
+pub fn init() -> anyhow::Result<Logging> {
     let dir = log_dir()?;
     std::fs::create_dir_all(&dir)
         .with_context(|| format!("could not create the log directory {}", dir.display()))?;
@@ -37,7 +43,10 @@ pub fn init() -> anyhow::Result<WorkerGuard> {
         .init();
 
     tracing::info!(dir = %dir.display(), "logging to file");
-    Ok(guard)
+    Ok(Logging {
+        directory: dir,
+        _guard: guard,
+    })
 }
 
 fn log_dir() -> anyhow::Result<PathBuf> {

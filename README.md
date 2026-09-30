@@ -226,7 +226,16 @@ cargo run -p beacon
 ```
 
 Logs go to the platform data directory (`~/Library/Application Support/dev.beacon.Beacon/logs`
-on macOS). `RUST_LOG=beacon=debug,kube=debug` turns up the volume.
+on macOS). Choose **View → App logs** in the top menu bar, press **⌘⇧L**
+(**Ctrl+Shift+L** on Windows/Linux), or choose **Open app logs** in the
+command palette to open a separate log window. Reopening focuses the existing
+window. It follows the latest daily file,
+including earlier launches that day, and supports case-insensitive search,
+**Warn + Error** / **Error** filters, **Pause** / **Resume**, and copying the
+filtered lines. Reads run in the background and keep at most the latest 5,000
+lines from a 1 MiB tail. **Open log folder** opens the directory for historical
+files; closing the window stops polling. This is available without a cluster
+connection. `RUST_LOG=beacon=debug,kube=debug` turns up the volume.
 
 ## Checking a change against a real cluster
 

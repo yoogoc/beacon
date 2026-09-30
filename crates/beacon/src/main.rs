@@ -14,7 +14,8 @@ fn main() -> anyhow::Result<()> {
     //    only sound while we are still single-threaded.
     // 2. It has to happen before any cluster connection, because kubeconfig
     //    `exec` credential plugins are looked up on PATH.
-    let _guard = logging::init()?;
+    let logging = logging::init()?;
+    let log_directory = logging.directory.clone();
     beacon_kube::shell_env::merge_login_shell_path();
 
     tracing::info!(
@@ -25,9 +26,9 @@ fn main() -> anyhow::Result<()> {
 
     gpui_kit::application()
         .with_assets(gpui_kit::assets::Assets)
-        .run(|cx: &mut App| {
+        .run(move |cx: &mut App| {
             gpui_kit::init(cx);
-            beacon_ui::app::init(cx);
+            beacon_ui::app::init(log_directory, cx);
 
             if let Err(err) = Bridge::init(cx) {
                 // Without a runtime there is nothing to show, and a window that

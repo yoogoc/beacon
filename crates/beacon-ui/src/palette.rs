@@ -100,6 +100,7 @@ impl Section {
 /// Something the palette can do that is not navigation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Action {
+    OpenAppLogs,
     NewTab,
     CloseTab,
     ToggleTheme,
@@ -109,7 +110,8 @@ pub enum Action {
 }
 
 impl Action {
-    const ALL: [Self; 6] = [
+    const ALL: [Self; 7] = [
+        Self::OpenAppLogs,
         Self::NewTab,
         Self::CloseTab,
         Self::ToggleTheme,
@@ -120,6 +122,7 @@ impl Action {
 
     fn label(&self) -> &'static str {
         match self {
+            Self::OpenAppLogs => "Open app logs",
             Self::NewTab => "Open another tab on this cluster",
             Self::CloseTab => "Close this tab",
             Self::ToggleTheme => "Toggle light and dark",

@@ -6,6 +6,7 @@
 pub mod actions;
 mod activity;
 pub mod app;
+mod app_logs;
 pub mod bridge;
 pub mod catalog;
 pub mod cluster;
