@@ -306,8 +306,15 @@ pub async fn apply(
         params = params.dry_run();
     }
 
+    // GET responses include field ownership records, but Kubernetes forbids
+    // submitting them in a Server-Side Apply request.
+    let mut object = object.clone();
+    if let Some(metadata) = object.get_mut("metadata").and_then(Value::as_object_mut) {
+        metadata.remove("managedFields");
+    }
+
     match api(client, resource, namespace)
-        .patch(name, &params, &Patch::Apply(object))
+        .patch(name, &params, &Patch::Apply(&object))
         .await
     {
         Ok(applied) => {
@@ -400,6 +407,218 @@ fn manager_and_rest(fragment: &str) -> Option<(String, &str)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Model the API server's Apply rejection, including manifests copied from
+    /// a GET response or pasted into the YAML editor.
+    #[tokio::test]
+    async fn apply_omits_managed_fields_from_the_request() {
+        use std::time::Duration;
+        use tokio::{
+            io::{AsyncReadExt, AsyncWriteExt},
+            net::TcpListener,
+        };
+
+        for (group, kind, plural, namespace, managed_fields, force, dry_run) in [
+            (
+                "",
+                "ConfigMap",
+                "configmaps",
+                Some("default"),
+                Some(json!([{
+                    "manager": "kubectl",
+                    "operation": "Apply",
+                    "apiVersion": "v1",
+                    "fieldsType": "FieldsV1",
+                    "fieldsV1": {"f:data": {"f:setting": {}}}
+                }])),
+                false,
+                false,
+            ),
+            (
+                "",
+                "ConfigMap",
+                "configmaps",
+                Some("default"),
+                Some(json!([])),
+                true,
+                false,
+            ),
+            (
+                "example.io",
+                "Widget",
+                "widgets",
+                None,
+                Some(json!([{"manager": "controller", "operation": "Update"}])),
+                false,
+                true,
+            ),
+            (
+                "example.io",
+                "Widget",
+                "widgets",
+                Some("default"),
+                Some(Value::Null),
+                true,
+                true,
+            ),
+            (
+                "",
+                "ConfigMap",
+                "configmaps",
+                Some("default"),
+                None,
+                false,
+                true,
+            ),
+        ] {
+            let resource = ApiResource::from_gvk_with_plural(
+                &kube::core::GroupVersionKind::gvk(group, "v1", kind),
+                plural,
+            );
+            let mut object = json!({
+                "apiVersion": resource.api_version,
+                "kind": kind,
+                "metadata": {
+                    "name": "apply-test",
+                    "uid": "original-uid",
+                    "resourceVersion": "42",
+                    "labels": {"app": "test"},
+                    "annotations": {"note": "edited"},
+                    "ownerReferences": [{
+                        "apiVersion": "v1", "kind": "ConfigMap",
+                        "name": "owner", "uid": "owner-uid"
+                    }]
+                }
+            });
+            if let Some(namespace) = namespace {
+                object["metadata"]["namespace"] = json!(namespace);
+            }
+            if let Some(managed_fields) = managed_fields {
+                object["metadata"]["managedFields"] = managed_fields;
+            }
+            if kind == "ConfigMap" {
+                object["data"] = json!({"setting": "edited value", "untouched": "keep"});
+            } else {
+                // A similarly named field inside a CRD's payload is user data.
+                object["spec"] = json!({
+                    "replicas": 3,
+                    "metadata": {"managedFields": ["custom value"]}
+                });
+                object["status"] = json!({"ready": true});
+            }
+            let original = object.clone();
+            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let address = listener.local_addr().unwrap();
+            let server = tokio::spawn(async move {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                let mut bytes = Vec::new();
+                while !bytes.ends_with(b"\r\n\r\n") {
+                    bytes.push(stream.read_u8().await.unwrap());
+                    assert!(bytes.len() < 8192);
+                }
+                let header = String::from_utf8(bytes).unwrap();
+                let length: usize = header
+                    .lines()
+                    .filter_map(|line| line.split_once(':'))
+                    .find(|(name, _)| name.eq_ignore_ascii_case("content-length"))
+                    .unwrap()
+                    .1
+                    .trim()
+                    .parse()
+                    .unwrap();
+                let mut body = vec![0; length];
+                stream.read_exact(&mut body).await.unwrap();
+                let body: Value = serde_json::from_slice(&body).unwrap();
+                let rejected = body
+                    .pointer("/metadata/managedFields")
+                    .is_some_and(|value| !value.is_null());
+                let (status, response) = if rejected {
+                    (
+                        "422 Unprocessable Entity",
+                        json!({
+                            "apiVersion": "v1", "kind": "Status", "status": "Failure",
+                            "reason": "Invalid", "code": 422,
+                            "message": "metadata.managedFields must be nil"
+                        }),
+                    )
+                } else {
+                    ("200 OK", body.clone())
+                };
+                let response = response.to_string();
+                stream
+                    .write_all(
+                        format!(
+                            "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{response}",
+                            response.len()
+                        )
+                        .as_bytes(),
+                    )
+                    .await
+                    .unwrap();
+                (header, body)
+            });
+            let config = kube::Config::new(format!("http://{address}").parse().unwrap());
+            let client = kube::Client::try_from(config).unwrap();
+            let applied = tokio::time::timeout(
+                Duration::from_secs(5),
+                apply(
+                    &client,
+                    &resource,
+                    namespace,
+                    "apply-test",
+                    &object,
+                    force,
+                    dry_run,
+                ),
+            )
+            .await
+            .unwrap()
+            .expect("Apply must omit server-managed fields");
+            assert!(matches!(applied, Applied::Ok(_)));
+            let (header, sent) = server.await.unwrap();
+            let mut request_line = header.lines().next().unwrap().split_whitespace();
+            assert_eq!(request_line.next(), Some("PATCH"));
+            let url = url::Url::parse(&format!("http://{address}{}", request_line.next().unwrap()))
+                .unwrap();
+            let prefix = if group.is_empty() {
+                "/api/v1".to_string()
+            } else {
+                format!("/apis/{group}/v1")
+            };
+            let scope = namespace
+                .map(|ns| format!("/namespaces/{ns}"))
+                .unwrap_or_default();
+            assert_eq!(url.path(), format!("{prefix}{scope}/{plural}/apply-test"));
+            let query: std::collections::HashMap<_, _> = url.query_pairs().into_owned().collect();
+            assert_eq!(
+                query.get("fieldManager").map(String::as_str),
+                Some(FIELD_MANAGER)
+            );
+            assert_eq!(
+                query.get("force").map(String::as_str) == Some("true"),
+                force
+            );
+            assert_eq!(
+                query.get("dryRun").map(String::as_str) == Some("All"),
+                dry_run
+            );
+            assert!(
+                header
+                    .to_lowercase()
+                    .contains("content-type: application/apply-patch+yaml")
+            );
+            let mut expected = original.clone();
+            expected["metadata"]
+                .as_object_mut()
+                .unwrap()
+                .remove("managedFields");
+            assert_eq!(sent, expected);
+            assert_eq!(
+                object, original,
+                "Applying must not change the editor's object"
+            );
+        }
+    }
 
     fn create_kind(namespaced: bool) -> Kind {
         Kind {
