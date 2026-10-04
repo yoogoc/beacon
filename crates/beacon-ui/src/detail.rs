@@ -427,6 +427,11 @@ impl DetailView {
         let resource = self.kind.resource.clone();
         let target = self.target.clone();
 
+        let folding = crate::settings::store(cx)
+            .read(cx)
+            .preferences
+            .yaml_folding(self.session.id());
+
         let fetching = Bridge::global(cx).run(async move {
             let object = session
                 .get_object(resource, target.namespace.clone(), target.name.clone())
@@ -435,7 +440,9 @@ impl DetailView {
 
             // Serialising is not free on a large object, and it is pure CPU
             // with no reason to be on the foreground thread.
-            serde_saphyr::to_string(&object).map_err(|error| error.to_string())
+            let yaml = serde_saphyr::to_string(&object).map_err(|error| error.to_string())?;
+            let folds = folding.initial_lines(&yaml);
+            Ok::<_, String>((yaml, folds))
         });
 
         self._yaml_task = Some(cx.spawn_in(window, async move |this, cx| {
@@ -443,9 +450,11 @@ impl DetailView {
 
             let _ = this.update_in(cx, |view, window, cx| {
                 match result {
-                    Ok(Ok(yaml)) => {
-                        view.yaml_editor
-                            .update(cx, |editor, cx| editor.set_value(yaml, window, cx));
+                    Ok(Ok((yaml, folds))) => {
+                        view.yaml_editor.update(cx, |editor, cx| {
+                            editor.set_value(yaml, window, cx);
+                            editor.set_initial_folded_lines(folds, cx);
+                        });
                         view.yaml = Yaml::Ready;
                     }
                     Ok(Err(error)) => view.yaml = Yaml::Failed(error),
@@ -1843,6 +1852,33 @@ mod tests {
             ),
             namespaced: true,
             verbs: vec!["list".into(), "watch".into()],
+        }
+    }
+
+    #[test]
+    fn default_yaml_folds_only_match_the_requested_resource_paths() {
+        let yaml = reformat("metadata:\n  name: web\n  annotations:\n    status:\n      text: value\n  managedFields:\n    - manager: beacon\n      operation: Apply\nspec:\n  status:\n    nested: value\n  managedFields:\n    - nested: value\nstatus:\n  phase: Running\n  ready: true\n").unwrap();
+        let headers: Vec<_> = crate::yaml_folding::YamlFolding::default()
+            .initial_lines(&yaml)
+            .into_iter()
+            .map(|line| yaml.lines().nth(line).unwrap())
+            .collect();
+        assert_eq!(headers, ["  managedFields:", "status:"]);
+    }
+
+    #[test]
+    fn missing_or_inline_yaml_fields_do_not_request_folding() {
+        for yaml in [
+            "kind: ConfigMap\nmetadata:\n  name: web\n",
+            "metadata:\n  managedFields: []\nstatus: {}\n",
+            "data:\n  script: |\n    metadata:\n      managedFields:\n        - literal\n    status:\n      literal: value\n",
+        ] {
+            assert!(
+                crate::yaml_folding::YamlFolding::default()
+                    .initial_lines(yaml)
+                    .is_empty(),
+                "{yaml}"
+            );
         }
     }
 

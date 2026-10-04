@@ -145,6 +145,7 @@ pub(crate) struct ClusterSettings {
     /// None inherits the global proxy. Direct explicitly overrides it.
     pub proxy: Option<Proxy>,
     pub metrics: MetricsSource,
+    pub yaml_folding: crate::yaml_folding::YamlFolding,
 }
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
@@ -155,6 +156,12 @@ pub(crate) struct Preferences {
     pub clusters: BTreeMap<String, ClusterSettings>,
 }
 impl Preferences {
+    pub fn yaml_folding(&self, id: &ClusterId) -> crate::yaml_folding::YamlFolding {
+        self.clusters
+            .get(id.as_str())
+            .map(|cluster| cluster.yaml_folding.clone())
+            .unwrap_or_default()
+    }
     pub fn connection(&self, id: &ClusterId) -> ConnectionOptions {
         let cluster = self.clusters.get(id.as_str());
         ConnectionOptions {
@@ -175,6 +182,7 @@ impl Preferences {
             return Err("Selected custom theme is missing.".into());
         }
         for c in self.clusters.values() {
+            c.yaml_folding.validate()?;
             ConnectionOptions {
                 proxy: c.proxy.clone().unwrap_or_default(),
                 metrics: c.metrics.clone(),
@@ -404,6 +412,54 @@ mod tests {
                 .unwrap()
                 .count(),
             1
+        );
+    }
+
+    #[test]
+    fn old_cluster_preferences_keep_default_yaml_folding() {
+        let p: Preferences =
+            serde_json::from_str(r#"{"clusters":{"old":{"alias":"Legacy"}}}"#).unwrap();
+        for id in ["old", "unconfigured"] {
+            let folding = p.yaml_folding(&ClusterId::new(id));
+            let collapsed: Vec<_> = folding
+                .fields
+                .iter()
+                .filter(|field| field.collapsed)
+                .map(|field| field.path.as_str())
+                .collect();
+            assert_eq!(collapsed, ["metadata.managedFields", "status"]);
+        }
+    }
+
+    #[test]
+    fn yaml_folding_persists_independently_per_cluster() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut preferences = Preferences::default();
+        let mut first = ClusterSettings::default();
+        first.yaml_folding.fields.clear();
+        first
+            .yaml_folding
+            .add("spec.template.spec.containers")
+            .unwrap();
+        preferences.clusters.insert("first".into(), first);
+        let mut second = ClusterSettings::default();
+        second.yaml_folding.fields.clear();
+        preferences.clusters.insert("second".into(), second);
+        write(directory.path(), &preferences).unwrap();
+        let loaded = read(directory.path()).unwrap();
+        assert_eq!(
+            loaded.yaml_folding(&ClusterId::new("first")),
+            preferences.yaml_folding(&ClusterId::new("first"))
+        );
+        assert!(
+            loaded
+                .yaml_folding(&ClusterId::new("second"))
+                .fields
+                .is_empty()
+        );
+        assert_eq!(
+            loaded.yaml_folding(&ClusterId::new("unknown")),
+            Default::default()
         );
     }
     #[test]

@@ -1,6 +1,7 @@
 [workspace]
 resolver = "3"
 members = ["crates/*"]
+exclude = ["vendor/gpui-base"]
 
 [workspace.package]
 version = "0.1.0"
@@ -79,3 +80,8 @@ opt-level = 3
 lto = "thin"
 codegen-units = 1
 strip = true
+
+# Keep the existing editor version with the initial-folds API patch documented
+# in vendor/gpui-base/BEACON-PATCHES.md.
+[patch.crates-io]
+gpui-base = { path = "vendor/gpui-base" }

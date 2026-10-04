@@ -71,6 +71,9 @@ Pod 列表以实心圆表示普通容器、空心圆表示 Init 容器，颜色�
 较大的对象使用可展开区块。容器详情涵盖端口、Requests / Limits、探针、环境变量、挂载、
 安全设置与运行状态，并分别展示普通、Init 和临时容器。
 
+YAML 打开时按当前集群的设置折叠字段，初始默认折叠 `metadata.managedFields` 和 `status`。
+点击行号旁的箭头可展开，切换详情标签页后保留手动展开状态。
+
 名称和命名空间只在详情头部显示。Labels 与 Annotations 每行使用 `key=value`，
 超过五项时默认收起其余项。Overview 的值可选中和复制。
 错误提示也可拖拽选中后通过 `Cmd+C`（macOS）或 `Ctrl+C`（Windows / Linux）复制；
@@ -152,6 +155,12 @@ Windows / Linux 使用应用菜单 **Menu → Settings…**。
 右键集群的 **Cluster settings…** 可设置别名、预设图标或导入 SVG、代理和 Metrics Source。
 别名与图标立即生效，原始上下文名称仍用于识别集群。
 连接与指标配置在下次连接时生效；**Save and reconnect** 立即重连并保留资源标签页。
+
+集群设置的 **YAML folding** 列出默认折叠字段，勾选表示打开 YAML 时折叠，取消全部勾选则默认全部展开。
+可勾选 Labels、Annotations 和 Spec，也可用 **Add field** 添加点分字段路径，
+例如 `spec.template.spec.containers`；列表内的字段路径适用于每个列表项。
+**Remove** 移除规则，**Restore defaults** 恢复默认设置。规则按集群单独保存在本地，
+**Save** 后下次打开资源 YAML 时生效，无需重连，不改动已打开编辑器的手动折叠状态或内容。
 
 指标默认来自 **Kubernetes Metrics API**，也可选择 **Prometheus** 或 **Disabled**。
 Prometheus 配置包含 Base URL、可选 Bearer Token 和四组 Pod / Node CPU / 内存查询：

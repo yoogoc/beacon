@@ -7,6 +7,7 @@ use beacon_kube::{
 use gpui_kit::component::{Disableable as _, Selectable as _};
 use gpui_kit::component::{
     button::{Button, ButtonVariants as _},
+    checkbox::Checkbox,
     input::{Input, InputState},
     menu::{DropdownMenu as _, PopupMenuItem},
 };
@@ -206,6 +207,8 @@ struct ClusterEditor {
     id: ClusterId,
     alias: Entity<InputState>,
     icon: ClusterIcon,
+    yaml_folding: crate::yaml_folding::YamlFolding,
+    yaml_field: Entity<InputState>,
     metrics: u8,
     url: Entity<InputState>,
     token: Entity<InputState>,
@@ -296,6 +299,8 @@ impl PreferencesView {
                     id,
                     alias: input("Cluster alias", cluster.alias, false, window, cx),
                     icon: cluster.icon,
+                    yaml_folding: cluster.yaml_folding,
+                    yaml_field: input("e.g. spec.template.spec.containers", "", false, window, cx),
                     metrics,
                     url: input("Prometheus URL", prom.url, false, window, cx),
                     token: input(
@@ -402,6 +407,13 @@ impl PreferencesView {
     }
     fn save(&mut self, reconnect: bool, window: &mut Window, cx: &mut Context<Self>) {
         let result = (|| {
+            // Save also accepts the field currently being entered, so a draft
+            // path is not silently discarded when the user clicks Save.
+            if let Page::Cluster(c) = &self.page
+                && !value(&c.yaml_field, cx).trim().is_empty()
+            {
+                self.add_yaml_field(window, cx)?;
+            }
             let theme = self.read_theme(cx)?;
             let proxy = self.proxy.read(cx)?;
             let mut preferences = settings::store(cx).read(cx).preferences.clone();
@@ -434,6 +446,7 @@ impl PreferencesView {
                             icon: c.icon.clone(),
                             proxy,
                             metrics,
+                            yaml_folding: c.yaml_folding.clone(),
                         },
                     );
                     target = Some(c.id.clone());
@@ -450,6 +463,8 @@ impl PreferencesView {
                 false,
                 if reconnect {
                     "Saved. Reconnecting cluster…"
+                } else if matches!(self.page, Page::Cluster(_)) {
+                    "Saved. YAML folding applies when resource YAML is next opened. No reconnect is needed for folding changes."
                 } else {
                     "Saved. Connection changes apply when the cluster next connects."
                 }
@@ -458,6 +473,87 @@ impl PreferencesView {
             Err(error) => (true, error),
         });
         cx.notify();
+    }
+
+    fn add_yaml_field(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Result<(), String> {
+        if let Page::Cluster(c) = &mut self.page {
+            c.yaml_folding.add(&value(&c.yaml_field, cx))?;
+            c.yaml_field
+                .update(cx, |input, cx| input.set_value("", window, cx));
+            self.message = None;
+            cx.notify();
+        }
+        Ok(())
+    }
+
+    fn yaml_folding_form(&self, c: &ClusterEditor, cx: &mut Context<Self>) -> AnyElement {
+        let rows = c
+            .yaml_folding
+            .fields
+            .iter()
+            .enumerate()
+            .map(|(index, field)| {
+                h_flex()
+                    .gap_2()
+                    .items_center()
+                    .justify_between()
+                    .child(
+                        Checkbox::new(("yaml-fold-field", index))
+                            .label(field.path.clone())
+                            .checked(field.collapsed)
+                            .on_click(cx.listener(move |view, checked, _, cx| {
+                                if let Page::Cluster(c) = &mut view.page
+                                    && let Some(field) = c.yaml_folding.fields.get_mut(index)
+                                {
+                                    field.collapsed = *checked;
+                                }
+                                view.message = None;
+                                cx.notify();
+                            })),
+                    )
+                    .child(
+                        Button::new(("remove-yaml-fold-field", index))
+                            .ghost()
+                            .label("Remove")
+                            .on_click(cx.listener(move |view, _, _, cx| {
+                                if let Page::Cluster(c) = &mut view.page
+                                    && index < c.yaml_folding.fields.len()
+                                {
+                                    c.yaml_folding.fields.remove(index);
+                                }
+                                view.message = None;
+                                cx.notify();
+                            })),
+                    )
+            });
+        v_flex().gap_2()
+            .child(heading("YAML folding"))
+            .child(hint("Checked fields collapse when resource YAML opens in this cluster. Uncheck all fields to keep YAML expanded. Changes apply on the next opening, without reconnecting.", cx))
+            .children(rows)
+            .child(h_flex().gap_2().items_center()
+                .child(div().flex_1().min_w_0().child(Input::new(&c.yaml_field)))
+                .child(Button::new("add-yaml-fold-field").outline().label("Add field")
+                    .on_click(cx.listener(|view, _, window, cx| {
+                        if let Err(error) = view.add_yaml_field(window, cx) {
+                            view.message = Some((true, error));
+                            cx.notify();
+                        }
+                    }))))
+            .child(hint("Use dot-separated paths, such as metadata.annotations or spec.template.spec.containers. Paths below a list apply to every item.", cx))
+            .child(Button::new("reset-yaml-folding").ghost().label("Restore defaults")
+                .on_click(cx.listener(|view, _, window, cx| {
+                    if let Page::Cluster(c) = &mut view.page {
+                        c.yaml_folding = Default::default();
+                        c.yaml_field.update(cx, |input, cx| input.set_value("", window, cx));
+                    }
+                    view.message = None;
+                    cx.notify();
+                })))
+            .into_any_element()
     }
     fn select_theme(&mut self, name: String, window: &mut Window, cx: &mut Context<Self>) {
         let custom = settings::store(cx)
@@ -864,6 +960,7 @@ impl PreferencesView {
             .when(matches!(c.icon, ClusterIcon::Custom(_)), |form| {
                 form.child(h_flex().gap_2().child(settings::icon(&c.icon)).child("Custom SVG icon"))
             })
+            .child(self.yaml_folding_form(c, cx))
             .child(self.proxy_form(cx))
             .child(heading("Metrics source"))
             .child(h_flex().gap_2().children(metrics))

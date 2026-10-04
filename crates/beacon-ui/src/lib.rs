@@ -27,6 +27,7 @@ pub mod table;
 pub mod terminal;
 pub mod theme;
 mod tls;
+mod yaml_folding;
 
 pub use app::BeaconApp;
 pub use bridge::Bridge;
