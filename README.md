@@ -103,14 +103,19 @@ Shell / Exec can automatically fall back to a locally installed `kubectl`.
 
 ## Workspace and shortcuts
 
-Selecting a resource type reuses a tab for the **same cluster and resource type**. Right-click and choose **Open in new tab** for another view.
+Selecting a resource type reuses a tab for the **same cluster and resource type** in the focused pane. Right-click and choose **Open in new tab** for another view.
 Each tab keeps its own namespace, search, filters, and details. The sidebar sits outside the tabs; drag the dividers to resize the sidebar, right-side details, and bottom Pod panel.
+
+Right-click a tab to split right or down, or move it to a separate window. Splits can be nested and resized.
+Drag tabs between groups or windows to merge them; drop near a pane's edge to create a split.
+Moving a tab preserves its view, YAML draft, and Pod tools. Windows share cluster connections and Watches.
 
 | Action | macOS | Windows / Linux |
 | --- | --- | --- |
 | Command palette | `⌘ K` | `Ctrl K` |
 | New / close tab | `⌘ T` / `⌘ W` | `Ctrl T` / `Ctrl W` |
 | Next / previous tab | `Ctrl Tab` / `Ctrl Shift Tab` | `Ctrl Tab` / `Ctrl Shift Tab` |
+| Split right / down | `⌘ ⌥ →` / `⌘ ⌥ ↓` | `Ctrl Alt →` / `Ctrl Alt ↓` |
 | Application settings | `⌘ ,` | `Ctrl ,` |
 | Application logs | `⌘ Shift L` | `Ctrl Shift L` |
 | Shortcut guide | `F1` | `F1` |

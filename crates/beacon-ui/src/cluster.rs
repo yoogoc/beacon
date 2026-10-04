@@ -344,6 +344,30 @@ impl ClusterView {
         (self.kind.clone(), self.scoped_to.clone(), self.mode)
     }
 
+    pub(crate) fn view_filters(&self, cx: &App) -> crate::table::ViewFilters {
+        self.table.read(cx).delegate().view_filters()
+    }
+
+    pub(crate) fn restore_filters(
+        &mut self,
+        filters: crate::table::ViewFilters,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.table.update(cx, |table, cx| {
+            table.delegate_mut().restore_filters(filters);
+            cx.notify();
+        });
+        let table = self.table.read(cx).delegate();
+        let name = table.filter().to_string();
+        let labels = table.label_filter().to_string();
+        self.row_search
+            .update(cx, |input, cx| input.set_value(name, window, cx));
+        self.label_input
+            .update(cx, |input, cx| input.set_value(labels, window, cx));
+        cx.notify();
+    }
+
     pub fn kind(&self) -> Option<&Kind> {
         self.kind.as_deref()
     }
@@ -1318,18 +1342,15 @@ impl ClusterView {
     /// Usage is the one thing here that is only interesting when it is
     /// current, so it is polled rather than watched -- metrics-server has no
     /// watch endpoint to use even if we wanted one.
-    fn watch_metrics(&mut self, window: &Window, cx: &mut Context<Self>) {
+    fn watch_metrics(&mut self, _window: &Window, cx: &mut Context<Self>) {
         let session = self.session.clone();
 
-        self._metrics = cx.spawn_in(window, async move |this, cx| {
+        self._metrics = cx.spawn(async move |this, cx| {
             loop {
-                let reading = match cx.update(|_, cx| {
+                let reading = cx.update(|cx| {
                     let session = session.clone();
                     Bridge::global(cx).run(async move { session.metrics().await })
-                }) {
-                    Ok(reading) => reading,
-                    Err(_) => return,
-                };
+                });
 
                 if let Ok(metrics) = reading.await {
                     let updated = this.update(cx, |view, cx| {

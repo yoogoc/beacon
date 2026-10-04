@@ -105,6 +105,10 @@ pub enum Action {
     OpenSettings,
     NewTab,
     CloseTab,
+    SplitRight,
+    SplitDown,
+    DetachTab,
+    MergeToMain,
     ToggleTheme,
     ToggleDetails,
     ClearFilter,
@@ -112,12 +116,16 @@ pub enum Action {
 }
 
 impl Action {
-    const ALL: [Self; 9] = [
+    const ALL: [Self; 13] = [
         Self::OpenAppLogs,
         Self::OpenShortcuts,
         Self::OpenSettings,
         Self::NewTab,
         Self::CloseTab,
+        Self::SplitRight,
+        Self::SplitDown,
+        Self::DetachTab,
+        Self::MergeToMain,
         Self::ToggleTheme,
         Self::ToggleDetails,
         Self::ClearFilter,
@@ -131,6 +139,10 @@ impl Action {
             Self::OpenSettings => "Application settings",
             Self::NewTab => "Open another tab on this cluster",
             Self::CloseTab => "Close this tab",
+            Self::SplitRight => "Split right — side by side",
+            Self::SplitDown => "Split down — stacked",
+            Self::DetachTab => "Move tab to new window",
+            Self::MergeToMain => "Move tab to main window",
             Self::ToggleTheme => "Toggle light and dark",
             Self::ToggleDetails => "Show or hide the details panel",
             Self::ClearFilter => "Clear the search filter",

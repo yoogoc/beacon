@@ -80,6 +80,7 @@ pub struct ResourceTable {
 }
 
 /// How the rows are ordered.
+#[derive(Clone)]
 enum Sort {
     /// Namespace, then name -- what `kubectl get -A` prints, and the order
     /// somebody scanning for a name expects.
@@ -90,7 +91,32 @@ enum Sort {
     },
 }
 
+#[derive(Clone)]
+pub(crate) struct ViewFilters {
+    sort: Sort,
+    filter: String,
+    fields: BTreeMap<Field, String>,
+    labels: LabelSelector,
+}
+
 impl ResourceTable {
+    pub(crate) fn view_filters(&self) -> ViewFilters {
+        ViewFilters {
+            sort: self.sort.clone(),
+            filter: self.filter.clone(),
+            fields: self.field_filters.clone(),
+            labels: self.label_selector.clone(),
+        }
+    }
+
+    pub(crate) fn restore_filters(&mut self, filters: ViewFilters) {
+        self.sort = filters.sort;
+        self.filter = filters.filter;
+        self.field_filters = filters.fields;
+        self.label_selector = filters.labels;
+        self.label_filter = self.label_selector.to_string();
+        self.reindex();
+    }
     pub fn new(columns: ColumnSet) -> Self {
         Self {
             context_view: None,
@@ -1136,6 +1162,48 @@ mod tests {
             ("env".into(), env.into()),
         ]));
         Arc::new(object)
+    }
+
+    #[test]
+    fn split_filters_preserve_order_without_sharing_filters_or_delete_selection() {
+        let objects: Vec<_> = [
+            ("web-one", "web", "prod", "Failed"),
+            ("web-two", "web", "qa", "Failed"),
+            ("web-running", "web", "prod", "Running"),
+            ("db-one", "db", "prod", "Failed"),
+        ]
+        .into_iter()
+        .map(|(name, app, env, phase)| {
+            let mut object = (*labeled(name, app, env)).clone();
+            object.data["status"] = serde_json::json!({"phase": phase});
+            Arc::new(object)
+        })
+        .collect();
+        let mut source = ResourceTable::new(ColumnSet::for_kind("", "Pod", true));
+        source.apply(vec![Delta::Reset(objects.clone())]);
+        source.set_filter("web");
+        source.set_label_filter("app=web").unwrap();
+        source.set_field_filter(Field::PodStatus, Some("Failed".into()));
+        source.sort_by(0, ColumnSort::Descending);
+        source.toggle_all_visible();
+        assert_eq!(source.selected_count(), 2);
+
+        let mut split = ResourceTable::new(ColumnSet::for_kind("", "Pod", true));
+        split.restore_filters(source.view_filters());
+        split.apply(vec![Delta::Reset(objects)]);
+        assert_eq!(split.len(), 2);
+        assert_eq!(split.key_at(0).unwrap().name, "web-two");
+        assert_eq!(split.selected_count(), 0);
+        assert_eq!(split.filter(), "web");
+        assert_eq!(split.label_filter(), "app=web");
+
+        source.set_filter("one");
+        assert_eq!(source.len(), 1);
+        assert_eq!(split.len(), 2);
+        split.set_label_filter("env=qa").unwrap();
+        assert_eq!(split.len(), 1);
+        assert_eq!(split.key_at(0).unwrap().name, "web-two");
+        assert_eq!(source.key_at(0).unwrap().name, "web-one");
     }
 
     #[test]

@@ -8,11 +8,11 @@
 //! cluster, and each has its own kind, namespace, filter and detail panel, so
 //! "Pods here and Deployments there" is two tabs rather than two windows.
 //! What a tab does *not* own is the connection: [`ClusterSession`] is keyed by
-//! cluster in [`BeaconApp::sessions`] and shared, so a second tab on a cluster
+//! cluster in the shared connection registry, so a second tab on a cluster
 //! costs a view and nothing else.
 
 use std::{
-    collections::{BTreeSet, HashMap, HashSet},
+    collections::{BTreeSet, HashMap},
     path::PathBuf,
     sync::Arc,
 };
@@ -21,25 +21,29 @@ use beacon_kube::{
     ClusterId, ClusterSession, Kind,
     config::{ContextEntry, Contexts},
 };
+use gpui_kit::base::{Tab as TabItem, Tabs};
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::Input;
 use gpui_kit::component::menu::{ContextMenuExt as _, DropdownMenu as _, PopupMenuItem};
 use gpui_kit::component::popover::Popover;
-use gpui_kit::component::resizable::{ResizableState, h_resizable, resizable_panel};
+use gpui_kit::component::resizable::{ResizableState, h_resizable, resizable_panel, v_resizable};
 use gpui_kit::component::sidebar::{Sidebar, SidebarGroup, SidebarMenu, SidebarMenuItem};
 use gpui_kit::component::spinner::Spinner;
-use gpui_kit::component::tab::{Tab as TabItem, TabBar};
 use gpui_kit::component::tooltip::Tooltip;
-use gpui_kit::component::{ActiveTheme as _, IconName, Sizable as _, TitleBar, h_flex, v_flex};
+use gpui_kit::component::{
+    ActiveTheme as _, IconName, Root, Sizable as _, TitleBar, h_flex, v_flex,
+};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
 use crate::app_logs;
-use crate::bridge::Bridge;
 use crate::cluster::{ClusterView, Mode, NavigationChanged, ResourceRequested};
+use crate::connections::{Connections, SharedConnections};
 use crate::copyable_text::{copy_item, copyable_text};
 use crate::palette::{self, Choice, Palette, PaletteEvent};
 use crate::theme::{BeaconTheme as _, Tone, toggle_mode};
+use crate::workspace::{Direction, Node, Pane, PaneId, Workspace};
+use gpui_kit::base::ElementExt as _;
 
 gpui_kit::actions!(
     beacon,
@@ -53,6 +57,10 @@ gpui_kit::actions!(
         CloseTab,
         NextTab,
         PreviousTab,
+        SplitRight,
+        SplitDown,
+        DetachTab,
+        MergeToMain,
         CloseDetail
     ]
 );
@@ -66,6 +74,9 @@ const TAB_WIDTH: Pixels = px(190.);
 /// palette is no use if it only opens when nothing is selected, and neither is
 /// a tab shortcut that stops working once you click into the table.
 pub fn init(log_directory: PathBuf, cx: &mut App) {
+    let connections = cx.new(|_| Connections::default());
+    cx.set_global(SharedConnections(connections));
+    cx.set_global(WorkspaceWindows::default());
     crate::settings::init(cx);
     crate::preferences::init(cx);
     app_logs::init(log_directory, cx);
@@ -85,7 +96,14 @@ pub fn init(log_directory: PathBuf, cx: &mut App) {
             MenuItem::action("Quit Beacon", Quit),
         ]),
         Menu::new("File").items([MenuItem::action("Close", CloseTab)]),
-        Menu::new("View").items([MenuItem::action("App logs", OpenAppLogs)]),
+        Menu::new("View").items([
+            MenuItem::action("Split right", SplitRight),
+            MenuItem::action("Split down", SplitDown),
+            MenuItem::action("Move tab to new window", DetachTab),
+            MenuItem::action("Move tab to main window", MergeToMain),
+            MenuItem::separator(),
+            MenuItem::action("App logs", OpenAppLogs),
+        ]),
         Menu::new("Help").items([MenuItem::action("Keyboard shortcuts", OpenShortcuts)]),
     ]);
     let modifier = if cfg!(target_os = "macos") {
@@ -106,6 +124,8 @@ pub fn init(log_directory: PathBuf, cx: &mut App) {
         // the same thing on all three platforms.
         KeyBinding::new("ctrl-tab", NextTab, None),
         KeyBinding::new("ctrl-shift-tab", PreviousTab, None),
+        KeyBinding::new(&format!("{modifier}-alt-right"), SplitRight, None),
+        KeyBinding::new(&format!("{modifier}-alt-down"), SplitDown, None),
         // The one key here that is *not* global. Escape belongs to whatever
         // has focus -- a shell, a search box -- and only reaches the cluster
         // view when nothing nearer wanted it.
@@ -132,8 +152,6 @@ struct Tab {
     initial_scope: Option<BTreeSet<String>>,
     initial_mode: Mode,
     state: TabState,
-    /// Dropped with the tab, which abandons a connection nobody is waiting on.
-    _connect: Option<Task<()>>,
     /// Keep the app's sidebar and tab label in sync with this view's selection.
     _navigation: Option<Subscription>,
     _resource_requests: Option<Subscription>,
@@ -144,6 +162,55 @@ enum TabState {
     Connecting,
     Connected(Entity<ClusterView>),
     Failed(String),
+}
+
+#[derive(Default)]
+struct WorkspaceWindows {
+    windows: HashMap<EntityId, WorkspaceWindow>,
+    next_tab: u64,
+    drag: Option<DraggedTab>,
+    drop_target: Option<TabDropTarget>,
+}
+impl Global for WorkspaceWindows {}
+
+struct WorkspaceWindow {
+    view: WeakEntity<BeaconApp>,
+    handle: AnyWindowHandle,
+    main: bool,
+    bounds: Bounds<Pixels>,
+    panes: HashMap<PaneId, Bounds<Pixels>>,
+    tabs: HashMap<u64, Bounds<Pixels>>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct TabDropTarget {
+    window: EntityId,
+    pane: PaneId,
+    before: Option<u64>,
+    split: Option<Direction>,
+}
+
+#[derive(Clone)]
+struct DraggedTab {
+    source: WeakEntity<BeaconApp>,
+    id: u64,
+    title: SharedString,
+}
+struct DragLabel(SharedString);
+impl Render for DragLabel {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .px_3()
+            .py_2()
+            .rounded_md()
+            .shadow_md()
+            .bg(cx.theme().tab_active)
+            .text_color(cx.theme().foreground)
+            .border_1()
+            .border_color(cx.theme().primary)
+            .text_sm()
+            .child(self.0.clone())
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -165,7 +232,10 @@ pub struct BeaconApp {
     focus: FocusHandle,
     /// The tab bar's scroll, kept for one thing: `max_offset` is how the bar
     /// says its tabs no longer fit. See [`Self::render_tabs`].
-    tab_scroll: ScrollHandle,
+    tab_scrolls: HashMap<PaneId, ScrollHandle>,
+    layout: Workspace,
+    pane_splits: HashMap<u64, Entity<ResizableState>>,
+    main_window: bool,
     sidebar_collapsed: bool,
     sidebar_split: Entity<ResizableState>,
     contexts: Result<Contexts, String>,
@@ -178,16 +248,11 @@ pub struct BeaconApp {
     /// the tabs that opened them, which is what makes reopening one instant.
     /// The *watches* belong to the views, so closing a tab stops what it was
     /// watching.
-    sessions: HashMap<ClusterId, Arc<ClusterSession>>,
-    /// Manual disconnection persists until the user explicitly reconnects.
-    disconnected: HashSet<ClusterId>,
-    /// Results from an earlier connection must never resurrect a stopped session.
-    connection_epochs: HashMap<ClusterId, u64>,
+    connections: Entity<Connections>,
 
     tabs: Vec<Tab>,
     /// Index into `tabs`. Meaningless, and never read, while `tabs` is empty.
     active: usize,
-    next_tab: u64,
 
     palette: Entity<Palette>,
     palette_open: bool,
@@ -199,6 +264,10 @@ pub struct BeaconApp {
 
 impl BeaconApp {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
+        Self::new_workspace(true, window, cx)
+    }
+
+    fn new_workspace(main_window: bool, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let contexts = Contexts::load().map_err(|err| err.to_string());
 
         match &contexts {
@@ -233,40 +302,71 @@ impl BeaconApp {
         let preferences_events = cx.subscribe_in(
             &settings,
             window,
-            |view, state, event: &crate::settings::Changed, window, cx| {
+            move |view, state, event: &crate::settings::Changed, window, cx| {
                 view.preferences = state.read(cx).preferences.clone();
-                if let Some(cluster) = &event.0 {
+                if main_window && let Some(cluster) = &event.0 {
                     view.reconnect(cluster.clone(), window, cx);
                 }
                 cx.notify();
             },
         );
+        let connections = cx.global::<SharedConnections>().0.clone();
+        let connection_events = cx.subscribe_in(
+            &connections,
+            window,
+            |view, _, event: &crate::connections::Changed, window, cx| {
+                view.sync_connection(&event.0, window, cx);
+            },
+        );
+        let id = cx.entity_id();
+        let weak = cx.weak_entity();
+        cx.global_mut::<WorkspaceWindows>().windows.insert(
+            id,
+            WorkspaceWindow {
+                view: weak,
+                handle: window.window_handle(),
+                main: main_window,
+                bounds: window.bounds(),
+                panes: HashMap::new(),
+                tabs: HashMap::new(),
+            },
+        );
+        cx.on_release(move |_, cx| {
+            cx.global_mut::<WorkspaceWindows>().windows.remove(&id);
+        })
+        .detach();
         let this = Self {
             focus: cx.focus_handle(),
-            tab_scroll: ScrollHandle::new(),
+            tab_scrolls: HashMap::from([(0, ScrollHandle::new())]),
+            layout: Workspace::default(),
+            pane_splits: HashMap::new(),
+            main_window,
             sidebar_collapsed: false,
             sidebar_split: cx.new(|_| ResizableState::default()),
             contexts,
             preferences,
-            sessions: HashMap::new(),
-            disconnected: HashSet::new(),
-            connection_epochs: HashMap::new(),
+            connections,
             tabs: Vec::new(),
             active: 0,
-            next_tab: 0,
             palette,
             palette_open: false,
             activity_open: None,
             activity_refresh: None,
             quit_prompt_open: false,
-            _subscriptions: vec![palette_events, preferences_events],
+            _subscriptions: vec![palette_events, preferences_events, connection_events],
         };
 
         // Native window closing (including macOS's close-window shortcut)
         // does not pass through the resource-tab action handler.
         let view = cx.entity().downgrade();
         window.on_window_should_close(cx, move |window, cx| {
-            let _ = view.update(cx, |view, cx| view.request_quit(window, cx));
+            let _ = view.update(cx, |view, cx| {
+                if view.main_window {
+                    view.request_quit(window, cx);
+                } else {
+                    window.defer(cx, |window, _| window.remove_window());
+                }
+            });
             false
         });
 
@@ -317,8 +417,8 @@ impl BeaconApp {
         cx: &mut Context<Self>,
     ) {
         let namespace = self.namespace_for(&cluster);
-        let id = self.next_tab;
-        self.next_tab += 1;
+        let id = cx.global::<WorkspaceWindows>().next_tab;
+        cx.global_mut::<WorkspaceWindows>().next_tab += 1;
 
         self.tabs.push(Tab {
             id,
@@ -328,10 +428,10 @@ impl BeaconApp {
             initial_scope,
             initial_mode: Mode::Objects,
             state: TabState::Connecting,
-            _connect: None,
             _navigation: None,
             _resource_requests: None,
         });
+        self.layout.insert(id, self.layout.focused, None);
 
         let index = self.tabs.len() - 1;
         self.activate(index, window, cx);
@@ -340,7 +440,8 @@ impl BeaconApp {
 
     /// Goes to `cluster`: its tab if one is open, a new tab if not.
     ///
-    /// The resource context menu and ⌘T open new tabs; selecting a cluster reuses one.
+    /// The resource context menu and ⌘T open new tabs; selecting a cluster
+    /// reuses one in the focused pane.
     fn go_to(&mut self, cluster: ClusterId, window: &mut Window, cx: &mut Context<Self>) {
         if self
             .tabs
@@ -349,7 +450,9 @@ impl BeaconApp {
         {
             return;
         }
-        match self.tabs.iter().position(|tab| tab.cluster == cluster) {
+        match self.tabs.iter().position(|tab| {
+            tab.cluster == cluster && self.layout.owner(tab.id) == Some(self.layout.focused)
+        }) {
             Some(index) => self.activate(index, window, cx),
             None => self.open(cluster, window, cx),
         }
@@ -357,7 +460,7 @@ impl BeaconApp {
 
     /// One ordinary tab per cluster and resource kind. Explicit context-menu
     /// opens may create duplicates; ordinary selection prefers the active one,
-    /// then the most recently opened matching tab.
+    /// then the most recently opened matching tab in the focused pane.
     fn go_to_kind(
         &mut self,
         cluster: ClusterId,
@@ -367,7 +470,7 @@ impl BeaconApp {
         cx: &mut Context<Self>,
     ) {
         let matches = |tab: &Tab| {
-            if tab.cluster != cluster {
+            if tab.cluster != cluster || self.layout.owner(tab.id) != Some(self.layout.focused) {
                 return false;
             }
             match &tab.state {
@@ -405,173 +508,105 @@ impl BeaconApp {
         }
     }
 
-    /// Stop every tab on this cluster while preserving its navigation.
     fn disconnect(&mut self, cluster: &ClusterId, window: &mut Window, cx: &mut Context<Self>) {
-        self.disconnected.insert(cluster.clone());
-        *self.connection_epochs.entry(cluster.clone()).or_default() += 1;
-        self.activity_open = None;
-        self.activity_refresh = None;
-        self.palette_open = false;
-        for tab in self.tabs.iter_mut().filter(|tab| &tab.cluster == cluster) {
+        self.connections
+            .update(cx, |state, cx| state.disconnect(cluster, cx));
+        self.sync_connection(cluster, window, cx);
+    }
+
+    fn reconnect(&mut self, cluster: ClusterId, window: &mut Window, cx: &mut Context<Self>) {
+        self.disconnect(&cluster, window, cx);
+        let options = self.preferences.connection(&cluster);
+        self.connections.update(cx, |state, cx| {
+            state.disconnected.remove(&cluster);
+            state.connect(cluster.clone(), options, cx);
+        });
+        if !self.tabs.iter().any(|tab| tab.cluster == cluster)
+            && !cx
+                .global::<WorkspaceWindows>()
+                .windows
+                .values()
+                .any(|entry| {
+                    entry.view.entity_id() != cx.entity_id()
+                        && entry.view.upgrade().is_some_and(|app| {
+                            app.read(cx).tabs.iter().any(|tab| tab.cluster == cluster)
+                        })
+                })
+        {
+            self.open(cluster.clone(), window, cx);
+        }
+        self.sync_connection(&cluster, window, cx);
+    }
+
+    fn connect(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(cluster) = self.tabs.get(index).map(|tab| tab.cluster.clone()) else {
+            return;
+        };
+        let options = self.preferences.connection(&cluster);
+        self.connections
+            .update(cx, |state, cx| state.connect(cluster.clone(), options, cx));
+        self.sync_connection(&cluster, window, cx);
+    }
+
+    /// Broadcast connection changes across all windows; rebuild only after a
+    /// session replacement. Moving a tab does not use this path.
+    fn sync_connection(
+        &mut self,
+        cluster: &ClusterId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let state = self.connections.read(cx);
+        let session = state.sessions.get(cluster).cloned();
+        let disconnected = state.disconnected.contains(cluster);
+        let error = state.errors.get(cluster).cloned();
+        let connecting = state.connecting(cluster);
+        let indices: Vec<_> = self
+            .tabs
+            .iter()
+            .enumerate()
+            .filter(|(_, tab)| &tab.cluster == cluster)
+            .map(|(ix, _)| ix)
+            .collect();
+        for index in indices {
+            if let Some(session) = &session {
+                if !matches!(self.tabs[index].state, TabState::Connected(_)) {
+                    let namespace = self.tabs[index].namespace.clone();
+                    self.show(index, session.clone(), namespace, window, cx);
+                }
+                continue;
+            }
+            let tab = &mut self.tabs[index];
             if let TabState::Connected(view) = &tab.state {
                 let (kind, scope, mode) = view.read(cx).navigation();
                 tab.initial_kind = kind;
                 tab.initial_scope = Some(scope);
                 tab.initial_mode = mode;
             }
-            tab._connect = None;
             tab._navigation = None;
             tab._resource_requests = None;
-            tab.state = TabState::Disconnected;
+            tab.state = if disconnected {
+                TabState::Disconnected
+            } else if let Some(error) = &error {
+                TabState::Failed(error.clone())
+            } else if connecting {
+                TabState::Connecting
+            } else {
+                TabState::Disconnected
+            };
         }
-        if let Some(session) = self.sessions.remove(cluster) {
-            session.disconnect();
-        }
-        if self
-            .tabs
-            .get(self.active)
-            .is_some_and(|tab| &tab.cluster == cluster)
+        if session.is_none()
+            && self
+                .tabs
+                .get(self.active)
+                .is_some_and(|tab| &tab.cluster == cluster)
         {
+            self.activity_open = None;
+            self.activity_refresh = None;
+            self.palette_open = false;
             self.focus.focus(window, cx);
         }
-        tracing::info!(context = %cluster, "manually disconnected cluster");
         cx.notify();
-    }
-
-    /// Replace the client once, then rebuild all tabs on that session.
-    fn reconnect(&mut self, cluster: ClusterId, window: &mut Window, cx: &mut Context<Self>) {
-        self.disconnect(&cluster, window, cx);
-        self.disconnected.remove(&cluster);
-        let index = self
-            .tabs
-            .get(self.active)
-            .filter(|tab| tab.cluster == cluster)
-            .map(|_| self.active)
-            .or_else(|| self.tabs.iter().position(|tab| tab.cluster == cluster));
-        let Some(index) = index else {
-            self.open(cluster, window, cx);
-            return;
-        };
-        for tab in self.tabs.iter_mut().filter(|tab| tab.cluster == cluster) {
-            tab.state = TabState::Connecting;
-        }
-        self.activate(index, window, cx);
-        self.connect(index, window, cx);
-    }
-
-    /// Gives tab `index` a view, connecting first if this cluster is new.
-    fn connect(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(tab) = self.tabs.get(index) else {
-            return;
-        };
-        let cluster = tab.cluster.clone();
-        let namespace = tab.namespace.clone();
-        let tab_id = tab.id;
-        if self.disconnected.contains(&cluster) {
-            self.tabs[index].state = TabState::Disconnected;
-            cx.notify();
-            return;
-        }
-        let epoch = *self.connection_epochs.entry(cluster.clone()).or_default();
-
-        // Already connected: opening another tab on this cluster is building a
-        // view over a session that still has its client, its discovery and its
-        // forwards.
-        if let Some(session) = self.sessions.get(&cluster).cloned() {
-            tracing::info!(context = %cluster, "reusing the session");
-            self.show(index, session, namespace, window, cx);
-            return;
-        }
-
-        // Resource tabs opened while discovery is still running share that
-        // request; its result will fill every waiting tab on this cluster.
-        if self.tabs.iter().enumerate().any(|(other, tab)| {
-            other != index
-                && tab.cluster == cluster
-                && matches!(tab.state, TabState::Connecting)
-                && tab._connect.is_some()
-        }) {
-            self.tabs[index].state = TabState::Connecting;
-            cx.notify();
-            return;
-        }
-
-        tracing::info!(context = %cluster, namespace = ?namespace, "connecting");
-        self.tabs[index].state = TabState::Connecting;
-        cx.notify();
-
-        let connection = self.preferences.connection(&cluster);
-        let connecting = {
-            let cluster = cluster.clone();
-            Bridge::global(cx).run_cancellable(async move {
-                ClusterSession::connect_with(cluster, connection).await
-            })
-        };
-
-        let task = cx.spawn_in(window, async move |this, cx| {
-            let result = connecting.result().await;
-
-            let _ = this.update_in(cx, |view, window, cx| {
-                // The tab may have been closed, or pointed somewhere else,
-                // while this was in flight. Either way it is not ours to fill.
-                let Some(index) = view.index_of(tab_id) else {
-                    return;
-                };
-                if view.tabs[index].cluster != cluster
-                    || view.connection_epochs.get(&cluster) != Some(&epoch)
-                    || view.disconnected.contains(&cluster)
-                {
-                    return;
-                }
-
-                match result {
-                    Ok(Ok(session)) => {
-                        // Another tab may have finished connecting to the same
-                        // cluster while this one was in flight. One session per
-                        // cluster is what the rest of this relies on, so the
-                        // duplicate is dropped here rather than kept.
-                        let session = view
-                            .sessions
-                            .entry(cluster.clone())
-                            .or_insert_with(|| Arc::new(session))
-                            .clone();
-                        let waiting: Vec<_> = view
-                            .tabs
-                            .iter()
-                            .enumerate()
-                            .filter(|(_, tab)| {
-                                tab.cluster == cluster && matches!(tab.state, TabState::Connecting)
-                            })
-                            .map(|(index, _)| index)
-                            .collect();
-                        for index in waiting {
-                            let namespace = view.tabs[index].namespace.clone();
-                            view.show(index, session.clone(), namespace, window, cx);
-                        }
-                    }
-                    Ok(Err(error)) => {
-                        tracing::warn!(context = %cluster, %error, "could not connect");
-                        for tab in view.tabs.iter_mut().filter(|tab| {
-                            tab.cluster == cluster && matches!(tab.state, TabState::Connecting)
-                        }) {
-                            tab.state = TabState::Failed(error.to_string());
-                        }
-                        cx.notify();
-                    }
-                    Err(error) => {
-                        tracing::error!(context = %cluster, %error, "the connect task failed");
-                        for tab in view.tabs.iter_mut().filter(|tab| {
-                            tab.cluster == cluster && matches!(tab.state, TabState::Connecting)
-                        }) {
-                            tab.state = TabState::Failed(error.to_string());
-                        }
-                        cx.notify();
-                    }
-                }
-            });
-        });
-
-        self.tabs[index]._connect = Some(task);
     }
 
     /// Puts a freshly built view into tab `index`.
@@ -596,16 +631,30 @@ impl BeaconApp {
 
         // A tab that connected in the background must not start its timers: a
         // view is visible until told otherwise, and nothing else would tell it.
-        if self.active != index {
+        if !self.layout.visible(self.tabs[index].id) {
             view.update(cx, |view, cx| view.set_visible(false, window, cx));
         }
 
+        self.tabs[index].state = TabState::Connected(view);
+        self.bind_tab(index, window, cx);
+        cx.notify();
+    }
+
+    fn bind_tab(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(view) = self.view(index) else {
+            return;
+        };
+
         let navigation = cx.subscribe(&view, |_, _, _: &NavigationChanged, cx| cx.notify());
         let cluster = self.tabs[index].cluster.clone();
+        let id = self.tabs[index].id;
         let resource_requests = cx.subscribe_in(
             &view,
             window,
             move |app, _, event: &ResourceRequested, window, cx| {
+                if let Some(index) = app.index_of(id) {
+                    app.activate(index, window, cx);
+                }
                 if event.new_tab {
                     app.open_kind(
                         cluster.clone(),
@@ -630,96 +679,456 @@ impl BeaconApp {
                 }
             },
         );
-        self.tabs[index].state = TabState::Connected(view);
         self.tabs[index]._navigation = Some(navigation);
         self.tabs[index]._resource_requests = Some(resource_requests);
         cx.notify();
     }
 
-    /// Brings tab `index` to the front.
+    /// Focus a tab's pane while leaving the other panes visible.
     fn activate(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
-        if index >= self.tabs.len() {
+        let Some(id) = self.tabs.get(index).map(|tab| tab.id) else {
             return;
-        }
-
-        if self.active != index
-            && let Some(previous) = self.view(self.active)
-        {
-            previous.update(cx, |view, cx| view.set_visible(false, window, cx));
-        }
-
-        self.active = index;
-
-        if let Some(view) = self.view(index) {
-            view.update(cx, |view, cx| view.set_visible(true, window, cx));
-        }
-
-        cx.notify();
+        };
+        self.layout.select(id);
+        self.sync_layout(window, cx);
     }
 
-    /// Closes tab `index`, and with it every watch its view was running.
-    ///
-    /// The session stays in `sessions`: reconnecting is the slow part, and
-    /// nothing is being watched through it once the view is gone.
-    fn close(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
-        if index >= self.tabs.len() {
-            return;
+    fn sync_layout(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let mut splits = Vec::new();
+        self.layout.root.split_ids(&mut splits);
+        self.pane_splits.retain(|id, _| splits.contains(id));
+        self.active = self
+            .layout
+            .active()
+            .and_then(|id| self.index_of(id))
+            .unwrap_or(0);
+        let panes = self.layout.panes();
+        self.tab_scrolls
+            .retain(|id, _| panes.iter().any(|pane| &pane.id == id));
+        for pane in &panes {
+            self.tab_scrolls.entry(pane.id).or_default();
         }
-
-        let tab = self.tabs.remove(index);
-        tracing::info!(context = %tab.cluster, "closed a tab");
-        let pending_cluster =
-            matches!(tab.state, TabState::Connecting).then(|| tab.cluster.clone());
-        drop(tab);
-
-        if index == self.active {
-            self.focus.focus(window, cx);
-        }
-
-        if self.tabs.is_empty() {
-            self.active = 0;
-            cx.notify();
-            return;
-        }
-
-        // Closing a tab to the left of the active one shifts it; closing the
-        // active one lands on its right-hand neighbour, or the new last tab.
-        self.active = if self.active > index {
-            self.active - 1
-        } else {
-            self.active.min(self.tabs.len() - 1)
-        };
-
-        // Whatever is in front now may have been a background tab a moment
-        // ago, and `activate` would see the index it already holds.
-        if let Some(view) = self.view(self.active) {
-            view.update(cx, |view, cx| view.set_visible(true, window, cx));
-        }
-
-        // A reconnect has one pending request shared by all waiting tabs.
-        // If its owner was closed, let a remaining tab finish the connection.
-        if let Some(cluster) = pending_cluster {
-            let waiting: Vec<_> = self
-                .tabs
-                .iter()
-                .enumerate()
-                .filter(|(_, tab)| {
-                    tab.cluster == cluster && matches!(tab.state, TabState::Connecting)
-                })
-                .map(|(index, tab)| (index, tab._connect.is_some()))
-                .collect();
-            if !waiting.iter().any(|(_, pending)| *pending)
-                && let Some((index, _)) = waiting.first()
-            {
-                self.connect(*index, window, cx);
+        for tab in &self.tabs {
+            if let TabState::Connected(view) = &tab.state {
+                view.update(cx, |view, cx| {
+                    view.set_visible(self.layout.visible(tab.id), window, cx)
+                });
             }
         }
         cx.notify();
     }
 
+    fn focus_pane(&mut self, pane: PaneId, window: &mut Window, cx: &mut Context<Self>) {
+        if self.layout.focused == pane {
+            return;
+        }
+        self.layout.focus(pane);
+        self.sync_layout(window, cx);
+    }
+
+    fn take_tab(&mut self, id: u64, window: &mut Window, cx: &mut Context<Self>) -> Option<Tab> {
+        let index = self.index_of(id)?;
+        let mut tab = self.tabs.remove(index);
+        // Subscriptions belong to the containing workspace, not to the view.
+        tab._navigation = None;
+        tab._resource_requests = None;
+        self.layout.remove(id);
+        self.focus.focus(window, cx);
+        self.sync_layout(window, cx);
+        Some(tab)
+    }
+
+    fn close(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(id) = self.tabs.get(index).map(|tab| tab.id) {
+            self.take_tab(id, window, cx);
+            self.close_empty_window(window, cx);
+        }
+    }
+
+    fn close_empty_window(&self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.main_window && self.tabs.is_empty() {
+            window.defer(cx, |window, _| window.remove_window());
+        }
+    }
+
+    fn receive_tab(
+        &mut self,
+        tab: Tab,
+        pane: PaneId,
+        before: Option<u64>,
+        split: Option<Direction>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let pane = if self.layout.pane(pane).is_some() {
+            pane
+        } else {
+            self.layout.focused
+        };
+        let id = tab.id;
+        let cluster = tab.cluster.clone();
+        self.tabs.push(tab);
+        let index = self.tabs.len() - 1;
+        if let Some(direction) = split {
+            self.layout.split(pane, id, direction);
+        } else {
+            self.layout.insert(id, pane, before);
+        }
+        self.bind_tab(index, window, cx);
+        self.sync_layout(window, cx);
+        if !matches!(self.tabs[index].state, TabState::Connected(_)) {
+            self.sync_connection(&cluster, window, cx);
+        }
+        self.focus.focus(window, cx);
+        window.activate_window();
+    }
+
+    fn split_tab(
+        &mut self,
+        id: u64,
+        direction: Direction,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(index) = self.index_of(id) else {
+            return;
+        };
+        self.activate(index, window, cx);
+        let pane = self.layout.focused;
+        let tab = &self.tabs[index];
+        let cluster = tab.cluster.clone();
+        let (kind, scope, mode, filters) = match &tab.state {
+            TabState::Connected(view) => {
+                let view = view.read(cx);
+                let (kind, scope, mode) = view.navigation();
+                (kind, Some(scope), mode, Some(view.view_filters(cx)))
+            }
+            _ => (
+                tab.initial_kind.clone(),
+                tab.initial_scope.clone(),
+                tab.initial_mode,
+                None,
+            ),
+        };
+        self.open_kind(cluster, kind, scope, window, cx);
+        let new_index = self.active;
+        let new_id = self.tabs[new_index].id;
+        self.tabs[new_index].initial_mode = mode;
+        if let Some(view) = self.view(new_index) {
+            view.update(cx, |view, cx| {
+                if mode != Mode::Objects {
+                    view.show_mode(mode, window, cx);
+                }
+                if let Some(filters) = filters {
+                    view.restore_filters(filters, window, cx);
+                }
+            });
+        }
+        self.layout.move_tab(new_id, pane, None, Some(direction));
+        self.sync_layout(window, cx);
+        self.focus.focus(window, cx);
+    }
+
+    fn detach_tab(
+        &mut self,
+        id: u64,
+        position: Option<Point<Pixels>>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.index_of(id).is_none() {
+            return;
+        }
+        let source = cx.weak_entity();
+        let source_handle = window.window_handle();
+        let bounds = position
+            .map(|point| {
+                Bounds::new(
+                    point - gpui_kit::point(px(40.), px(20.)),
+                    size(px(1000.), px(700.)),
+                )
+            })
+            .unwrap_or_else(|| {
+                Bounds::centered(
+                    window.display(cx).map(|display| display.id()),
+                    size(px(1000.), px(700.)),
+                    cx,
+                )
+            });
+        cx.defer(move |cx| {
+            let mut destination = None;
+            let opened = cx.open_window(
+                WindowOptions {
+                    window_bounds: Some(WindowBounds::Windowed(bounds)),
+                    window_min_size: Some(size(px(560.), px(400.))),
+                    ..TitleBar::window_options()
+                },
+                |window, cx| {
+                    window.set_window_title("Beacon — Detached workspace");
+                    let app = cx.new(|cx| Self::new_workspace(false, window, cx));
+                    destination = Some(app.clone());
+                    cx.new(|cx| Root::new(app, window, cx))
+                },
+            );
+            match (opened, destination) {
+                (Ok(handle), Some(destination)) => {
+                    let target = TabDropTarget {
+                        window: destination.entity_id(),
+                        pane: 0,
+                        before: None,
+                        split: None,
+                    };
+                    Self::transfer_tab(source, source_handle, id, target, cx);
+                    if destination.read(cx).tabs.is_empty() {
+                        let _ = handle.update(cx, |_, window, _| window.remove_window());
+                    }
+                }
+                (Err(error), _) => tracing::error!(%error, "could not detach tab"),
+                _ => {}
+            }
+        });
+    }
+
+    /// Two sequential window updates make the transfer atomic for tab ownership.
+    /// If a destination closed while a deferred drop was queued, restore the tab.
+    fn transfer_tab(
+        source: WeakEntity<Self>,
+        source_handle: AnyWindowHandle,
+        id: u64,
+        target: TabDropTarget,
+        cx: &mut App,
+    ) {
+        let Some(entry) = cx.global::<WorkspaceWindows>().windows.get(&target.window) else {
+            return;
+        };
+        let destination = entry.view.clone();
+        let destination_handle = entry.handle;
+        if destination.entity_id() == source.entity_id() {
+            let _ = source_handle.update(cx, |_, window, cx| {
+                let _ = source.update(cx, |app, cx| {
+                    if app
+                        .layout
+                        .move_tab(id, target.pane, target.before, target.split)
+                    {
+                        app.sync_layout(window, cx);
+                        app.focus.focus(window, cx);
+                    }
+                });
+            });
+            return;
+        }
+        if !destination
+            .upgrade()
+            .is_some_and(|app| app.read(cx).layout.pane(target.pane).is_some())
+        {
+            return;
+        }
+        let mut original_pane = 0;
+        let taken = source_handle
+            .update(cx, |_, window, cx| {
+                source
+                    .update(cx, |app, cx| {
+                        original_pane = app.layout.owner(id).unwrap_or(app.layout.focused);
+                        app.take_tab(id, window, cx)
+                    })
+                    .ok()
+                    .flatten()
+            })
+            .ok()
+            .flatten();
+        let Some(tab) = taken else {
+            return;
+        };
+        let mut payload = Some(tab);
+        let _ = destination_handle.update(cx, |_, window, cx| {
+            let _ = destination.update(cx, |app, cx| {
+                app.receive_tab(
+                    payload.take().unwrap(),
+                    target.pane,
+                    target.before,
+                    target.split,
+                    window,
+                    cx,
+                );
+            });
+            let source = source.clone();
+            // Async callbacks resolve the last rendered window of the moved
+            // subtree. Draw it in the destination before closing its source.
+            window.on_next_frame(move |_, cx| {
+                let _ = source_handle.update(cx, |_, window, cx| {
+                    let _ = source.update(cx, |app, cx| app.close_empty_window(window, cx));
+                });
+            });
+        });
+        if let Some(tab) = payload {
+            let _ = source_handle.update(cx, |_, window, cx| {
+                let _ = source.update(cx, |app, cx| {
+                    app.receive_tab(tab, original_pane, None, None, window, cx)
+                });
+            });
+        }
+    }
+
+    fn merge_to_main(&mut self, id: u64, window: &mut Window, cx: &mut Context<Self>) {
+        if self.main_window {
+            return;
+        }
+        let target = cx
+            .global::<WorkspaceWindows>()
+            .windows
+            .iter()
+            .find(|(_, entry)| entry.main)
+            .and_then(|(id, entry)| {
+                entry.view.upgrade().map(|app| TabDropTarget {
+                    window: *id,
+                    pane: app.read(cx).layout.focused,
+                    before: None,
+                    split: None,
+                })
+            });
+        if let Some(target) = target {
+            let source = cx.weak_entity();
+            let handle = window.window_handle();
+            cx.defer(move |cx| Self::transfer_tab(source, handle, id, target, cx));
+        }
+    }
+
+    fn drag_target(
+        position: Point<Pixels>,
+        preferred: EntityId,
+        cx: &App,
+    ) -> Option<TabDropTarget> {
+        let windows = &cx.global::<WorkspaceWindows>().windows;
+        let (id, entry) = if let Some(stack) = cx.window_stack() {
+            stack.iter().find_map(|handle| {
+                windows
+                    .iter()
+                    .find(|(_, entry)| entry.handle == *handle && entry.bounds.contains(&position))
+            })
+        } else {
+            // Platforms without native stacking information still route drags
+            // outside the source window to another workspace.
+            windows
+                .get(&preferred)
+                .filter(|entry| entry.bounds.contains(&position))
+                .map(|entry| (&preferred, entry))
+                .or_else(|| {
+                    windows
+                        .iter()
+                        .find(|(_, entry)| entry.bounds.contains(&position))
+                })
+        }?;
+        let (pane, bounds) = entry
+            .panes
+            .iter()
+            .find(|(_, bounds)| bounds.contains(&position))?;
+        let local = position - bounds.origin;
+        let tab_bar = local.y < px(30.);
+        let before = if tab_bar {
+            entry
+                .tabs
+                .iter()
+                .filter(|(_, tab)| {
+                    tab.origin.y >= bounds.origin.y
+                        && tab.origin.y < bounds.origin.y + px(30.)
+                        && tab.origin.x >= bounds.origin.x
+                        && tab.origin.x < bounds.right()
+                        && tab.right() > position.x
+                })
+                .min_by(|(_, left), (_, right)| {
+                    left.origin
+                        .x
+                        .partial_cmp(&right.origin.x)
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                })
+                .map(|(id, _)| *id)
+        } else {
+            None
+        };
+        let split = if tab_bar {
+            None
+        } else {
+            let x = local.x / bounds.size.width;
+            let y = local.y / bounds.size.height;
+            crate::workspace::split_at(x, y)
+        };
+        Some(TabDropTarget {
+            window: *id,
+            pane: *pane,
+            before,
+            split,
+        })
+    }
+
+    fn drag_move(
+        &mut self,
+        event: &DragMoveEvent<DraggedTab>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let position = window.bounds().origin + event.event.position;
+        let target = Self::drag_target(position, cx.entity_id(), cx);
+        if cx.global::<WorkspaceWindows>().drop_target != target {
+            cx.global_mut::<WorkspaceWindows>().drop_target = target;
+            cx.refresh_windows();
+        }
+    }
+
+    fn finish_drag(
+        event: &MouseUpEvent,
+        phase: DispatchPhase,
+        current: EntityId,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        if phase != DispatchPhase::Capture || event.button != MouseButton::Left {
+            return;
+        }
+        let Some(drag) = cx.global_mut::<WorkspaceWindows>().drag.take() else {
+            return;
+        };
+        let dragging = cx.has_active_drag();
+        let position = window.bounds().origin + event.position;
+        let target = Self::drag_target(position, current, cx);
+        cx.global_mut::<WorkspaceWindows>().drop_target = None;
+        cx.stop_active_drag(window);
+        cx.refresh_windows();
+        if !dragging {
+            return;
+        }
+        let source_handle = cx
+            .global::<WorkspaceWindows>()
+            .windows
+            .get(&drag.source.entity_id())
+            .map(|entry| entry.handle);
+        let Some(source_handle) = source_handle else {
+            return;
+        };
+        if let Some(target) = target {
+            cx.defer(move |cx| Self::transfer_tab(drag.source, source_handle, drag.id, target, cx));
+        } else if !cx
+            .global::<WorkspaceWindows>()
+            .windows
+            .values()
+            .any(|entry| entry.bounds.contains(&position))
+        {
+            cx.defer(move |cx| {
+                let _ = source_handle.update(cx, |_, window, cx| {
+                    let _ = drag.source.update(cx, |app, cx| {
+                        app.detach_tab(drag.id, Some(position), window, cx)
+                    });
+                });
+            });
+        }
+    }
+
     fn close_tab_or_quit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.tabs.is_empty() {
-            self.request_quit(window, cx);
+            if self.main_window {
+                self.request_quit(window, cx);
+            } else {
+                self.close_empty_window(window, cx);
+            }
         } else {
             self.close(self.active, window, cx);
         }
@@ -765,17 +1174,24 @@ impl BeaconApp {
     }
 
     fn step(&mut self, forward: bool, window: &mut Window, cx: &mut Context<Self>) {
-        if self.tabs.len() < 2 {
+        let Some(pane) = self.layout.pane(self.layout.focused) else {
+            return;
+        };
+        if pane.tabs.len() < 2 {
             return;
         }
-        let last = self.tabs.len() - 1;
-        let next = match (forward, self.active) {
-            (true, index) if index == last => 0,
-            (true, index) => index + 1,
-            (false, 0) => last,
-            (false, index) => index - 1,
+        let current = pane
+            .active
+            .and_then(|id| pane.tabs.iter().position(|tab| *tab == id))
+            .unwrap_or(0);
+        let next = if forward {
+            (current + 1) % pane.tabs.len()
+        } else {
+            (current + pane.tabs.len() - 1) % pane.tabs.len()
         };
-        self.activate(next, window, cx);
+        if let Some(index) = self.index_of(pane.tabs[next]) {
+            self.activate(index, window, cx);
+        }
     }
 
     /// Opens the palette, or closes it if it is already open.
@@ -819,6 +1235,27 @@ impl BeaconApp {
         // need a connected cluster, and the ones that can change which cluster
         // is in front.
         match choice {
+            Choice::Action(
+                action @ (palette::Action::SplitRight
+                | palette::Action::SplitDown
+                | palette::Action::DetachTab
+                | palette::Action::MergeToMain),
+            ) => {
+                if let Some(id) = self.tabs.get(self.active).map(|tab| tab.id) {
+                    match action {
+                        palette::Action::SplitRight => {
+                            self.split_tab(id, Direction::Right, window, cx)
+                        }
+                        palette::Action::SplitDown => {
+                            self.split_tab(id, Direction::Down, window, cx)
+                        }
+                        palette::Action::DetachTab => self.detach_tab(id, None, window, cx),
+                        palette::Action::MergeToMain => self.merge_to_main(id, window, cx),
+                        _ => unreachable!(),
+                    }
+                }
+                return;
+            }
             Choice::Cluster(id) => {
                 self.go_to(id, window, cx);
                 return;
@@ -880,6 +1317,10 @@ impl BeaconApp {
                 | palette::Action::OpenAppLogs
                 | palette::Action::OpenShortcuts
                 | palette::Action::NewTab
+                | palette::Action::SplitRight
+                | palette::Action::SplitDown
+                | palette::Action::DetachTab
+                | palette::Action::MergeToMain
                 | palette::Action::CloseTab,
             ) => {}
         });
@@ -910,8 +1351,13 @@ impl BeaconApp {
 
     fn render_title_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let is_dark = cx.theme().is_dark();
-        let title_bar = TitleBar::new()
-            .on_close_window(cx.listener(|view, _, window, cx| view.request_quit(window, cx)));
+        let title_bar = TitleBar::new().on_close_window(cx.listener(|view, _, window, cx| {
+            if view.main_window {
+                view.request_quit(window, cx);
+            } else {
+                window.defer(cx, |window, _| window.remove_window());
+            }
+        }));
 
         title_bar.child(
             h_flex()
@@ -1039,7 +1485,7 @@ impl BeaconApp {
         let rows = ids.into_iter().map(|id| {
             let selected = active.as_ref() == Some(&id);
             let color = self.cluster_color(&id, cx);
-            let connected = self.sessions.contains_key(&id);
+            let connected = self.connections.read(cx).sessions.contains_key(&id);
             let target = id.clone();
             let menu_target = id.clone();
             let menu_view = cx.entity().downgrade();
@@ -1144,24 +1590,12 @@ impl BeaconApp {
         .child(SidebarGroup::new("Clusters").child(SidebarMenu::new().children(rows)))
     }
 
-    fn render_workspace(&self, cx: &mut Context<Self>) -> AnyElement {
-        let content = v_flex()
-            .size_full()
-            .min_w_0()
-            .overflow_hidden()
-            .child(self.render_tabs(cx))
-            .child(
-                div()
-                    .flex_1()
-                    .min_h_0()
-                    .overflow_hidden()
-                    .child(self.render_body(cx)),
-            );
-
+    fn render_workspace(&mut self, cx: &mut Context<Self>) -> AnyElement {
+        let root = self.layout.root.clone();
+        let content = self.render_node(&root, cx);
         if self.sidebar_collapsed {
-            return content.into_any_element();
+            return content;
         }
-
         h_resizable("sidebar-split")
             .with_state(&self.sidebar_split)
             .child(
@@ -1172,110 +1606,338 @@ impl BeaconApp {
             )
             .child(
                 resizable_panel()
-                    .size_range(px(420.)..px(10000.))
+                    .size_range(px(280.)..px(10000.))
                     .child(content),
             )
             .into_any_element()
     }
 
-    /// The tab bar, always present so that `+` is always somewhere to click.
-    fn render_tabs(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let tabs = self.tabs.iter().enumerate().map(|(index, tab)| {
-            let id = tab.id;
-            let color = self.cluster_color(&tab.cluster, cx);
-            let what = match &tab.state {
-                TabState::Connected(view) => view.read(cx).title(),
-                TabState::Disconnected => {
-                    if tab.initial_mode == Mode::Objects {
-                        tab.initial_kind
-                            .as_ref()
-                            .map(|kind| SharedString::from(kind.resource.kind.clone()))
-                            .unwrap_or_else(|| SharedString::from("Cluster"))
-                    } else {
-                        SharedString::from(tab.initial_mode.label())
-                    }
-                }
-                TabState::Connecting => SharedString::from("connecting"),
-                TabState::Failed(_) => SharedString::from("unreachable"),
-            };
-            let accessible_name = format!("{what} · {}", self.cluster_display_name(&tab.cluster));
-
-            TabItem::new()
-                .prefix(
-                    div()
-                        .pl_2()
-                        .child(div().size(px(7.)).rounded_full().bg(color)),
-                )
-                .label(what)
-                .aria_label(accessible_name)
-                .on_click(cx.listener(move |view, _, window, cx| {
-                    view.activate(index, window, cx);
-                }))
-                .suffix(
-                    Button::new(SharedString::from(format!("close-tab-{id}")))
-                        .xsmall()
-                        .ghost()
-                        .label("×")
-                        .on_click(cx.listener(move |view, _, window, cx| {
-                            // By id, not by index: the bar this button was
-                            // built for may be a frame out of date.
-                            if let Some(index) = view.index_of(id) {
-                                view.close(index, window, cx);
-                            }
-                        })),
-                )
-        });
-
-        let new_tab = div().pl_1().child(
-            Button::new("new-tab")
-                .xsmall()
-                .ghost()
-                .label("+")
-                .tooltip("Open another tab on this cluster")
-                .on_click(cx.listener(|view, _, window, cx| view.new_tab(window, cx))),
-        );
-
-        // Where + goes depends on whether the tabs still fit.
-        //
-        // `last_empty_space` is inside the bar's scroll area, just after the
-        // last tab, which is where it belongs while there is room. `suffix`
-        // is outside it, pinned to the right edge. Once the tabs overflow,
-        // anything inside the scroll area can be scrolled out of reach, and a
-        // button you cannot find is worse than one that is not where you
-        // expected -- so at that point + moves to the edge and stays put.
-        //
-        // The bar reports the overflow itself, through the scroll handle's
-        // `max_offset`, measured on the frame just drawn. That makes the
-        // switch one frame late, which nobody can see, and costs no
-        // measurement of our own. The few pixels of slack are hysteresis:
-        // moving + out of the scroll area makes the content narrower, and
-        // without them the two states could trade places forever.
-        let overflowing = self.tab_scroll.max_offset().x > px(8.);
-
-        TabBar::new("cluster-tabs")
-            .track_scroll(&self.tab_scroll)
-            .small()
-            .max_width(TAB_WIDTH)
-            .selected_index(self.active)
-            .children(tabs)
-            // Every tab by name, for when there are more of them than fit.
-            // It also satisfies the component's rule that `last_empty_space`
-            // is only drawn when there is a suffix or a menu.
-            .menu(true)
-            .map(|bar| match overflowing {
-                true => bar.suffix(new_tab),
-                false => bar.last_empty_space(new_tab),
-            })
+    fn render_node(&mut self, node: &Node, cx: &mut Context<Self>) -> AnyElement {
+        match node {
+            Node::Pane(pane) => self.render_pane(pane, cx),
+            Node::Split {
+                id,
+                horizontal,
+                first,
+                second,
+            } => {
+                let state = self
+                    .pane_splits
+                    .entry(*id)
+                    .or_insert_with(|| cx.new(|_| ResizableState::default()))
+                    .clone();
+                let first = self.render_node(first, cx);
+                let second = self.render_node(second, cx);
+                let min = if *horizontal { px(220.) } else { px(140.) };
+                let group = if *horizontal {
+                    h_resizable(("workspace-split", *id as usize))
+                } else {
+                    v_resizable(("workspace-split", *id as usize))
+                };
+                group
+                    .with_state(&state)
+                    .child(resizable_panel().size_range(min..px(10000.)).child(first))
+                    .child(resizable_panel().size_range(min..px(10000.)).child(second))
+                    .into_any_element()
+            }
+        }
     }
 
-    fn render_body(&self, cx: &mut Context<Self>) -> AnyElement {
-        if let Some(view) = self.cluster() {
+    fn render_pane(&self, pane: &Pane, cx: &mut Context<Self>) -> AnyElement {
+        let pane_id = pane.id;
+        let workspace_id = cx.entity_id();
+        let drop = cx
+            .global::<WorkspaceWindows>()
+            .drop_target
+            .filter(|target| target.window == workspace_id && target.pane == pane_id);
+        v_flex()
+            .id(("workspace-pane", pane_id as usize))
+            .relative()
+            .size_full()
+            .min_w_0()
+            .min_h_0()
+            .overflow_hidden()
+            .capture_any_mouse_down(
+                cx.listener(move |app, _, window, cx| app.focus_pane(pane_id, window, cx)),
+            )
+            .on_prepaint(move |bounds, window, cx| {
+                if let Some(entry) = cx
+                    .global_mut::<WorkspaceWindows>()
+                    .windows
+                    .get_mut(&workspace_id)
+                {
+                    entry.panes.insert(
+                        pane_id,
+                        Bounds::new(window.bounds().origin + bounds.origin, bounds.size),
+                    );
+                }
+            })
+            .child(self.render_tabs(pane, cx))
+            .child(
+                div()
+                    .flex_1()
+                    .min_h_0()
+                    .overflow_hidden()
+                    .child(self.render_body(pane.active, cx)),
+            )
+            .when_some(drop, |pane, target| {
+                pane.child(
+                    div()
+                        .absolute()
+                        .inset_0()
+                        .bg(cx.theme().primary.opacity(0.16))
+                        .border_2()
+                        .border_color(cx.theme().primary)
+                        .when(target.split == Some(Direction::Left), |overlay| {
+                            overlay.right(relative(0.5))
+                        })
+                        .when(target.split == Some(Direction::Right), |overlay| {
+                            overlay.left(relative(0.5))
+                        })
+                        .when(target.split == Some(Direction::Up), |overlay| {
+                            overlay.bottom(relative(0.5))
+                        })
+                        .when(target.split == Some(Direction::Down), |overlay| {
+                            overlay.top(relative(0.5))
+                        })
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .child(
+                            div()
+                                .px_3()
+                                .py_2()
+                                .rounded_md()
+                                .bg(cx.theme().background)
+                                .text_sm()
+                                .child(match target.split {
+                                    Some(Direction::Left) => "Move to left split",
+                                    Some(Direction::Right) => "Move to right split",
+                                    Some(Direction::Up) => "Move to upper split",
+                                    Some(Direction::Down) => "Move to lower split",
+                                    None => "Merge into tab group",
+                                }),
+                        ),
+                )
+            })
+            .into_any_element()
+    }
+
+    fn tab_title(&self, tab: &Tab, cx: &App) -> SharedString {
+        match &tab.state {
+            TabState::Connected(view) => view.read(cx).title(),
+            TabState::Disconnected => {
+                if tab.initial_mode == Mode::Objects {
+                    tab.initial_kind
+                        .as_ref()
+                        .map(|kind| SharedString::from(kind.resource.kind.clone()))
+                        .unwrap_or_else(|| "Cluster".into())
+                } else {
+                    tab.initial_mode.label().into()
+                }
+            }
+            TabState::Connecting => "connecting".into(),
+            TabState::Failed(_) => "unreachable".into(),
+        }
+    }
+
+    fn render_tabs(&self, pane: &Pane, cx: &mut Context<Self>) -> impl IntoElement {
+        let pane_id = pane.id;
+        let workspace_id = cx.entity_id();
+        let tabs = pane
+            .tabs
+            .iter()
+            .filter_map(|id| self.index_of(*id).map(|index| &self.tabs[index]))
+            .map(|tab| {
+                let id = tab.id;
+                let color = self.cluster_color(&tab.cluster, cx);
+                let what = self.tab_title(tab, cx);
+                let accessible_name =
+                    format!("{what} · {}", self.cluster_display_name(&tab.cluster));
+                let drag = DraggedTab {
+                    source: cx.weak_entity(),
+                    id,
+                    title: accessible_name.clone().into(),
+                };
+                let menu_view = cx.weak_entity();
+                let detached = !self.main_window;
+                let item = TabItem::new(("resource-tab", id as usize))
+                    .selected(pane.active == Some(id))
+                    .accessibility_label(accessible_name)
+                    .set_position(
+                        pane.tabs.iter().position(|tab| *tab == id).unwrap_or(0) + 1,
+                        pane.tabs.len(),
+                    )
+                    .h(px(28.))
+                    .max_w(TAB_WIDTH)
+                    .min_w(px(100.))
+                    .flex_shrink_0()
+                    .px_2()
+                    .gap_2()
+                    .text_sm()
+                    .cursor_pointer()
+                    .border_r_1()
+                    .border_color(cx.theme().border)
+                    .bg(if pane.active == Some(id) {
+                        cx.theme().tab_active
+                    } else {
+                        cx.theme().tab_bar
+                    })
+                    .hover(|tab| tab.bg(cx.theme().tab_active))
+                    .child(div().size(px(7.)).flex_shrink_0().rounded_full().bg(color))
+                    .child(div().min_w_0().truncate().child(what))
+                    .on_prepaint(move |bounds, window, cx| {
+                        if let Some(entry) = cx
+                            .global_mut::<WorkspaceWindows>()
+                            .windows
+                            .get_mut(&workspace_id)
+                        {
+                            entry.tabs.insert(
+                                id,
+                                Bounds::new(window.bounds().origin + bounds.origin, bounds.size),
+                            );
+                        }
+                    })
+                    .on_drag(drag, |drag, _, _, cx| {
+                        cx.global_mut::<WorkspaceWindows>().drag = Some(drag.clone());
+                        cx.new(|_| DragLabel(drag.title.clone()))
+                    })
+                    .on_click(cx.listener(move |view, _, window, cx| {
+                        if let Some(index) = view.index_of(id) {
+                            view.activate(index, window, cx);
+                        }
+                        view.focus.focus(window, cx);
+                    }))
+                    .child(
+                        Button::new(SharedString::from(format!("close-tab-{id}")))
+                            .xsmall()
+                            .ghost()
+                            .label("×")
+                            .tooltip("Close tab")
+                            .on_click(cx.listener(move |view, _, window, cx| {
+                                if let Some(index) = view.index_of(id) {
+                                    view.close(index, window, cx);
+                                }
+                            })),
+                    );
+                div()
+                    .id(("tab-menu", id as usize))
+                    .flex_shrink_0()
+                    .child(item)
+                    .context_menu(move |menu, _, _| {
+                        let right = menu_view.clone();
+                        let down = menu_view.clone();
+                        let detach = menu_view.clone();
+                        let merge = menu_view.clone();
+                        let close = menu_view.clone();
+                        menu.item(PopupMenuItem::new("Split right — side by side").on_click(
+                            move |_, window, cx| {
+                                let _ = right.update(cx, |app, cx| {
+                                    app.split_tab(id, Direction::Right, window, cx)
+                                });
+                            },
+                        ))
+                        .item(PopupMenuItem::new("Split down — stacked").on_click(
+                            move |_, window, cx| {
+                                let _ = down.update(cx, |app, cx| {
+                                    app.split_tab(id, Direction::Down, window, cx)
+                                });
+                            },
+                        ))
+                        .separator()
+                        .item(PopupMenuItem::new("Move to new window").on_click(
+                            move |_, window, cx| {
+                                let _ = detach
+                                    .update(cx, |app, cx| app.detach_tab(id, None, window, cx));
+                            },
+                        ))
+                        .when(detached, |menu| {
+                            menu.item(PopupMenuItem::new("Move to main window").on_click(
+                                move |_, window, cx| {
+                                    let _ = merge
+                                        .update(cx, |app, cx| app.merge_to_main(id, window, cx));
+                                },
+                            ))
+                        })
+                        .separator()
+                        .item(
+                            PopupMenuItem::new("Close tab").on_click(move |_, window, cx| {
+                                let _ = close.update(cx, |app, cx| {
+                                    if let Some(index) = app.index_of(id) {
+                                        app.close(index, window, cx);
+                                    }
+                                });
+                            }),
+                        )
+                    })
+            });
+        let new_tab = Button::new(("new-tab", pane_id as usize))
+            .xsmall()
+            .ghost()
+            .label("+")
+            .tooltip("Open another tab in this pane")
+            .on_click(cx.listener(move |view, _, window, cx| {
+                view.focus_pane(pane_id, window, cx);
+                view.new_tab(window, cx);
+            }));
+        let choices: Vec<_> = pane
+            .tabs
+            .iter()
+            .filter_map(|id| {
+                self.index_of(*id)
+                    .map(|index| (*id, self.tab_title(&self.tabs[index], cx)))
+            })
+            .collect();
+        let menu_view = cx.weak_entity();
+        h_flex()
+            .h(px(28.))
+            .w_full()
+            .min_w_0()
+            .flex_shrink_0()
+            .bg(cx.theme().tab_bar)
+            .child(
+                Tabs::new(("cluster-tabs", pane_id as usize))
+                    .flex()
+                    .flex_1()
+                    .min_w_0()
+                    .h_full()
+                    .overflow_x_scroll()
+                    .track_scroll(&self.tab_scrolls[&pane_id])
+                    .children(tabs),
+            )
+            .child(new_tab)
+            .child(
+                Button::new(("tab-list", pane_id as usize))
+                    .xsmall()
+                    .ghost()
+                    .label("⌄")
+                    .tooltip("Tabs in this pane")
+                    .dropdown_menu(move |menu, _, _| {
+                        choices.iter().fold(menu, |menu, (id, title)| {
+                            let id = *id;
+                            let app = menu_view.clone();
+                            menu.item(PopupMenuItem::new(title.clone()).on_click(
+                                move |_, window, cx| {
+                                    let _ = app.update(cx, |app, cx| {
+                                        if let Some(index) = app.index_of(id) {
+                                            app.activate(index, window, cx);
+                                            app.focus.focus(window, cx);
+                                        }
+                                    });
+                                },
+                            ))
+                        })
+                    }),
+            )
+    }
+
+    fn render_body(&self, tab: Option<u64>, cx: &mut Context<Self>) -> AnyElement {
+        let index = tab.and_then(|id| self.index_of(id));
+        if let Some(view) = index.and_then(|index| self.view(index)) {
             return view.into_any_element();
         }
-
-        let state = self
-            .tabs
-            .get(self.active)
+        let state = index
+            .and_then(|index| self.tabs.get(index))
             .map(|tab| (&tab.cluster, &tab.state));
 
         let (tone, headline, detail) = match (state, &self.contexts) {
@@ -1306,7 +1968,7 @@ impl BeaconApp {
             ),
             _ => (
                 Tone::Unknown,
-                if self.sessions.is_empty() { "No cluster selected" } else { "No tab open" }.to_string(),
+                if self.connections.read(cx).sessions.is_empty() { "No cluster selected" } else { "No tab open" }.to_string(),
                 "Select a cluster in the sidebar, or use the cluster picker in the command palette.".to_string(),
             ),
         };
@@ -1428,7 +2090,7 @@ impl BeaconApp {
     }
 
     fn render_clusters(&self, view: WeakEntity<Self>, cx: &App) -> AnyElement {
-        let mut sessions: Vec<_> = self.sessions.values().collect();
+        let mut sessions: Vec<_> = self.connections.read(cx).sessions.values().collect();
         sessions.sort_by_key(|session| session.id());
         let active = self.tabs.get(self.active).map(|tab| &tab.cluster);
         let rows = sessions.iter().map(|session| {
@@ -1552,7 +2214,7 @@ impl BeaconApp {
         let (tone, status, watches) = match active.map(|tab| &tab.state) {
             None => (
                 Tone::Unknown,
-                if self.sessions.is_empty() {
+                if self.connections.read(cx).sessions.is_empty() {
                     "no cluster selected"
                 } else {
                     "no tab open"
@@ -1661,7 +2323,7 @@ impl BeaconApp {
                     )))
                     .child(div().flex_shrink_0().child(self.render_activity_menu(
                         ActivityMenu::Clusters,
-                        self.sessions.len(),
+                        self.connections.read(cx).sessions.len(),
                         cx,
                     ))),
             )
@@ -1669,13 +2331,45 @@ impl BeaconApp {
 }
 
 impl Render for BeaconApp {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let id = cx.entity_id();
+        if let Some(entry) = cx.global_mut::<WorkspaceWindows>().windows.get_mut(&id) {
+            entry.bounds = window.bounds();
+            entry.panes.clear();
+            entry.tabs.clear();
+        }
         div()
+            .id("beacon-workspace")
             .relative()
             .size_full()
             .track_focus(&self.focus)
             .bg(cx.theme().background)
             .text_color(cx.theme().foreground)
+            .child(
+                canvas(
+                    |_, _, _| {},
+                    move |_, _, window, _cx| {
+                        window.on_mouse_event(move |event: &MouseUpEvent, phase, window, cx| {
+                            Self::finish_drag(event, phase, id, window, cx)
+                        });
+                        window.on_key_event(|event: &KeyDownEvent, phase, window, cx| {
+                            if phase == DispatchPhase::Capture
+                                && event.keystroke.key == "escape"
+                                && cx.global::<WorkspaceWindows>().drag.is_some()
+                            {
+                                cx.global_mut::<WorkspaceWindows>().drag = None;
+                                cx.global_mut::<WorkspaceWindows>().drop_target = None;
+                                cx.stop_active_drag(window);
+                                cx.refresh_windows();
+                                cx.stop_propagation();
+                            }
+                        });
+                    },
+                )
+                .absolute()
+                .size_full(),
+            )
+            .on_drag_move(cx.listener(Self::drag_move))
             .on_action(
                 cx.listener(|view, _: &TogglePalette, window, cx| view.toggle_palette(window, cx)),
             )
@@ -1687,6 +2381,26 @@ impl Render for BeaconApp {
             .on_action(
                 cx.listener(|view, _: &PreviousTab, window, cx| view.step(false, window, cx)),
             )
+            .on_action(cx.listener(|app, _: &SplitRight, window, cx| {
+                if let Some(id) = app.tabs.get(app.active).map(|tab| tab.id) {
+                    app.split_tab(id, Direction::Right, window, cx);
+                }
+            }))
+            .on_action(cx.listener(|app, _: &SplitDown, window, cx| {
+                if let Some(id) = app.tabs.get(app.active).map(|tab| tab.id) {
+                    app.split_tab(id, Direction::Down, window, cx);
+                }
+            }))
+            .on_action(cx.listener(|app, _: &DetachTab, window, cx| {
+                if let Some(id) = app.tabs.get(app.active).map(|tab| tab.id) {
+                    app.detach_tab(id, None, window, cx);
+                }
+            }))
+            .on_action(cx.listener(|app, _: &MergeToMain, window, cx| {
+                if let Some(id) = app.tabs.get(app.active).map(|tab| tab.id) {
+                    app.merge_to_main(id, window, cx);
+                }
+            }))
             // Handled here rather than in ClusterView, which is where it
             // belongs and where it does not work: an action travels from the
             // focused node *upwards*, and ClusterView is a child of the node

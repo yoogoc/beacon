@@ -202,8 +202,18 @@ fn describe(name: &str, scope: &str) -> (String, String) {
         "CloseTab" => {
             "Close the current resource tab. With no tabs open, ask before quitting Beacon. In App logs, Keyboard shortcuts or Settings, close that window."
         }
-        "NextTab" => "Switch to the next resource tab.",
-        "PreviousTab" => "Switch to the previous resource tab.",
+        "NextTab" => "Switch to the next resource tab in the focused pane.",
+        "PreviousTab" => "Switch to the previous resource tab in the focused pane.",
+        "SplitRight" => {
+            "Open an independent resource view to the right, keeping the namespace and filters. Drag the divider to resize."
+        }
+        "SplitDown" => {
+            "Open an independent resource view below, keeping the namespace and filters. Splits can be nested."
+        }
+        "DetachTab" => {
+            "Move the current tab to a separate window, preserving its resource view and Pod tools."
+        }
+        "MergeToMain" => "Move the current detached tab back into the main window's focused pane.",
         "CloseDetail" => {
             "Close the detail or Pod tools panel when the focused control does not consume Escape. Shell keeps Escape for the remote process."
         }

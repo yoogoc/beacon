@@ -10,6 +10,7 @@ mod app_logs;
 pub mod bridge;
 pub mod catalog;
 pub mod cluster;
+mod connections;
 mod copyable_text;
 mod create;
 pub mod detail;
@@ -27,6 +28,7 @@ pub mod table;
 pub mod terminal;
 pub mod theme;
 mod tls;
+mod workspace;
 mod yaml_folding;
 
 pub use app::BeaconApp;
