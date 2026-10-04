@@ -235,15 +235,18 @@ impl Render for AppLogs {
                 .justify_center()
                 .text_sm()
                 .text_color(cx.theme().muted_foreground)
-                .child(if self.error.is_some() {
-                    "App logs could not be read."
-                } else if self.snapshot.is_none() {
-                    "Reading app logs…"
-                } else if total == 0 {
-                    "No app logs yet."
-                } else {
-                    "No logs match the filters."
-                })
+                .child(crate::copyable_text::copyable_text(
+                    "app-logs-notice",
+                    if self.error.is_some() {
+                        "App logs could not be read."
+                    } else if self.snapshot.is_none() {
+                        "Reading app logs…"
+                    } else if total == 0 {
+                        "No app logs yet."
+                    } else {
+                        "No logs match the filters."
+                    },
+                ))
                 .into_any_element()
         } else {
             let lines = self.visible.clone();
@@ -265,7 +268,10 @@ impl Render for AppLogs {
                             .text_xs()
                             .text_color(color)
                             .whitespace_nowrap()
-                            .child(line.text.clone())
+                            .child(crate::copyable_text::copyable_text(
+                                "line",
+                                line.text.clone(),
+                            ))
                             .tooltip(move |window, cx| Tooltip::new(text.clone()).build(window, cx))
                     })
                     .collect()
@@ -386,7 +392,10 @@ impl Render for AppLogs {
                     } else {
                         cx.theme().muted_foreground
                     })
-                    .child(message.clone())
+                    .child(crate::copyable_text::copyable_text(
+                        "log-file-message",
+                        message.clone(),
+                    ))
                     .tooltip(move |window, cx| Tooltip::new(message.clone()).build(window, cx)),
             )
     }

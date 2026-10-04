@@ -322,14 +322,15 @@ impl PodToolsView {
 
                 uniform_list("log-lines", lines.len(), move |range, _, _| {
                     range
-                        .filter_map(|index| lines.get(index).cloned())
-                        .map(|line| {
+                        .filter_map(|index| lines.get(index).cloned().map(|line| (index, line)))
+                        .map(|(index, line)| {
                             div()
+                                .id(("pod-log-line", index))
                                 .px_3()
                                 .font_family("monospace")
                                 .text_xs()
                                 .whitespace_nowrap()
-                                .child(line)
+                                .child(crate::copyable_text::copyable_text("line", line))
                         })
                         .collect()
                 })
@@ -535,14 +536,17 @@ impl PodToolsView {
                                 div()
                                     .text_xs()
                                     .text_color(cx.theme().tone(Tone::Warning))
-                                    .child(note)
+                                    .child(crate::copyable_text::copyable_text("exec-note", note))
                             }))
                             .child(div().font_family("monospace").text_xs().child(
-                                if text.is_empty() {
-                                    "(no output)".to_string()
-                                } else {
-                                    text
-                                },
+                                crate::copyable_text::copyable_text(
+                                    "exec-text",
+                                    if text.is_empty() {
+                                        "(no output)".to_string()
+                                    } else {
+                                        text
+                                    },
+                                ),
                             )),
                     )
                     .into_any_element()
@@ -603,7 +607,10 @@ impl PodToolsView {
             .when(waiting, |this| {
                 this.child(Spinner::new().small().color(cx.theme().tone(tone)))
             })
-            .child(message.into())
+            .child(crate::copyable_text::copyable_text(
+                "pod-tools-notice",
+                message,
+            ))
             .into_any_element()
     }
 }

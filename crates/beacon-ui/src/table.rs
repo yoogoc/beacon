@@ -773,10 +773,31 @@ impl TableDelegate for ResourceTable {
         }
 
         let copy_name = target.name.clone();
-        menu.separator()
+        menu = menu
+            .separator()
             .item(PopupMenuItem::new("Copy name").on_click(move |_, _, cx| {
                 cx.write_to_clipboard(ClipboardItem::new_string(copy_name.clone()));
-            }))
+            }));
+        if let Some(index) = self
+            .columns
+            .columns
+            .iter()
+            .position(|column| column.header == "Status")
+            && let Some((_, value)) = self.cell(row, index)
+            && !value.is_missing()
+        {
+            menu = menu.item(crate::copyable_text::copy_item(
+                "Copy status",
+                value.display().to_string(),
+            ));
+        }
+        if is_pod {
+            menu = menu.item(crate::copyable_text::copy_item(
+                "Copy container states",
+                beacon_columns::containers::description(&object.data),
+            ));
+        }
+        menu
     }
 
     fn render_td(

@@ -73,6 +73,8 @@ Pod 列表以实心圆表示普通容器、空心圆表示 Init 容器，颜色�
 
 名称和命名空间只在详情头部显示。Labels 与 Annotations 每行使用 `key=value`，
 超过五项时默认收起其余项。Overview 的值可选中和复制。
+错误提示也可拖拽选中后通过 `Cmd+C`（macOS）或 `Ctrl+C`（Windows / Linux）复制；
+右键选择 **Copy** 可复制完整提示，包括被截断的内容。底部集群状态可右键复制连接详情。
 
 点击有颜色的 Owner 值可跳转并定位到对应资源。Pod 的 Owner 为 ReplicaSet 时，
 先显示 ReplicaSet，再异步读取并显示它的 Owner；读取失败或无权限时保留原链接。

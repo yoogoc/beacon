@@ -108,10 +108,10 @@ impl Shortcuts {
         };
         entries.extend([
             Entry {
-                scope: "Overview".into(),
+                scope: "Overview / messages".into(),
                 keys: copy.into(),
                 function: "Copy selected values".into(),
-                description: "Drag to select an Overview value, then copy the selected text."
+                description: "Drag to select a value or error message, then copy the selection. Right-click a message to copy its full text."
                     .into(),
             },
             Entry {

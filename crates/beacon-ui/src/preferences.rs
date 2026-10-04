@@ -931,7 +931,10 @@ impl Render for PreferencesView {
                         } else {
                             cx.theme().success
                         })
-                        .child(message),
+                        .child(crate::copyable_text::copyable_text(
+                            "preferences-message",
+                            message,
+                        )),
                 )
             })
             .child(

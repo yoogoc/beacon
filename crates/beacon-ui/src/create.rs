@@ -209,7 +209,10 @@ impl Render for CreateView {
                     .py_2()
                     .text_xs()
                     .text_color(cx.theme().tone(tone))
-                    .child(message),
+                    .child(crate::copyable_text::copyable_text(
+                        "create-status-text",
+                        message,
+                    )),
             )
             .child(
                 h_flex()

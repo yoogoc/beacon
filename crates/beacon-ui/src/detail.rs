@@ -12,6 +12,7 @@ use std::{
     sync::Arc,
 };
 
+use crate::copyable_text::copyable_text;
 use beacon_columns::{EventSummary, Timestamp, format_age, format_duration};
 use beacon_kube::{
     Applied, ClusterSession, Conflict, DataEntry, DynamicObject, Kind, ObjectRef, Operation,
@@ -648,7 +649,7 @@ impl DetailView {
                     div()
                         .text_sm()
                         .text_color(cx.theme().tone(Tone::Critical))
-                        .child(error.clone()),
+                        .child(copyable_text("tls-error", error.clone())),
                 )
                 .into_any_element(),
             Ok(certificates) => v_flex()
@@ -1252,7 +1253,7 @@ impl DetailView {
             Apply::Failed(error) => div()
                 .text_xs()
                 .text_color(cx.theme().tone(Tone::Critical))
-                .child(error.clone())
+                .child(copyable_text("apply-error", error.clone()))
                 .into_any_element(),
             Apply::Refused(conflict) => {
                 v_flex()
@@ -1262,11 +1263,15 @@ impl DetailView {
                             .text_xs()
                             .font_weight(FontWeight::MEDIUM)
                             .text_color(cx.theme().tone(Tone::Warning))
-                            .child(format!("Not applied — {}", conflict.summary())),
+                            .child(copyable_text(
+                                "apply-conflict",
+                                format!("Not applied — {}", conflict.summary()),
+                            )),
                     )
-                    .children(conflict.fields.iter().map(|field| {
+                    .children(conflict.fields.iter().enumerate().map(|(index, field)| {
                         let mine = self.value_at(field, cx);
                         h_flex()
+                            .id(("conflict-field", index))
                             .flex_wrap()
                             .gap_2()
                             .items_baseline()
@@ -1275,13 +1280,16 @@ impl DetailView {
                                 div()
                                     .font_family("monospace")
                                     .text_color(cx.theme().foreground)
-                                    .child(field.clone()),
+                                    .child(copyable_text("field", field.clone())),
                             )
                             .child(div().text_color(cx.theme().muted_foreground).child(
-                                match mine {
-                                    Some(value) => format!("yours: {value}"),
-                                    None => "yours: (removed)".to_string(),
-                                },
+                                copyable_text(
+                                    "yours",
+                                    match mine {
+                                        Some(value) => format!("yours: {value}"),
+                                        None => "yours: (removed)".to_string(),
+                                    },
+                                ),
                             ))
                     }))
                     .into_any_element()
@@ -1348,7 +1356,7 @@ impl DetailView {
                     .p_3()
                     .gap_2()
                     .w_full()
-                    .children(events.into_iter().map(|(_, event)| {
+                    .children(events.into_iter().enumerate().map(|(index, (_, event))| {
                         let tone = if event.is_warning() {
                             Tone::Warning
                         } else {
@@ -1356,6 +1364,7 @@ impl DetailView {
                         };
 
                         v_flex()
+                            .id(("event", index))
                             .w_full()
                             .gap_0p5()
                             .child(
@@ -1368,7 +1377,7 @@ impl DetailView {
                                         div()
                                             .text_color(cx.theme().tone(tone))
                                             .font_weight(FontWeight::MEDIUM)
-                                            .child(event.reason),
+                                            .child(copyable_text("event-reason", event.reason)),
                                     )
                                     .child(
                                         div()
@@ -1383,7 +1392,11 @@ impl DetailView {
                                         )
                                     }),
                             )
-                            .child(div().text_sm().child(event.message))
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .child(copyable_text("event-message", event.message)),
+                            )
                     })),
             )
             .into_any_element()
@@ -1411,7 +1424,7 @@ impl DetailView {
             .when(waiting, |this| {
                 this.child(Spinner::new().small().color(cx.theme().tone(tone)))
             })
-            .child(message.into())
+            .child(copyable_text("detail-notice", message))
             .into_any_element()
     }
 

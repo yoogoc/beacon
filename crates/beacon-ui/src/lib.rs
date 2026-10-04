@@ -10,6 +10,7 @@ mod app_logs;
 pub mod bridge;
 pub mod catalog;
 pub mod cluster;
+mod copyable_text;
 mod create;
 pub mod detail;
 mod filters;

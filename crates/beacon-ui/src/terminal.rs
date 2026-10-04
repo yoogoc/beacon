@@ -31,6 +31,7 @@ use alacritty_terminal::{
 use beacon_kube::{ClusterSession, Terminal as Session, TerminalEvent};
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::{Input, InputState};
+use gpui_kit::component::menu::ContextMenuExt as _;
 use gpui_kit::component::{ActiveTheme as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
@@ -682,6 +683,17 @@ impl Render for TerminalView {
         }
 
         let rows = self.rows(cx);
+        let output = rows
+            .iter()
+            .map(|runs| {
+                runs.iter()
+                    .map(|run| run.text.as_str())
+                    .collect::<String>()
+                    .trim_end()
+                    .to_string()
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
         let status = match &self.state {
             State::Connecting => Some((
                 Tone::Progressing,
@@ -697,11 +709,9 @@ impl Render for TerminalView {
             .track_focus(&self.focus)
             .key_context("BeaconTerminal")
             .on_key_down(cx.listener(|view, event: &KeyDownEvent, window, cx| {
-                // The command box lives inside this element, so its keys
-                // bubble up to here after it has handled them. Without this
-                // every character typed into it would also be sent to the
-                // shell.
-                if view.command.read(cx).focus_handle(cx).is_focused(window) {
+                // Only the grid's focus sends keys to the shell. Child inputs,
+                // selectable errors and menus keep their normal shortcuts.
+                if !view.focus.is_focused(window) {
                     return;
                 }
                 view.key(&event.keystroke, cx);
@@ -757,7 +767,13 @@ impl Render for TerminalView {
                                         .child(run.text)
                                 }))
                             })),
-                    ),
+                    )
+                    .context_menu(move |menu, _, _| {
+                        menu.item(crate::copyable_text::copy_item(
+                            "Copy terminal output",
+                            output.clone(),
+                        ))
+                    }),
             )
             .children(status.map(|(tone, message)| {
                 h_flex()
@@ -776,7 +792,7 @@ impl Render for TerminalView {
                             .min_w_0()
                             .text_xs()
                             .text_color(cx.theme().tone(tone))
-                            .child(message),
+                            .child(crate::copyable_text::copyable_text("shell-status", message)),
                     )
                     // "No such file or directory" is the commonest way a shell
                     // ends, and the answer to it is a different shell. Putting

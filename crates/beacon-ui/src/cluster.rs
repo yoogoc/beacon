@@ -1702,7 +1702,10 @@ impl ClusterView {
             .justify_center()
             .text_sm()
             .text_color(cx.theme().muted_foreground)
-            .child(message.into())
+            .child(crate::copyable_text::copyable_text(
+                "cluster-notice",
+                message,
+            ))
             .into_any_element()
     }
 
@@ -2013,7 +2016,10 @@ impl ClusterView {
                             .truncate()
                             .text_xs()
                             .text_color(cx.theme().tone(tone))
-                            .child(text)
+                            .child(crate::copyable_text::copyable_text(
+                                "operation-outcome",
+                                text,
+                            ))
                     }))
                     .children((selected > 0).then(|| {
                         h_flex()

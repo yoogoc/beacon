@@ -23,7 +23,7 @@ use beacon_kube::{
 };
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::Input;
-use gpui_kit::component::menu::{DropdownMenu as _, PopupMenuItem};
+use gpui_kit::component::menu::{ContextMenuExt as _, DropdownMenu as _, PopupMenuItem};
 use gpui_kit::component::popover::Popover;
 use gpui_kit::component::resizable::{ResizableState, h_resizable, resizable_panel};
 use gpui_kit::component::sidebar::{Sidebar, SidebarGroup, SidebarMenu, SidebarMenuItem};
@@ -37,6 +37,7 @@ use gpui_kit::*;
 use crate::app_logs;
 use crate::bridge::Bridge;
 use crate::cluster::{ClusterView, Mode, NavigationChanged, ResourceRequested};
+use crate::copyable_text::{copy_item, copyable_text};
 use crate::palette::{self, Choice, Palette, PaletteEvent};
 use crate::theme::{BeaconTheme as _, Tone, toggle_mode};
 
@@ -1280,7 +1281,7 @@ impl BeaconApp {
                     .when(tone == Tone::Progressing, |this| {
                         this.child(Spinner::new().small().color(cx.theme().tone(tone)))
                     })
-                    .child(headline),
+                    .child(copyable_text("connection-headline", headline)),
             )
             .child(
                 div()
@@ -1288,7 +1289,7 @@ impl BeaconApp {
                     .text_sm()
                     .text_center()
                     .text_color(cx.theme().muted_foreground)
-                    .child(detail),
+                    .child(copyable_text("connection-detail", detail)),
             )
             .into_any_element()
     }
@@ -1453,7 +1454,7 @@ impl BeaconApp {
                         div()
                             .text_xs()
                             .text_color(cx.theme().tone(Tone::Warning))
-                            .child(reason.to_string()),
+                            .child(copyable_text("connection-reason", reason.to_string())),
                     )
                 })
                 .on_click(move |_, window, cx| {
@@ -1554,6 +1555,7 @@ impl BeaconApp {
             }
         };
 
+        let copy_description = description.clone();
         h_flex()
             .w_full()
             .h(px(24.))
@@ -1592,6 +1594,12 @@ impl BeaconApp {
                             .child(status)
                             .tooltip(move |window, cx| {
                                 Tooltip::new(description.clone()).build(window, cx)
+                            })
+                            .context_menu(move |menu, _, _| {
+                                menu.item(copy_item(
+                                    "Copy connection details",
+                                    copy_description.clone(),
+                                ))
                             }),
                     )
                     .child(div().flex_shrink_0().child(self.render_activity_menu(
