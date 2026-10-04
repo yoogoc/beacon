@@ -193,6 +193,7 @@ pub struct BeaconApp {
     palette_open: bool,
     activity_open: Option<ActivityMenu>,
     activity_refresh: Option<Task<()>>,
+    quit_prompt_open: bool,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -216,10 +217,12 @@ impl BeaconApp {
             |view, _, event: &PaletteEvent, window, cx| match event {
                 PaletteEvent::Chose(choice) => {
                     view.palette_open = false;
+                    view.focus.focus(window, cx);
                     view.choose(choice.clone(), window, cx);
                 }
                 PaletteEvent::Dismissed => {
                     view.palette_open = false;
+                    view.focus.focus(window, cx);
                     cx.notify();
                 }
             },
@@ -255,8 +258,17 @@ impl BeaconApp {
             palette_open: false,
             activity_open: None,
             activity_refresh: None,
+            quit_prompt_open: false,
             _subscriptions: vec![palette_events, preferences_events],
         };
+
+        // Native window closing (including macOS's close-window shortcut)
+        // does not pass through the resource-tab action handler.
+        let view = cx.entity().downgrade();
+        window.on_window_should_close(cx, move |window, cx| {
+            let _ = view.update(cx, |view, cx| view.request_quit(window, cx));
+            false
+        });
 
         // Something has to hold focus before any binding can resolve. The
         // root is the honest place for it: keys that mean the same thing
@@ -660,6 +672,10 @@ impl BeaconApp {
             matches!(tab.state, TabState::Connecting).then(|| tab.cluster.clone());
         drop(tab);
 
+        if index == self.active {
+            self.focus.focus(window, cx);
+        }
+
         if self.tabs.is_empty() {
             self.active = 0;
             cx.notify();
@@ -699,6 +715,40 @@ impl BeaconApp {
             }
         }
         cx.notify();
+    }
+
+    fn close_tab_or_quit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.tabs.is_empty() {
+            self.request_quit(window, cx);
+        } else {
+            self.close(self.active, window, cx);
+        }
+    }
+
+    /// Keep the window and its sessions alive until an explicit confirmation.
+    /// Repeated close requests share the same outstanding prompt.
+    fn request_quit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.quit_prompt_open {
+            return;
+        }
+        self.quit_prompt_open = true;
+        let answer = window.prompt(
+            PromptLevel::Warning,
+            "Quit Beacon?",
+            Some("All Beacon windows will close. Active cluster connections, shells and port forwards will stop."),
+            &[PromptButton::cancel("Cancel"), PromptButton::ok("Quit")],
+            cx,
+        );
+        cx.spawn_in(window, async move |view, cx| {
+            let confirmed = matches!(answer.await, Ok(1));
+            let _ = view.update_in(cx, |view, _, cx| {
+                view.quit_prompt_open = false;
+                if confirmed {
+                    cx.quit();
+                }
+            });
+        })
+        .detach();
     }
 
     /// Another tab on the cluster in front, so it can be narrowed to something
@@ -778,7 +828,7 @@ impl BeaconApp {
                 return;
             }
             Choice::Action(palette::Action::CloseTab) => {
-                self.close(self.active, window, cx);
+                self.close_tab_or_quit(window, cx);
                 return;
             }
             Choice::Action(palette::Action::OpenSettings) => {
@@ -860,8 +910,10 @@ impl BeaconApp {
 
     fn render_title_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let is_dark = cx.theme().is_dark();
+        let title_bar = TitleBar::new()
+            .on_close_window(cx.listener(|view, _, window, cx| view.request_quit(window, cx)));
 
-        TitleBar::new().child(
+        title_bar.child(
             h_flex()
                 .w_full()
                 .items_center()
@@ -1629,7 +1681,7 @@ impl Render for BeaconApp {
             )
             .on_action(cx.listener(|view, _: &NewTab, window, cx| view.new_tab(window, cx)))
             .on_action(
-                cx.listener(|view, _: &CloseTab, window, cx| view.close(view.active, window, cx)),
+                cx.listener(|view, _: &CloseTab, window, cx| view.close_tab_or_quit(window, cx)),
             )
             .on_action(cx.listener(|view, _: &NextTab, window, cx| view.step(true, window, cx)))
             .on_action(

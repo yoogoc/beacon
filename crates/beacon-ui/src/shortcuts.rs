@@ -200,7 +200,7 @@ fn describe(name: &str, scope: &str) -> (String, String) {
             "Open another tab for the current cluster; without a cluster, open the cluster picker."
         }
         "CloseTab" => {
-            "Close the current resource tab, or close the App logs / Keyboard shortcuts window when focused."
+            "Close the current resource tab. With no tabs open, ask before quitting Beacon. In App logs, Keyboard shortcuts or Settings, close that window."
         }
         "NextTab" => "Switch to the next resource tab.",
         "PreviousTab" => "Switch to the previous resource tab.",
