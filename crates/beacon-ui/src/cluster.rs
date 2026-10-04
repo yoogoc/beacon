@@ -121,6 +121,9 @@ pub struct ClusterView {
     namespace_names: Vec<SharedString>,
     /// Whether the Secret type picker is open.
     filter_menu_open: Option<Field>,
+    label_menu_open: bool,
+    label_input: Entity<InputState>,
+    label_error: Option<String>,
 
     sidebar_search: Entity<InputState>,
     sidebar_query: String,
@@ -215,6 +218,8 @@ impl ClusterView {
                 .placeholder("Search")
                 .clean_on_escape()
         });
+        let label_input =
+            cx.new(|cx| InputState::new(window, cx).placeholder("app=web,env in (dev,prod)"));
 
         let table = cx.new(|cx| {
             TableState::new(ResourceTable::new(ColumnSet::fallback(true)), window, cx)
@@ -237,6 +242,9 @@ impl ClusterView {
             namespace_menu_open: false,
             namespace_names: Vec::new(),
             filter_menu_open: None,
+            label_menu_open: false,
+            label_input,
+            label_error: None,
             sidebar_search,
             sidebar_query: String::new(),
             row_search,
@@ -950,9 +958,15 @@ impl ClusterView {
     pub fn clear_filter(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.row_search
             .update(cx, |input, cx| input.set_value("", window, cx));
+        self.label_input
+            .update(cx, |input, cx| input.set_value("", window, cx));
+        self.label_error = None;
+        self.label_menu_open = false;
         self.table.update(cx, |state, cx| {
             let delegate = state.delegate_mut();
-            let changed = delegate.set_filter("") | delegate.clear_field_filters();
+            let changed = delegate.set_filter("")
+                | delegate.clear_field_filters()
+                | delegate.set_label_filter("").unwrap_or(false);
             if changed {
                 cx.notify();
             }
@@ -990,8 +1004,13 @@ impl ClusterView {
         self.mode = Mode::Objects;
         self.kind = Some(kind);
         self.filter_menu_open = None;
+        self.label_menu_open = false;
+        self.label_error = None;
+        self.label_input
+            .update(cx, |input, cx| input.set_value("", window, cx));
         self.table.update(cx, |state, _| {
             state.delegate_mut().clear_field_filters();
+            let _ = state.delegate_mut().set_label_filter("");
         });
         // The panel is about an object of the previous kind.
         self.detail = None;
@@ -1392,7 +1411,19 @@ impl ClusterView {
             },
         );
 
-        self._subscriptions = vec![sidebar_search, row_search, table];
+        let label_input = cx.subscribe_in(
+            &self.label_input.clone(),
+            window,
+            |view, _, event: &InputEvent, window, cx| {
+                match event {
+                    InputEvent::PressEnter { .. } => view.apply_label_filter(true, window, cx),
+                    InputEvent::Change => view.label_error = None,
+                    _ => return,
+                }
+                cx.notify();
+            },
+        );
+        self._subscriptions = vec![sidebar_search, row_search, label_input, table];
     }
 
     /// Keeps the picker's list in step with the namespaces the cluster has.
@@ -1860,6 +1891,144 @@ impl ClusterView {
             })
     }
 
+    /// Apply a validated draft locally, preserving the shared resource watch.
+    fn apply_label_filter(
+        &mut self,
+        close_menu: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let query = self.label_input.read(cx).value().to_string();
+        let result = self.table.update(cx, |state, cx| {
+            let changed = state.delegate_mut().set_label_filter(&query)?;
+            if changed {
+                state.scroll_to_row(0, cx);
+                cx.notify();
+            }
+            Ok::<_, String>(())
+        });
+        match result {
+            Ok(()) => {
+                self.label_error = None;
+                if close_menu {
+                    self.label_menu_open = false;
+                    // The popover's input survives after its contents unmount.
+                    self.row_search.read(cx).focus_handle(cx).focus(window, cx);
+                }
+            }
+            Err(error) => {
+                self.label_error = Some(format!(
+                    "Invalid label selector: {error} The current filter is unchanged."
+                ))
+            }
+        }
+        cx.notify();
+    }
+
+    fn toggle_label(
+        &mut self,
+        key: &str,
+        value: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let result = beacon_kube::labels::LabelSelector::parse(&self.label_input.read(cx).value())
+            .and_then(|mut selector| {
+                selector.toggle_equality(key, value)?;
+                Ok(selector.to_string())
+            });
+        match result {
+            Ok(query) => {
+                self.label_input
+                    .update(cx, |input, cx| input.set_value(query, window, cx));
+                self.apply_label_filter(false, window, cx);
+            }
+            Err(error) => {
+                self.label_error = Some(format!(
+                    "Invalid label selector: {error} The current filter is unchanged."
+                ));
+                cx.notify();
+            }
+        }
+    }
+
+    fn render_label_picker(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let table = self.table.read(cx).delegate();
+        let selector = table.label_selector().clone();
+        let selected = table.label_filter().to_string();
+        // Collect suggestions only while open, never on table ticks.
+        let values = if self.label_menu_open {
+            table.label_values()
+        } else {
+            Vec::new()
+        };
+        let input = self.label_input.clone();
+        let error = self.label_error.clone();
+        let opening = cx.entity().downgrade();
+        let choosing = opening.clone();
+        Popover::new("label-filter")
+            .open(self.label_menu_open)
+            .on_open_change(move |open, window, cx| {
+                let _ = opening.update(cx, |view, cx| {
+                    view.label_menu_open = *open;
+                    if *open {
+                        view.filter_menu_open = None;
+                        view.namespace_menu_open = false;
+                        view.label_input.read(cx).focus_handle(cx).focus(window, cx);
+                    } else {
+                        view.row_search.read(cx).focus_handle(cx).focus(window, cx);
+                    }
+                    cx.notify();
+                });
+            })
+            .trigger(
+                Button::new("label-filter-trigger")
+                    .small().outline()
+                    .label(if selector.is_empty() { "Labels: All".into() } else { format!("Labels: {}", selector.len()) })
+                    .tooltip(if selected.is_empty() { "Filter resources by labels".into() } else { selected }),
+            )
+            .content(move |_, _, cx| {
+                let applying = choosing.clone();
+                let clearing = choosing.clone();
+                let rows = values.iter().take(200).map(|(key, value)| {
+                    let view = choosing.clone();
+                    let key = key.clone();
+                    let value = value.clone();
+                    let label = format!("{key}={value}");
+                    Checkbox::new(SharedString::from(format!("label-choice-{label}")))
+                        .checked(selector.has_equality(&key, &value))
+                        .label(label.clone())
+                        .accessibility_label(label)
+                        .on_click(move |_, window, cx| {
+                            let _ = view.update(cx, |view, cx| view.toggle_label(&key, &value, window, cx));
+                        })
+                });
+                v_flex().w(px(430.)).min_h_0().max_h(px(540.)).gap_2()
+                    .text_sm().text_color(cx.theme().foreground)
+                    .child(div().font_weight(FontWeight::MEDIUM).child("Label selector"))
+                    .child(Input::new(&input).small())
+                    .child(h_flex().gap_2()
+                        .child(Button::new("apply-label-filter").small().primary().label("Apply")
+                            .on_click(move |_, window, cx| { let _ = applying.update(cx, |view, cx| view.apply_label_filter(true, window, cx)); }))
+                        .child(Button::new("clear-label-filter").small().ghost().label("Clear labels")
+                            .on_click(move |_, window, cx| { let _ = clearing.update(cx, |view, cx| {
+                                view.label_input.update(cx, |input, cx| input.set_value("", window, cx));
+                                view.apply_label_filter(true, window, cx);
+                            }); }))
+                    )
+                    .child(div().text_xs().text_color(cx.theme().muted_foreground)
+                        .child("Use =, ==, !=, in, notin, key or !key. Commas require all conditions. Press Enter to apply."))
+                    .children(error.clone().map(|error| div().text_xs().text_color(cx.theme().tone(Tone::Critical))
+                        .child(crate::copyable_text::copyable_text("label-filter-error", error))))
+                    .child(div().text_xs().text_color(cx.theme().muted_foreground)
+                        .child(if values.is_empty() { "No labels in this scope. You can still enter a selector.".to_string() }
+                            else if values.len() > 200 { format!("Showing 200 of {} labels. Enter other labels above.", values.len()) }
+                            else { "Select labels below to apply them together.".to_string() }))
+                    .child(div().id("label-filter-values").min_h_0().overflow_y_scroll()
+                        .child(v_flex().gap_1p5().children(rows)))
+            })
+    }
+
     /// Exact facets come from all watched objects, including currently hidden rows.
     fn render_field_picker(&self, field: Field, cx: &mut Context<Self>) -> impl IntoElement {
         let table = self.table.read(cx);
@@ -2070,6 +2239,12 @@ impl ClusterView {
                         div()
                             .w(px(220.))
                             .child(Input::new(&self.row_search).small()),
+                    )
+                    .children(
+                        self.kind
+                            .as_ref()
+                            .filter(|_| self.mode == Mode::Objects)
+                            .map(|_| self.render_label_picker(cx).into_any_element()),
                     )
                     .children(
                         self.kind

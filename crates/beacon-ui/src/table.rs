@@ -13,6 +13,7 @@
 use beacon_columns::{
     Cell, CellValue, ColumnDef, ColumnSet, ColumnSource, ColumnWidth, Timestamp, Usage,
 };
+use beacon_kube::labels::LabelSelector;
 use beacon_kube::{
     DeleteTarget, Delta, DeltaBatch, DynamicObject, Metrics, ObjectRef, ResourceStore, data,
 };
@@ -59,6 +60,8 @@ pub struct ResourceTable {
     filter: String,
     /// Exact facets combine with each other and the fuzzy name search.
     field_filters: BTreeMap<Field, String>,
+    label_filter: String,
+    label_selector: LabelSelector,
     /// Reused across keystrokes: it owns scratch buffers, and allocating one
     /// per rebuild would be the expensive part of filtering.
     matcher: Matcher,
@@ -98,6 +101,8 @@ impl ResourceTable {
             sort: Sort::Natural,
             filter: String::new(),
             field_filters: BTreeMap::new(),
+            label_filter: String::new(),
+            label_selector: LabelSelector::default(),
             matcher: crate::catalog::matcher(),
             now: Timestamp::now(),
             metrics: Metrics::default(),
@@ -200,6 +205,44 @@ impl ResourceTable {
 
     pub fn filter(&self) -> &str {
         &self.filter
+    }
+
+    pub(crate) fn label_filter(&self) -> &str {
+        &self.label_filter
+    }
+
+    pub(crate) fn label_selector(&self) -> &LabelSelector {
+        &self.label_selector
+    }
+
+    /// Parse first: invalid drafts must never broaden the visible selection.
+    pub(crate) fn set_label_filter(&mut self, query: &str) -> Result<bool, String> {
+        let selector = LabelSelector::parse(query)?;
+        let query = selector.to_string();
+        if self.label_filter == query {
+            return Ok(false);
+        }
+        self.label_filter = query;
+        self.label_selector = selector;
+        self.reindex();
+        Ok(true)
+    }
+
+    /// Suggestions include labels on rows hidden by any active filter.
+    pub(crate) fn label_values(&self) -> Vec<(String, String)> {
+        self.store
+            .iter()
+            .flat_map(|(_, object)| {
+                object
+                    .metadata
+                    .labels
+                    .iter()
+                    .flat_map(|labels| labels.iter())
+            })
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .map(|(key, value)| (key.clone(), value.clone()))
+            .collect()
     }
 
     pub(crate) fn filter_values(&self, field: Field) -> Vec<String> {
@@ -462,11 +505,13 @@ impl ResourceTable {
     /// the two paths through `reindex` identical in shape.
     fn matching(&mut self) -> Vec<(u32, ObjectRef)> {
         let filters = &self.field_filters;
+        let labels = &self.label_selector;
         let now = self.now;
         let accepts = |object: &DynamicObject| {
-            filters
-                .iter()
-                .all(|(field, value)| field.values(object, now).contains(value))
+            labels.matches(object.metadata.labels.as_ref())
+                && filters
+                    .iter()
+                    .all(|(field, value)| field.values(object, now).contains(value))
         };
         if self.filter.is_empty() {
             return self
@@ -980,7 +1025,7 @@ mod tests {
     use beacon_columns::{CellValue, ColumnSet};
     use beacon_kube::{Delta, DynamicObject, resources};
     use gpui_kit::component::table::ColumnSort;
-    use std::sync::Arc;
+    use std::{collections::BTreeMap, sync::Arc};
 
     fn key(value: &str) -> SortKey {
         SortKey::of(&CellValue::text(value))
@@ -1082,6 +1127,103 @@ mod tests {
                 .within("default")
                 .data(data),
         )
+    }
+
+    fn labeled(name: &str, app: &str, env: &str) -> Arc<DynamicObject> {
+        let mut object = (*named("default", name)).clone();
+        object.metadata.labels = Some(BTreeMap::from([
+            ("app".into(), app.into()),
+            ("env".into(), env.into()),
+        ]));
+        Arc::new(object)
+    }
+
+    #[test]
+    fn label_filters_combine_with_search_facets_sort_and_safe_selection() {
+        let mut table = ResourceTable::new(ColumnSet::for_kind("", "Pod", true));
+        let mut stopped = (*labeled("web-stopped", "web", "prod")).clone();
+        stopped.data["status"] = serde_json::json!({"phase":"Failed"});
+        table.apply(vec![Delta::Reset(vec![
+            labeled("web-one", "web", "prod"),
+            labeled("web-two", "web", "qa"),
+            labeled("db-one", "db", "prod"),
+            Arc::new(stopped),
+        ])]);
+        table.toggle_all_visible();
+        table.sort_by(0, ColumnSort::Descending);
+        assert!(table.set_label_filter("app=web,env in (prod,qa)").unwrap());
+        assert_eq!(table.len(), 3);
+        assert_eq!(table.selected_count(), 3);
+        table.set_field_filter(Field::PodStatus, Some("Failed".into()));
+        assert_eq!(table.len(), 1);
+        assert_eq!(table.key_at(0).unwrap().name, "web-stopped");
+        assert_eq!(
+            table.label_values(),
+            vec![
+                ("app".into(), "db".into()),
+                ("app".into(), "web".into()),
+                ("env".into(), "prod".into()),
+                ("env".into(), "qa".into()),
+            ],
+            "hidden resources still contribute suggestions"
+        );
+        let previous = table.label_filter().to_string();
+        assert!(table.set_label_filter("app in (").is_err());
+        assert_eq!(table.label_filter(), previous);
+        assert_eq!(table.selected_count(), 1);
+        table.set_filter("one");
+        assert_eq!(table.len(), 0);
+        assert_eq!(
+            table.selected_count(),
+            0,
+            "bulk deletion cannot include hidden rows"
+        );
+        table.set_filter("");
+        table.clear_field_filters();
+        table.set_label_filter("").unwrap();
+        assert_eq!(table.total(), 4);
+        assert_eq!(table.len(), 4);
+        assert_eq!(
+            table.key_at(0).unwrap().name,
+            "web-two",
+            "the chosen sort survives"
+        );
+    }
+
+    #[test]
+    fn label_filters_follow_watch_updates_and_remain_local_to_each_table() {
+        let mut table = ResourceTable::new(ColumnSet::fallback(true));
+        let mut other = ResourceTable::new(ColumnSet::fallback(true));
+        let objects = vec![labeled("one", "web", "prod"), labeled("two", "db", "prod")];
+        table.apply(vec![Delta::Reset(objects.clone())]);
+        other.apply(vec![Delta::Reset(objects)]);
+        table.set_label_filter("app=web").unwrap();
+        assert_eq!(table.len(), 1);
+        assert_eq!(other.len(), 2);
+        let mut changed = (*labeled("two", "web", "prod")).clone();
+        changed.metadata.resource_version = Some("2".into());
+        table.apply(vec![Delta::Upsert(Arc::new(changed))]);
+        assert_eq!(
+            table.len(),
+            2,
+            "a live label update brings the row into view"
+        );
+        let mut changed = (*labeled("one", "db", "prod")).clone();
+        changed.metadata.resource_version = Some("2".into());
+        table.apply(vec![Delta::Upsert(Arc::new(changed))]);
+        assert_eq!(table.key_at(0).unwrap().name, "two");
+        table.reset(ColumnSet::fallback(true));
+        table.apply_from(
+            Some("default"),
+            vec![Delta::Reset(vec![labeled("three", "db", "prod")])],
+        );
+        assert_eq!(
+            table.len(),
+            0,
+            "changing namespace or relisting retains the label filter"
+        );
+        assert_eq!(table.label_filter(), "app=web");
+        assert!(other.label_selector().is_empty());
     }
 
     #[test]

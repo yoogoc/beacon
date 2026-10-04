@@ -52,7 +52,17 @@ EKS ARN 上下文显示可读的集群名称与 EKS 标识。悬停可查看区�
 命名空间选择器中，点击名称会单选并关闭菜单；点击复选框可组合多个命名空间。
 取消最后一项后切换到所有命名空间。多选使用各命名空间自己的 Watch，适用于只有命名空间级权限的账号。
 
-名称搜索可与命名空间范围、资源属性筛选一起使用：
+名称搜索可与命名空间范围、Label 和资源属性筛选一起使用。
+
+所有资源列表都提供 **Labels: All** 筛选菜单。可勾选当前命名空间范围内的 `key=value`，
+多个勾选项需要同时满足；也可输入 [Kubernetes 标签选择器](https://kubernetes.io/docs/concepts/overview/working-with-objects/labels/#label-selectors)，
+点击 **Apply** 或按 Enter 应用，例如 `app=web,environment in (production,qa)`。
+支持 `=`、`==`、`!=`、`in`、`notin`、`key`（存在）和 `!key`（不存在）。
+**Clear labels** 只清除 Label 筛选，命令面板的 **Clear filter** 清除所有列表筛选。
+无效选择器会显示可复制的错误提示并保留之前的筛选。
+每个标签页独立保留筛选，切换命名空间和资源 Watch 更新时继续生效。
+
+不同资源的属性筛选如下：
 
 | 资源 | 属性筛选 |
 | --- | --- |
