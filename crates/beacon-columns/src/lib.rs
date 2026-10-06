@@ -18,6 +18,7 @@ pub mod event;
 pub mod path;
 pub mod pod;
 pub mod printer;
+mod workflow;
 
 pub use age::{format_age, format_duration};
 pub use event::EventSummary;
@@ -176,6 +177,18 @@ impl CellValue {
             Err(_) => Self::text(text.clone()),
         }
     }
+
+    /// An absolute UTC time. Go's zero time means the execution has not
+    /// started or finished yet, rather than an event in year one.
+    pub fn from_timestamp(nodes: &[&Value]) -> Self {
+        nodes
+            .first()
+            .and_then(|value| value.as_str())
+            .filter(|value| !value.starts_with("0001-"))
+            .and_then(|value| value.parse::<Timestamp>().ok())
+            .map(|time| Self::text(time.strftime("%Y-%m-%d %H:%M:%S UTC").to_string()))
+            .unwrap_or_default()
+    }
 }
 
 /// How a column claims horizontal space.
@@ -233,6 +246,8 @@ pub enum PathKind {
     /// timestamp was, which is why a CRD's own `Age` column looks like every
     /// other Age column.
     Date,
+    /// An absolute timestamp, rather than an elapsed age.
+    Timestamp,
 }
 
 #[derive(Debug, Clone)]
@@ -289,6 +304,7 @@ impl ColumnDef {
         match kind {
             PathKind::Value => CellValue::from_nodes(&nodes),
             PathKind::Date => CellValue::from_date(&nodes, cell.now),
+            PathKind::Timestamp => CellValue::from_timestamp(&nodes),
         }
     }
 }
@@ -319,9 +335,13 @@ impl ColumnSet {
         namespaced: bool,
         printer_columns: Option<&Value>,
     ) -> Self {
-        builtin::column_set(group, kind, namespaced)
+        let mut columns = builtin::column_set(group, kind, namespaced)
             .or_else(|| printer::column_set(printer_columns?, namespaced))
-            .unwrap_or_else(|| Self::fallback(namespaced))
+            .unwrap_or_else(|| Self::fallback(namespaced));
+        if (group, kind) == ("argoproj.io", "Workflow") {
+            workflow::add_execution_times(&mut columns);
+        }
+        columns
     }
 
     /// [`ColumnSet::resolve`] for a kind that published no printer columns.

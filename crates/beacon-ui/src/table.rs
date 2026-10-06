@@ -11,7 +11,7 @@
 //! per frame -- and never per row.
 
 use beacon_columns::{
-    Cell, CellValue, ColumnDef, ColumnSet, ColumnSource, ColumnWidth, Timestamp, Usage,
+    Cell, CellValue, ColumnDef, ColumnSet, ColumnSource, ColumnWidth, PathKind, Timestamp, Usage,
 };
 use beacon_kube::labels::LabelSelector;
 use beacon_kube::{
@@ -580,6 +580,23 @@ impl ResourceTable {
             };
         }
 
+        // Absolute execution times sort by the underlying instant. Display
+        // strings begin with the year, which the numeric cell sorter alone
+        // would mistake for the entire value.
+        if let ColumnSource::JsonPath {
+            expression,
+            kind: PathKind::Timestamp,
+        } = &column.source
+        {
+            return beacon_columns::path::evaluate(expression, &object.data)
+                .first()
+                .and_then(|value| value.as_str())
+                .filter(|value| !value.starts_with("0001-"))
+                .and_then(|value| value.parse::<Timestamp>().ok())
+                .map(|time| SortKey::Number(time.as_second()))
+                .unwrap_or(SortKey::Missing);
+        }
+
         SortKey::of(&column.resolve(&Cell {
             metadata: &object.metadata,
             data: &object.data,
@@ -1076,6 +1093,44 @@ mod tests {
     fn missing_values_sort_last() {
         assert!(key("anything") < SortKey::Missing);
         assert!(key("0") < SortKey::Missing);
+    }
+
+    #[test]
+    fn workflow_execution_columns_sort_by_instants_instead_of_years() {
+        let workflow = |name, started, finished| {
+            Arc::new(
+                serde_json::from_value::<DynamicObject>(serde_json::json!({
+                    "apiVersion":"argoproj.io/v1alpha1", "kind":"Workflow",
+                    "metadata":{"name":name},
+                    "status":{"startedAt":started,"finishedAt":finished}
+                }))
+                .unwrap(),
+            )
+        };
+        let mut table = ResourceTable::new(ColumnSet::for_kind("argoproj.io", "Workflow", false));
+        table.apply(vec![Delta::Reset(vec![
+            workflow("alpha", "2026-10-06T12:00:00Z", "2026-10-06T12:05:00Z"),
+            workflow("beta", "2026-10-06T19:54:46+08:00", "2026-10-06T12:10:00Z"),
+            workflow("gamma", "0001-01-01T00:00:00Z", "0001-01-01T00:00:00Z"),
+        ])]);
+        table.sort_by(1, ColumnSort::Ascending);
+        assert_eq!(
+            table
+                .rows
+                .iter()
+                .map(|row| row.name.as_str())
+                .collect::<Vec<_>>(),
+            ["beta", "alpha", "gamma"]
+        );
+        table.sort_by(2, ColumnSort::Ascending);
+        assert_eq!(
+            table
+                .rows
+                .iter()
+                .map(|row| row.name.as_str())
+                .collect::<Vec<_>>(),
+            ["alpha", "beta", "gamma"]
+        );
     }
 
     /// One pod per namespace-and-index, with a restart count that is
