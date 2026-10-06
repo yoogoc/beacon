@@ -6,6 +6,7 @@
 //! this crate, a headless CLI or an integration test is another.
 
 pub mod access;
+pub mod argo;
 pub mod config;
 pub mod connection;
 pub mod data;

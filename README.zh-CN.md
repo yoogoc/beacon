@@ -50,6 +50,7 @@ Beacon 使用 Rust 和 GPUI 构建，将集群、资源列表、详情和容器�
 | **资源与 CRD** | 实时 Watch 更新；内置资源使用 kubectl 风格列；动态读取 CRD 的 `additionalPrinterColumns`。 |
 | **搜索与筛选** | 模糊搜索、排序、命名空间多选；按 Pod / Deployment 状态、Service 类型、Ingress Class、PVC 属性、Secret 类型和 CRD Scope 筛选。 |
 | **资源详情** | Overview、YAML、Events；可复制的字段、折叠的标签和注解；容器端口、资源请求与限制、探针、环境变量与挂载；点击 Owner 跳转。 |
+| **Argo Workflows** | 独立资源分组、Workflow 与模板执行图、CronWorkflow 运行历史；节点详情通过独立浮层显示 Pod 容器、输入输出、产物与 YAML；控制器资源在侧栏默认折叠。 |
 | **Pod 工具** | 流式日志、单次 Exec、交互式 Shell 和端口转发；独立的底部工具面板；用实心 / 空心圆显示普通 / Init 容器状态。 |
 | **资源写操作** | YAML 创建与服务端预校验、Server-Side Apply、重启、扩缩容、单个及批量删除；按资源类型显示右键菜单和权限预检结果。 |
 | **ConfigMap 与 Secret** | 按键查看和编辑 Data；Secret 值默认遮盖；TLS 证书展示主题、签发者、有效期、算法、强度、扩展和公钥。 |

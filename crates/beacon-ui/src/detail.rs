@@ -19,8 +19,10 @@ use beacon_kube::{
     ResourceStore, Rules, WatchKey, data,
 };
 use gpui_kit::base::{Link, SelectableText, TextSelection};
+use gpui_kit::component::WindowExt as _;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::{Editor, EditorState, Textarea, TextareaState};
+use gpui_kit::component::menu::{DropdownMenu as _, PopupMenuItem};
 use gpui_kit::component::spinner::Spinner;
 use gpui_kit::component::tab::{Tab, TabBar};
 use gpui_kit::component::{ActiveTheme as _, Disableable as _, Sizable as _, h_flex, v_flex};
@@ -128,6 +130,17 @@ pub struct DetailView {
     annotations_expanded: bool,
     expanded_sections: BTreeSet<String>,
     overview: crate::overview::Projection,
+    argo_nodes: Arc<beacon_kube::argo::Nodes>,
+    argo_graph: crate::argo::Graph,
+    argo_graph_error: Option<String>,
+    argo_loading: bool,
+    argo_scope: Option<String>,
+    argo_template: String,
+    argo_node: Option<WeakEntity<crate::argo_node::ArgoNodeView>>,
+    _argo_task: Option<Task<()>>,
+    argo_runs: ResourceStore,
+    argo_runs_listed: bool,
+    _argo_runs_task: Option<Task<()>>,
     resolved_owners: BTreeMap<String, Vec<OwnerLink>>,
     owner_sources: Vec<OwnerLink>,
     _owners_task: Option<Task<()>>,
@@ -194,6 +207,17 @@ impl DetailView {
             annotations_expanded: false,
             expanded_sections: BTreeSet::new(),
             overview,
+            argo_nodes: Arc::new(beacon_kube::argo::Nodes::new()),
+            argo_graph: crate::argo::Graph::default(),
+            argo_graph_error: None,
+            argo_loading: false,
+            argo_scope: None,
+            argo_template: String::new(),
+            argo_node: None,
+            _argo_task: None,
+            argo_runs: ResourceStore::new(),
+            argo_runs_listed: false,
+            _argo_runs_task: None,
             resolved_owners: BTreeMap::new(),
             owner_sources: Vec::new(),
             _owners_task: None,
@@ -213,6 +237,8 @@ impl DetailView {
         };
 
         this.resolve_pod_owners(cx);
+        this.load_argo(cx);
+        this.watch_argo_runs(window, cx);
         this.watch_events(window, cx);
         this.start_clock(cx);
         this
@@ -236,7 +262,11 @@ impl DetailView {
         self.certificates = tls_certificates(&self.kind, &object);
         self.overview =
             crate::overview::project(&self.kind.resource.group, &self.kind.resource.kind, &object);
+        let changed = !Arc::ptr_eq(&self.object, &object);
         self.object = object;
+        if changed {
+            self.load_argo(cx);
+        }
         self.resolve_pod_owners(cx);
         self.rules = rules;
         cx.notify();
@@ -485,6 +515,35 @@ impl DetailView {
         ));
     }
 
+    fn watch_argo_runs(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.kind.resource.group != beacon_kube::argo::GROUP
+            || self.kind.resource.kind != "CronWorkflow"
+        {
+            return;
+        }
+        let Some(kind) = self.session.discovery().kinds().iter().find(|kind| {
+            kind.resource.group == beacon_kube::argo::GROUP && kind.resource.kind == "Workflow"
+        }) else {
+            return;
+        };
+        let key = WatchKey::all(kind.resource.clone())
+            .in_namespace(self.target.namespace.clone())
+            .with_labels(format!(
+                "workflows.argoproj.io/cron-workflow={}",
+                self.target.name
+            ));
+        self._argo_runs_task = Some(drain_into(
+            cx,
+            self.session.subscribe(key),
+            |view, batch, _, cx| {
+                view.argo_runs_listed = true;
+                view.argo_runs.apply_batch(batch);
+                cx.notify();
+            },
+            window,
+        ));
+    }
+
     fn start_clock(&mut self, cx: &mut Context<Self>) {
         self._clock = cx.spawn(async move |this, cx| {
             loop {
@@ -503,6 +562,344 @@ impl DetailView {
     }
 
     // MARK: rendering
+
+    fn load_argo(&mut self, cx: &mut Context<Self>) {
+        if self.kind.resource.group != beacon_kube::argo::GROUP {
+            return;
+        }
+        if self.kind.resource.kind == "Workflow" {
+            let object = self.object.clone();
+            let scope = self.argo_scope.clone();
+            self.argo_loading = true;
+            self.argo_graph_error = None;
+            let decoding = Bridge::global(cx).run_cancellable(async move {
+                let nodes = beacon_kube::argo::nodes(&object.data)?;
+                let graph = crate::argo::Graph::workflow(&object, &nodes, scope.as_deref());
+                Ok::<_, String>((Arc::new(nodes), graph))
+            });
+            self._argo_task = Some(cx.spawn(async move |this, cx| {
+                let result = decoding.result().await;
+                let _ = this.update(cx, |view, cx| {
+                    view.argo_loading = false;
+                    match result {
+                        Ok(Ok((nodes, graph))) => {
+                            view.argo_nodes = nodes;
+                            view.argo_graph = graph;
+                        }
+                        Ok(Err(error)) => {
+                            view.argo_nodes = Arc::new(beacon_kube::argo::Nodes::new());
+                            view.argo_graph = crate::argo::Graph::default();
+                            view.argo_graph_error = Some(error);
+                        }
+                        Err(error) => view.argo_graph_error = Some(error.to_string()),
+                    }
+                    if let Some(node) = view.argo_node.as_ref().and_then(WeakEntity::upgrade) {
+                        node.update(cx, |node, cx| {
+                            node.refresh(view.object.clone(), view.argo_nodes.clone(), cx)
+                        });
+                    }
+                    cx.notify();
+                });
+            }));
+        } else if matches!(
+            self.kind.resource.kind.as_str(),
+            "WorkflowTemplate" | "ClusterWorkflowTemplate"
+        ) {
+            let spec = &self.object.data["spec"];
+            if !crate::argo::array(spec, "/templates")
+                .any(|template| template["name"] == self.argo_template)
+            {
+                self.argo_template = spec["entrypoint"]
+                    .as_str()
+                    .filter(|name| {
+                        crate::argo::array(spec, "/templates")
+                            .any(|template| template["name"] == *name)
+                    })
+                    .or_else(|| {
+                        crate::argo::array(spec, "/templates")
+                            .find_map(|template| template["name"].as_str())
+                    })
+                    .unwrap_or("")
+                    .to_string();
+            }
+            self.argo_graph = crate::argo::Graph::template(spec, &self.argo_template);
+            if let Some(node) = self.argo_node.as_ref().and_then(WeakEntity::upgrade) {
+                node.update(cx, |node, cx| {
+                    node.refresh(self.object.clone(), self.argo_nodes.clone(), cx)
+                });
+            }
+        }
+    }
+
+    fn open_argo_node(
+        &mut self,
+        node: crate::argo::GraphNode,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let node = cx.new(|cx| {
+            crate::argo_node::ArgoNodeView::new(
+                self.session.clone(),
+                self.object.clone(),
+                node,
+                self.argo_nodes.clone(),
+                window,
+                cx,
+            )
+        });
+        cx.subscribe_in(
+            &node,
+            window,
+            |view, _, event: &OwnerRequested, window, cx| {
+                window.close_sheet(cx);
+                view.argo_node = None;
+                cx.emit(OwnerRequested {
+                    kind: event.kind.clone(),
+                    target: event.target.clone(),
+                })
+            },
+        )
+        .detach();
+        cx.subscribe_in(
+            &node,
+            window,
+            |view, _, event: &crate::argo_node::SubgraphRequested, window, cx| {
+                window.close_sheet(cx);
+                view.argo_node = None;
+                view.argo_scope = Some(event.0.clone());
+                view.argo_graph = crate::argo::Graph::workflow(
+                    &view.object,
+                    &view.argo_nodes,
+                    view.argo_scope.as_deref(),
+                );
+                cx.notify();
+            },
+        )
+        .detach();
+        self.argo_node = Some(node.downgrade());
+        let owner = cx.entity().downgrade();
+        window.open_sheet(cx, move |sheet, window, _| {
+            let owner = owner.clone();
+            sheet
+                .title("Node details")
+                .size(px(560.).min(window.viewport_size().width - px(24.)))
+                .resizable(true)
+                .child(node.clone())
+                .on_close(move |_, _, cx| {
+                    let _ = owner.update(cx, |view, _| {
+                        view.argo_node = None;
+                    });
+                })
+        });
+    }
+
+    fn render_argo_graph(&self, cx: &mut Context<Self>) -> AnyElement {
+        let runtime = self.kind.resource.kind == "Workflow";
+        let mut view = self
+            .overview_block("argo-graph-section", cx)
+            .child(self.heading(
+                if runtime {
+                    "Execution"
+                } else {
+                    "Template graph"
+                },
+                cx,
+            ));
+        if runtime && self.argo_scope.is_some() {
+            view = view.child(
+                Button::new("main-graph")
+                    .small()
+                    .ghost()
+                    .label("Back to workflow graph")
+                    .on_click(cx.listener(|view, _, _, cx| {
+                        view.argo_scope = None;
+                        view.argo_graph =
+                            crate::argo::Graph::workflow(&view.object, &view.argo_nodes, None);
+                        cx.notify();
+                    })),
+            );
+        }
+        if !runtime {
+            let templates: Vec<_> = crate::argo::array(&self.object.data, "/spec/templates")
+                .filter_map(|template| template["name"].as_str().map(str::to_string))
+                .collect();
+            let owner = cx.entity().downgrade();
+            view = view.child(
+                Button::new("template-selector")
+                    .small()
+                    .outline()
+                    .label(if self.argo_template.is_empty() {
+                        "No templates".into()
+                    } else {
+                        self.argo_template.clone()
+                    })
+                    .dropdown_menu(move |menu, _, _| {
+                        templates.iter().fold(menu, |menu, name| {
+                            let owner = owner.clone();
+                            let name = name.clone();
+                            menu.item(PopupMenuItem::new(name.clone()).on_click(move |_, _, cx| {
+                                let _ = owner.update(cx, |view, cx| {
+                                    view.argo_template = name.clone();
+                                    view.argo_graph = crate::argo::Graph::template(
+                                        &view.object.data["spec"],
+                                        &view.argo_template,
+                                    );
+                                    cx.notify();
+                                });
+                            }))
+                        })
+                    }),
+            );
+        }
+        if let Some(error) = &self.argo_graph_error {
+            return view
+                .child(copyable_text("argo-graph-error", error.clone()))
+                .into_any_element();
+        }
+        if self.argo_loading && self.argo_graph.nodes.is_empty() {
+            return view.child(Spinner::new().small()).into_any_element();
+        }
+        if self.argo_graph.nodes.is_empty() {
+            return view
+                .child(
+                    div()
+                        .text_sm()
+                        .text_color(cx.theme().muted_foreground)
+                        .child(SelectableText::new(
+                            "argo-graph-empty",
+                            if runtime {
+                                "No execution nodes yet"
+                            } else {
+                                "No template graph"
+                            },
+                        )),
+                )
+                .into_any_element();
+        }
+        let graph = &self.argo_graph;
+        let edges: Vec<_> = graph
+            .edges
+            .iter()
+            .map(|(a, b)| {
+                let a = &graph.nodes[*a];
+                let b = &graph.nodes[*b];
+                (
+                    a.x + crate::argo::CARD_WIDTH / 2.,
+                    a.y + crate::argo::CARD_HEIGHT,
+                    b.x + crate::argo::CARD_WIDTH / 2.,
+                    b.y,
+                )
+            })
+            .collect();
+        let color = cx.theme().border;
+        let canvas = canvas(
+            |_, _, _| {},
+            move |bounds, _, window, _| {
+                let mut path = PathBuilder::stroke(px(1.5));
+                for &(x1, y1, x2, y2) in &edges {
+                    let mid = (y1 + y2) / 2.;
+                    path.move_to(bounds.origin + point(px(x1), px(y1)));
+                    path.line_to(bounds.origin + point(px(x1), px(mid)));
+                    path.line_to(bounds.origin + point(px(x2), px(mid)));
+                    path.line_to(bounds.origin + point(px(x2), px(y2)));
+                }
+                if let Ok(path) = path.build() {
+                    window.paint_path(path, color);
+                }
+            },
+        )
+        .absolute()
+        .size_full();
+        let surface = div()
+            .relative()
+            .w(px(graph.width))
+            .h(px(graph.height))
+            .child(canvas)
+            .children(graph.nodes.iter().map(|node| {
+                let selected = node.clone();
+                let phase = if node.runtime {
+                    node.data["phase"].as_str().unwrap_or("Unknown")
+                } else {
+                    "Template"
+                };
+                let tone = crate::argo::phase_tone(phase);
+                let subtitle = if node.runtime {
+                    format!(
+                        "{phase} · {}",
+                        crate::argo::duration(&node.data, self.now).unwrap_or_else(|| "—".into())
+                    )
+                } else {
+                    node.data["template"]
+                        .as_str()
+                        .or_else(|| {
+                            node.data
+                                .pointer("/templateRef/template")
+                                .and_then(Value::as_str)
+                        })
+                        .unwrap_or("inline")
+                        .into()
+                };
+                div()
+                    .id(SharedString::from(format!("argo-node-{}", node.id)))
+                    .absolute()
+                    .left(px(node.x))
+                    .top(px(node.y))
+                    .w(px(crate::argo::CARD_WIDTH))
+                    .h(px(crate::argo::CARD_HEIGHT))
+                    .child(
+                        Link::new("inspect-node")
+                            .accessibility_label(format!("{}: {subtitle}", node.label))
+                            .size_full()
+                            .px_3()
+                            .py_2()
+                            .rounded_md()
+                            .border_1()
+                            .border_color(cx.theme().border)
+                            .bg(cx.theme().background)
+                            .hover(|this| this.bg(cx.theme().muted))
+                            .cursor_pointer()
+                            .child(
+                                h_flex()
+                                    .w_full()
+                                    .gap_2()
+                                    .items_center()
+                                    .child(
+                                        div().size(px(7.)).rounded_full().bg(cx.theme().tone(tone)),
+                                    )
+                                    .child(
+                                        v_flex()
+                                            .flex_1()
+                                            .min_w_0()
+                                            .child(
+                                                div()
+                                                    .text_sm()
+                                                    .truncate()
+                                                    .child(node.label.clone()),
+                                            )
+                                            .child(
+                                                div()
+                                                    .text_xs()
+                                                    .truncate()
+                                                    .text_color(cx.theme().muted_foreground)
+                                                    .child(subtitle),
+                                            ),
+                                    ),
+                            )
+                            .on_activate(cx.listener(move |view, _, window, cx| {
+                                view.open_argo_node(selected.clone(), window, cx)
+                            })),
+                    )
+            }));
+        view.child(
+            div()
+                .id("argo-execution-graph")
+                .w_full()
+                .max_h(px(520.))
+                .overflow_scroll()
+                .child(surface),
+        )
+        .into_any_element()
+    }
 
     fn render_header(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let subtitle = match &self.target.namespace {
@@ -587,18 +984,60 @@ impl DetailView {
 
     fn render_overview(&self, cx: &mut Context<Self>) -> AnyElement {
         let metadata = &self.object.metadata;
-        let summary = crate::overview::summary(
-            &self.kind.resource.group,
-            &self.kind.resource.kind,
-            &self.object,
-            self.now,
-        );
+        let summary =
+            if beacon_kube::argo::rank(&self.kind.resource.group, &self.kind.resource.kind)
+                .is_some()
+            {
+                crate::argo::summary(
+                    &self.kind.resource.kind,
+                    &self.object,
+                    &self.argo_nodes,
+                    self.now,
+                )
+            } else {
+                crate::overview::summary(
+                    &self.kind.resource.group,
+                    &self.kind.resource.kind,
+                    &self.object,
+                    self.now,
+                )
+            };
         let mut content = v_flex()
             .px_4()
             .pb_4()
             .w_full()
             .min_w_0()
             .child(self.render_summary(summary, cx));
+        if self.kind.resource.group == beacon_kube::argo::GROUP
+            && matches!(
+                self.kind.resource.kind.as_str(),
+                "Workflow" | "WorkflowTemplate" | "ClusterWorkflowTemplate"
+            )
+        {
+            content = content.child(self.render_argo_graph(cx));
+        }
+        if self.kind.resource.group == beacon_kube::argo::GROUP
+            && self.kind.resource.kind == "CronWorkflow"
+        {
+            let group = crate::argo::recent_runs(&self.object, self.argo_runs.snapshot(), self.now);
+            let body = if self.argo_runs_listed {
+                self.overview_table(group.table.as_ref().expect("recent runs table"), cx)
+            } else {
+                div()
+                    .text_sm()
+                    .text_color(cx.theme().muted_foreground)
+                    .child(copyable_text(
+                        "argo-runs-loading",
+                        "Waiting for workflow history…",
+                    ))
+                    .into_any_element()
+            };
+            content = content.child(
+                self.overview_block("argo-recent-runs", cx)
+                    .child(self.heading("Recent runs", cx))
+                    .child(body),
+            );
+        }
         for (index, group) in self.overview.groups.iter().enumerate() {
             let mut fields = Vec::new();
             if group.owner {
@@ -621,14 +1060,27 @@ impl DetailView {
                     }),
             );
             let fields = self.field_grid(fields);
-            content = content.child(
-                self.overview_block(("group", index), cx)
+            let body = v_flex()
+                .w_full()
+                .gap_3()
+                .child(fields)
+                .when_some(group.table.as_ref(), |this, table| {
+                    this.child(self.overview_table(table, cx))
+                });
+            let block = self.overview_block(("group", index), cx);
+            content = content.child(if group.collapsed {
+                block.child(self.disclosure(
+                    &group.title,
+                    &format!("argo-group-{index}"),
+                    body,
+                    false,
+                    cx,
+                ))
+            } else {
+                block
                     .child(self.heading(group.title.clone(), cx))
-                    .child(fields)
-                    .when_some(group.table.as_ref(), |this, table| {
-                        this.child(self.overview_table(table, cx))
-                    }),
-            );
+                    .child(body)
+            });
         }
         if let Some(containers) = self.containers()
             && !containers.is_empty()

@@ -28,6 +28,7 @@ use nucleo_matcher::{
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Category {
     Workloads,
+    ArgoWorkflows,
     Config,
     Network,
     Storage,
@@ -40,9 +41,10 @@ pub enum Category {
 }
 
 impl Category {
-    pub const ALL: [Self; 7] = [
+    pub const ALL: [Self; 8] = [
         Self::Cluster,
         Self::Workloads,
+        Self::ArgoWorkflows,
         Self::Config,
         Self::Network,
         Self::Storage,
@@ -53,6 +55,7 @@ impl Category {
     pub fn label(&self) -> &'static str {
         match self {
             Self::Workloads => "Workloads",
+            Self::ArgoWorkflows => "Argo Workflows",
             Self::Config => "Config",
             Self::Network => "Network",
             Self::Storage => "Storage",
@@ -77,6 +80,9 @@ fn placement(kind: &Kind) -> (Category, u8) {
 
     let group = kind.resource.group.as_str();
     let name = kind.resource.kind.as_str();
+    if let Some(rank) = beacon_kube::argo::rank(group, name) {
+        return (ArgoWorkflows, rank);
+    }
 
     match (group, name) {
         ("", "Pod") => (Workloads, 0),
@@ -249,6 +255,10 @@ impl Catalog {
             // "other". Only a core-group kind, which has no group to be filed
             // under, falls through to that bucket.
             let (section, label) = match (category, kind.resource.group.as_str()) {
+                (Category::ArgoWorkflows, _) => (
+                    Section::Builtin(Category::ArgoWorkflows),
+                    SharedString::from(kind.resource.kind.clone()),
+                ),
                 (Category::Other, "") => (Section::Builtin(Category::Other), qualified.clone()),
                 (Category::Other, group) => (
                     Section::Group(SharedString::from(group.to_string())),
@@ -397,6 +407,36 @@ mod tests {
             .iter()
             .map(|(section, _)| section.label().to_string())
             .collect()
+    }
+
+    #[test]
+    fn workflows_have_a_dedicated_group_without_reclassifying_argo_cd() {
+        let mut kinds: Vec<_> = beacon_kube::argo::KINDS
+            .iter()
+            .rev()
+            .map(|name| kind("argoproj.io", name))
+            .collect();
+        kinds.extend([
+            kind("argoproj.io", "Application"),
+            kind("argoproj.io", "ApplicationSet"),
+            kind("example.com", "Workflow"),
+        ]);
+        let catalog = Catalog::new(&kinds);
+        assert_eq!(
+            section(&catalog, Category::ArgoWorkflows),
+            beacon_kube::argo::KINDS
+        );
+        assert_eq!(
+            group(&catalog, "argoproj.io"),
+            ["Application", "ApplicationSet"]
+        );
+        assert_eq!(group(&catalog, "example.com"), ["Workflow"]);
+        assert_eq!(catalog.search("argoproj", &mut matcher()).len(), 10);
+        assert!(
+            beacon_kube::argo::KINDS[5..]
+                .iter()
+                .all(|name| beacon_kube::argo::is_controller("argoproj.io", name))
+        );
     }
 
     /// Alphabetical order would put Deployment above Pod. Nobody opens this

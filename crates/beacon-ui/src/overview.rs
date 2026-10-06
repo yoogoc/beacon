@@ -24,21 +24,21 @@ pub(crate) struct Cell {
 }
 
 impl Cell {
-    fn text(value: impl Into<String>) -> Self {
+    pub(crate) fn text(value: impl Into<String>) -> Self {
         Self {
             value: Some(value.into()),
             reference: None,
         }
     }
 
-    fn of(value: Option<&Value>) -> Self {
+    pub(crate) fn of(value: Option<&Value>) -> Self {
         Self {
             value: value.and_then(text),
             reference: None,
         }
     }
 
-    fn link(mut self, group: &'static str, kind: &'static str) -> Self {
+    pub(crate) fn link(mut self, group: &'static str, kind: &'static str) -> Self {
         self.reference = self
             .value
             .as_ref()
@@ -64,15 +64,17 @@ pub(crate) struct Group {
     pub fields: Vec<(String, Cell)>,
     pub table: Option<Table>,
     pub owner: bool,
+    pub collapsed: bool,
 }
 
 impl Group {
-    fn new(title: impl Into<String>, fields: Vec<(&str, Cell)>) -> Self {
+    pub(crate) fn new(title: impl Into<String>, fields: Vec<(&str, Cell)>) -> Self {
         Self {
             title: title.into(),
             fields: fields.into_iter().map(|(k, v)| (k.into(), v)).collect(),
             table: None,
             owner: false,
+            collapsed: false,
         }
     }
 }
@@ -260,6 +262,9 @@ pub(crate) fn summary(group: &str, kind: &str, object: &DynamicObject, now: Time
 /// Project common resources once per object update. The full safe field tree
 /// stays available below the curated groups, including fields added by newer APIs.
 pub(crate) fn project(group: &str, kind: &str, object: &DynamicObject) -> Projection {
+    if beacon_kube::argo::rank(group, kind).is_some() {
+        return crate::argo::project(kind, object);
+    }
     let data = &object.data;
     let mut groups = Vec::new();
     match (group, kind) {

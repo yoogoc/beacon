@@ -1538,32 +1538,57 @@ impl ClusterView {
             sections
                 .into_iter()
                 .map(|(label, entries, open, _, icon)| {
+                    let controller_open = entries.iter().any(|entry| {
+                        beacon_kube::argo::is_controller(
+                            &entry.kind.resource.group,
+                            &entry.kind.resource.kind,
+                        ) && current.as_ref() == Some(&entry.kind.gvk())
+                    });
+                    let (controllers, entries): (Vec<_>, Vec<_>) =
+                        entries.into_iter().partition(|entry| {
+                            label.as_ref() == "Argo Workflows"
+                                && beacon_kube::argo::is_controller(
+                                    &entry.kind.resource.group,
+                                    &entry.kind.resource.kind,
+                                )
+                        });
+                    let item = |entry: Entry| {
+                        let selected = current.as_ref() == Some(&entry.kind.gvk());
+                        let kind = entry.kind.clone();
+                        let menu_kind = kind.clone();
+                        let menu_view = cx.entity().downgrade();
+                        SidebarMenuItem::new(entry.label)
+                            .active(selected)
+                            .on_click(cx.listener(move |view, _, _, cx| {
+                                view.select_resource(kind.clone(), cx);
+                            }))
+                            .context_menu(move |menu, _, _| {
+                                let view = menu_view.clone();
+                                let kind = menu_kind.clone();
+                                menu.item(PopupMenuItem::new("Open in new tab").on_click(
+                                    move |_, _, cx| {
+                                        let _ = view.update(cx, |view, cx| {
+                                            view.open_resource(kind.clone(), cx);
+                                        });
+                                    },
+                                ))
+                            })
+                    };
+                    let mut children: Vec<_> = entries.into_iter().map(item).collect();
+                    if !controllers.is_empty() {
+                        children.push(
+                            SidebarMenuItem::new("Controller resources")
+                                .icon(crate::icons::tools())
+                                .click_to_toggle(true)
+                                .default_open(controller_open)
+                                .children(controllers.into_iter().map(item)),
+                        );
+                    }
                     SidebarMenuItem::new(label)
                         .icon(icon)
                         .click_to_toggle(true)
                         .default_open(open)
-                        .children(entries.into_iter().map(|entry| {
-                            let selected = current.as_ref() == Some(&entry.kind.gvk());
-                            let kind = entry.kind.clone();
-                            let menu_kind = kind.clone();
-                            let menu_view = cx.entity().downgrade();
-                            SidebarMenuItem::new(entry.label)
-                                .active(selected)
-                                .on_click(cx.listener(move |view, _, _, cx| {
-                                    view.select_resource(kind.clone(), cx);
-                                }))
-                                .context_menu(move |menu, _, _| {
-                                    let view = menu_view.clone();
-                                    let kind = menu_kind.clone();
-                                    menu.item(PopupMenuItem::new("Open in new tab").on_click(
-                                        move |_, _, cx| {
-                                            let _ = view.update(cx, |view, cx| {
-                                                view.open_resource(kind.clone(), cx);
-                                            });
-                                        },
-                                    ))
-                                })
-                        }))
+                        .children(children)
                 })
                 .collect::<Vec<_>>()
         };

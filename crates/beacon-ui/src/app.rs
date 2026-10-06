@@ -31,7 +31,7 @@ use gpui_kit::component::sidebar::{Sidebar, SidebarGroup, SidebarMenu, SidebarMe
 use gpui_kit::component::spinner::Spinner;
 use gpui_kit::component::tooltip::Tooltip;
 use gpui_kit::component::{
-    ActiveTheme as _, IconName, Root, Sizable as _, TitleBar, h_flex, v_flex,
+    ActiveTheme as _, IconName, Root, Sizable as _, TitleBar, WindowExt as _, h_flex, v_flex,
 };
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
@@ -129,10 +129,13 @@ pub fn init(log_directory: PathBuf, cx: &mut App) {
         // The one key here that is *not* global. Escape belongs to whatever
         // has focus -- a shell, a search box -- and only reaches the cluster
         // view when nothing nearer wanted it.
-        // Escape closes the detail panel. Bound without a context like the
-        // rest of these; which key events it should ignore is decided in the
-        // handler, where it can be read.
-        KeyBinding::new("escape", CloseDetail, None),
+        // Modal sheets and popup menus consume Escape before the workspace.
+        // A global binding would override their more specific cancel actions.
+        KeyBinding::new(
+            "escape",
+            CloseDetail,
+            Some("BeaconWorkspace && !Sheet && !PopupMenu"),
+        ),
     ]);
 }
 
@@ -2332,6 +2335,7 @@ impl BeaconApp {
 
 impl Render for BeaconApp {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let sheets = Root::render_sheet_layer(window, cx);
         let id = cx.entity_id();
         if let Some(entry) = cx.global_mut::<WorkspaceWindows>().windows.get_mut(&id) {
             entry.bounds = window.bounds();
@@ -2340,6 +2344,7 @@ impl Render for BeaconApp {
         }
         div()
             .id("beacon-workspace")
+            .key_context("BeaconWorkspace")
             .relative()
             .size_full()
             .track_focus(&self.focus)
@@ -2406,6 +2411,10 @@ impl Render for BeaconApp {
             // focused node *upwards*, and ClusterView is a child of the node
             // that holds focus, not an ancestor of it.
             .on_action(cx.listener(|view, _: &CloseDetail, window, cx| {
+                if window.has_active_sheet(cx) {
+                    window.close_sheet(cx);
+                    return;
+                }
                 if let Some(cluster) = view.cluster() {
                     cluster.update(cx, |cluster, cx| cluster.close_detail(window, cx));
                 }
@@ -2427,5 +2436,6 @@ impl Render for BeaconApp {
                 // Deferred so it paints over the table rather than under it.
                 this.child(deferred(self.render_palette(cx)))
             })
+            .children(sheets)
     }
 }

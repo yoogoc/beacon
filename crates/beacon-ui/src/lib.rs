@@ -7,6 +7,8 @@ pub mod actions;
 mod activity;
 pub mod app;
 mod app_logs;
+mod argo;
+mod argo_node;
 pub mod bridge;
 pub mod catalog;
 pub mod cluster;

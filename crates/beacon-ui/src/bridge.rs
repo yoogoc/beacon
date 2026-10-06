@@ -38,6 +38,7 @@ impl<T> Drop for Cancellable<T> {
 }
 
 /// Owns the tokio runtime, installed as a GPUI global.
+#[derive(Clone)]
 pub struct Bridge {
     runtime: Arc<tokio::runtime::Runtime>,
 }
