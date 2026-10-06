@@ -127,7 +127,7 @@ pub struct DetailView {
     labels_expanded: bool,
     annotations_expanded: bool,
     expanded_sections: BTreeSet<String>,
-    overview_sections: crate::overview::Sections,
+    overview: crate::overview::Projection,
     resolved_owners: BTreeMap<String, Vec<OwnerLink>>,
     owner_sources: Vec<OwnerLink>,
     _owners_task: Option<Task<()>>,
@@ -179,8 +179,7 @@ impl DetailView {
         cx: &mut Context<Self>,
     ) -> Self {
         let certificates = tls_certificates(&kind, &object);
-        let overview_sections =
-            crate::overview::sections(&kind.resource.group, &kind.resource.kind, &object.data);
+        let overview = crate::overview::project(&kind.resource.group, &kind.resource.kind, &object);
         let yaml_editor = cx.new(|cx| EditorState::new(window, cx).language("yaml"));
 
         let mut this = Self {
@@ -194,7 +193,7 @@ impl DetailView {
             labels_expanded: false,
             annotations_expanded: false,
             expanded_sections: BTreeSet::new(),
-            overview_sections,
+            overview,
             resolved_owners: BTreeMap::new(),
             owner_sources: Vec::new(),
             _owners_task: None,
@@ -235,11 +234,8 @@ impl DetailView {
         cx: &mut Context<Self>,
     ) {
         self.certificates = tls_certificates(&self.kind, &object);
-        self.overview_sections = crate::overview::sections(
-            &self.kind.resource.group,
-            &self.kind.resource.kind,
-            &object.data,
-        );
+        self.overview =
+            crate::overview::project(&self.kind.resource.group, &self.kind.resource.kind, &object);
         self.object = object;
         self.resolve_pod_owners(cx);
         self.rules = rules;
@@ -527,6 +523,20 @@ impl DetailView {
                     .gap_2()
                     .items_start()
                     .child(
+                        div()
+                            .p_2()
+                            .rounded_md()
+                            .bg(cx.theme().muted.opacity(0.5))
+                            .child(
+                                crate::icons::resource(
+                                    &self.kind.resource.group,
+                                    &self.kind.resource.kind,
+                                )
+                                .size_4()
+                                .text_color(cx.theme().muted_foreground),
+                            ),
+                    )
+                    .child(
                         v_flex()
                             .flex_1()
                             .min_w_0()
@@ -552,6 +562,7 @@ impl DetailView {
             )
             .child(
                 TabBar::new("detail-tabs")
+                    .segmented()
                     .w_full()
                     .small()
                     .selected_index(
@@ -576,72 +587,413 @@ impl DetailView {
 
     fn render_overview(&self, cx: &mut Context<Self>) -> AnyElement {
         let metadata = &self.object.metadata;
-
-        let mut sections = v_flex().gap_4().p_3().w_full();
-
-        if let Some(certificates) = &self.certificates {
-            sections = sections.child(self.render_certificates(certificates, cx));
-        }
-
-        let created = metadata
-            .creation_timestamp
-            .as_ref()
-            .map(|at| format!("{} ago ({})", format_age(at, self.now), at.0));
-
-        sections = sections.child(
-            self.section(
-                "Metadata",
-                vec![
-                    ("Created", created),
-                    ("UID", metadata.uid.clone()),
-                    ("Generation", metadata.generation.map(|v| v.to_string())),
-                    ("Resource version", metadata.resource_version.clone()),
-                    (
-                        "Deletion timestamp",
-                        metadata
-                            .deletion_timestamp
-                            .as_ref()
-                            .map(|v| v.0.to_string()),
-                    ),
-                    (
-                        "Finalizers",
-                        metadata
-                            .finalizers
-                            .as_ref()
-                            .filter(|v| !v.is_empty())
-                            .map(|v| v.join(", ")),
-                    ),
-                ],
-                cx,
-            )
-            .child(self.render_owners(cx)),
+        let summary = crate::overview::summary(
+            &self.kind.resource.group,
+            &self.kind.resource.kind,
+            &self.object,
+            self.now,
         );
-
+        let mut content = v_flex()
+            .px_4()
+            .pb_4()
+            .w_full()
+            .min_w_0()
+            .child(self.render_summary(summary, cx));
+        for (index, group) in self.overview.groups.iter().enumerate() {
+            let mut fields = Vec::new();
+            if group.owner {
+                fields.push(
+                    div()
+                        .flex_1()
+                        .flex_basis(px(190.))
+                        .min_w_0()
+                        .child(self.render_owners(cx))
+                        .into_any_element(),
+                );
+            }
+            fields.extend(
+                group
+                    .fields
+                    .iter()
+                    .enumerate()
+                    .map(|(index, (label, cell))| {
+                        self.field(index, label, cell, cx).into_any_element()
+                    }),
+            );
+            let fields = self.field_grid(fields);
+            content = content.child(
+                self.overview_block(("group", index), cx)
+                    .child(self.heading(group.title.clone(), cx))
+                    .child(fields)
+                    .when_some(group.table.as_ref(), |this, table| {
+                        this.child(self.overview_table(table, cx))
+                    }),
+            );
+        }
+        if let Some(containers) = self.containers()
+            && !containers.is_empty()
+        {
+            content = content.child(
+                self.overview_block("containers-section", cx)
+                    .child(self.container_section(containers, cx)),
+            );
+        }
+        if let Some(certificates) = &self.certificates {
+            content = content.child(
+                self.overview_block("tls-section", cx)
+                    .child(self.render_certificates(certificates, cx)),
+            );
+        }
+        if !self.overview.conditions.is_empty() {
+            let fields = self.field_rows(&self.overview.conditions, cx);
+            content = content.child(
+                self.overview_block("conditions-section", cx)
+                    .child(self.disclosure("Conditions", "conditions", fields, false, cx)),
+            );
+        }
         if let Some(labels) = &metadata.labels
             && !labels.is_empty()
         {
-            sections = sections.child(self.metadata_entries(MetadataGroup::Labels, labels, cx));
+            content = content.child(
+                self.overview_block("labels-section", cx)
+                    .child(self.metadata_entries(MetadataGroup::Labels, labels, cx)),
+            );
         }
         if let Some(annotations) = &metadata.annotations
             && !annotations.is_empty()
         {
-            sections =
-                sections.child(self.metadata_entries(MetadataGroup::Annotations, annotations, cx));
+            content = content.child(
+                self.overview_block("annotations-section", cx)
+                    .child(self.metadata_entries(MetadataGroup::Annotations, annotations, cx)),
+            );
         }
-
-        if let Some(containers) = self.containers() {
-            sections = sections.child(self.container_section(containers, cx));
+        let created = metadata
+            .creation_timestamp
+            .as_ref()
+            .map(|at| at.0.to_string());
+        let metadata_fields = self.field_rows(
+            &[
+                ("Created".into(), created),
+                ("UID".into(), metadata.uid.clone()),
+                (
+                    "Generation".into(),
+                    metadata.generation.map(|v| v.to_string()),
+                ),
+                ("Resource version".into(), metadata.resource_version.clone()),
+                (
+                    "Deletion timestamp".into(),
+                    metadata
+                        .deletion_timestamp
+                        .as_ref()
+                        .map(|v| v.0.to_string()),
+                ),
+                (
+                    "Finalizers".into(),
+                    metadata
+                        .finalizers
+                        .as_ref()
+                        .filter(|v| !v.is_empty())
+                        .map(|v| v.join(", ")),
+                ),
+            ],
+            cx,
+        );
+        content = content.child(
+            self.overview_block("metadata-section", cx)
+                .child(self.disclosure("Metadata", "metadata", metadata_fields, false, cx)),
+        );
+        if !self.overview.additional.is_empty() {
+            let mut additional = v_flex().w_full().gap_4();
+            if self.expanded_sections.contains("additional") {
+                for (title, rows) in &self.overview.additional {
+                    additional = additional.child(self.section(title.clone(), rows.clone(), cx));
+                }
+            }
+            content =
+                content.child(self.overview_block("additional-section", cx).child(
+                    self.disclosure("Additional fields", "additional", additional, false, cx),
+                ));
         }
-
-        for (title, rows) in &self.overview_sections {
-            sections = sections.child(self.structured_section(title, rows, cx));
-        }
-
         div()
             .id("overview")
             .size_full()
             .overflow_y_scroll()
-            .child(sections)
+            .child(content)
+            .into_any_element()
+    }
+
+    fn overview_block(&self, id: impl Into<ElementId>, cx: &mut Context<Self>) -> Stateful<Div> {
+        v_flex()
+            .id(id)
+            .w_full()
+            .min_w_0()
+            .py_4()
+            .gap_3()
+            .border_b_1()
+            .border_color(cx.theme().border)
+    }
+
+    fn render_summary(
+        &self,
+        summary: crate::overview::Summary,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let mut line = h_flex()
+            .w_full()
+            .flex_wrap()
+            .gap_3()
+            .items_center()
+            .text_xs()
+            .text_color(cx.theme().muted_foreground)
+            .child(
+                h_flex()
+                    .gap_1p5()
+                    .px_2()
+                    .py_1()
+                    .rounded_md()
+                    .bg(cx.theme().tone_surface(summary.tone))
+                    .text_color(cx.theme().tone(summary.tone))
+                    .when(summary.health, |this| {
+                        this.child(
+                            div()
+                                .size(px(6.))
+                                .rounded_full()
+                                .bg(cx.theme().tone(summary.tone)),
+                        )
+                    })
+                    .child(SelectableText::new("summary-status", summary.label)),
+            );
+        for (index, hint) in summary.hints.into_iter().enumerate() {
+            line = line.child(SelectableText::new(("summary-hint", index), hint));
+        }
+        if let Some(created) = &self.object.metadata.creation_timestamp {
+            line = line.child(SelectableText::new(
+                "summary-age",
+                format!("Created {} ago", format_age(created, self.now)),
+            ));
+        }
+        self.overview_block("summary", cx).child(line).when_some(
+            summary.message,
+            |this, message| {
+                this.child(
+                    div()
+                        .text_xs()
+                        .text_color(cx.theme().tone(if summary.tone == Tone::Healthy {
+                            Tone::Warning
+                        } else {
+                            summary.tone
+                        }))
+                        .child(SelectableText::new("summary-message", message)),
+                )
+            },
+        )
+    }
+
+    /// A minimum field width lets two columns wrap to one in a narrow pane.
+    fn field(
+        &self,
+        index: usize,
+        label: &str,
+        cell: &crate::overview::Cell,
+        cx: &mut Context<Self>,
+    ) -> Stateful<Div> {
+        v_flex()
+            .id(("field", index))
+            .flex_1()
+            .flex_basis(px(190.))
+            .min_w_0()
+            .gap_1()
+            .child(
+                div()
+                    .text_xs()
+                    .text_color(cx.theme().muted_foreground)
+                    .child(label.to_string()),
+            )
+            .child(self.overview_value(cell, cx))
+    }
+
+    fn overview_value(&self, cell: &crate::overview::Cell, cx: &mut Context<Self>) -> AnyElement {
+        let value = cell.value.clone().unwrap_or_else(|| "<none>".into());
+        let reference = cell.reference.as_ref().and_then(|reference| {
+            let kind = self
+                .session
+                .discovery()
+                .kinds()
+                .iter()
+                .find(|kind| {
+                    kind.resource.group == reference.group && kind.resource.kind == reference.kind
+                })?
+                .clone();
+            let target = ObjectRef::new(
+                if kind.namespaced {
+                    self.target.namespace.clone()
+                } else {
+                    None
+                },
+                reference.name.clone(),
+            );
+            Some((Arc::new(kind), target))
+        });
+        div()
+            .w_full()
+            .min_w_0()
+            .text_sm()
+            .whitespace_normal()
+            .when(cell.value.is_none(), |this| {
+                this.text_color(cx.theme().muted_foreground)
+            })
+            .child(match reference {
+                Some((kind, target)) => Link::new("open-reference")
+                    .accessibility_label(value.clone())
+                    .cursor_pointer()
+                    .text_color(cx.theme().resource_link())
+                    .hover(|this| this.underline())
+                    .child(SelectableText::new("value", value))
+                    .on_activate(cx.listener(move |_, event, window, cx| {
+                        if matches!(event, ClickEvent::Mouse(_))
+                            && !TextSelection::selected_text(window, cx).is_empty()
+                        {
+                            return;
+                        }
+                        cx.emit(OwnerRequested {
+                            kind: kind.clone(),
+                            target: target.clone(),
+                        });
+                    }))
+                    .into_any_element(),
+                None => SelectableText::new("value", value).into_any_element(),
+            })
+            .into_any_element()
+    }
+
+    fn field_grid(&self, fields: Vec<AnyElement>) -> AnyElement {
+        let mut grid = v_flex().w_full().gap_3();
+        let mut fields = fields.into_iter();
+        // Two slots per row cap wide panels at two columns; each row can wrap.
+        while let Some(first) = fields.next() {
+            let mut row = h_flex()
+                .w_full()
+                .flex_wrap()
+                .gap_x_4()
+                .gap_y_3()
+                .child(first);
+            if let Some(second) = fields.next() {
+                row = row.child(second);
+            }
+            grid = grid.child(row);
+        }
+        grid.into_any_element()
+    }
+
+    fn field_rows(&self, rows: &[(String, Option<String>)], cx: &mut Context<Self>) -> AnyElement {
+        let fields = rows
+            .iter()
+            .enumerate()
+            .map(|(index, (label, value))| {
+                self.field(
+                    index,
+                    label,
+                    &crate::overview::Cell {
+                        value: value.clone(),
+                        reference: None,
+                    },
+                    cx,
+                )
+                .into_any_element()
+            })
+            .collect();
+        self.field_grid(fields)
+    }
+
+    fn overview_table(&self, table: &crate::overview::Table, cx: &mut Context<Self>) -> AnyElement {
+        if table.rows.is_empty() {
+            return div()
+                .text_sm()
+                .text_color(cx.theme().muted_foreground)
+                .child(SelectableText::new("empty-table", "<none>"))
+                .into_any_element();
+        }
+        v_flex()
+            .id("overview-table")
+            .w_full()
+            .min_w_0()
+            .rounded_md()
+            .border_1()
+            .border_color(cx.theme().border)
+            .overflow_hidden()
+            .child(
+                h_flex()
+                    .w_full()
+                    .bg(cx.theme().muted.opacity(0.5))
+                    .children(table.headers.iter().map(|label| {
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .px_2()
+                            .py_1p5()
+                            .text_xs()
+                            .text_color(cx.theme().muted_foreground)
+                            .child(*label)
+                    })),
+            )
+            .children(table.rows.iter().enumerate().map(|(index, cells)| {
+                h_flex()
+                    .id(("table-row", index))
+                    .w_full()
+                    .items_start()
+                    .when(index > 0, |this| {
+                        this.border_t_1().border_color(cx.theme().border)
+                    })
+                    .children(cells.iter().enumerate().map(|(index, cell)| {
+                        div()
+                            .id(("table-cell", index))
+                            .flex_1()
+                            .min_w_0()
+                            .px_2()
+                            .py_2()
+                            .child(self.overview_value(cell, cx))
+                    }))
+            }))
+            .into_any_element()
+    }
+
+    fn disclosure(
+        &self,
+        title: &str,
+        key: &str,
+        content: impl IntoElement,
+        default_open: bool,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let expanded = self.expanded_sections.contains(key) != default_open;
+        let key = key.to_string();
+        v_flex()
+            .id(SharedString::from(key.clone()))
+            .w_full()
+            .min_w_0()
+            .items_start()
+            .gap_3()
+            .child(
+                Button::new("toggle-section")
+                    .ghost()
+                    .small()
+                    .max_w_full()
+                    .tooltip(title.to_string())
+                    .toggled(expanded)
+                    .icon(if expanded {
+                        gpui_kit::component::IconName::ChevronDown
+                    } else {
+                        gpui_kit::component::IconName::ChevronRight
+                    })
+                    .label(title.to_string())
+                    .on_click(cx.listener(move |view, _, _, cx| {
+                        if !view.expanded_sections.remove(&key) {
+                            view.expanded_sections.insert(key.clone());
+                        }
+                        cx.notify();
+                    })),
+            )
+            .when(expanded, |this| this.child(content))
             .into_any_element()
     }
 
@@ -749,65 +1101,81 @@ impl DetailView {
                         "Key size",
                         certificate.public_key_bits.map(|bits| format!("{bits} bits")),
                     ),
-                    ("Key details", certificate.public_key_details.clone()),
-                    ("Cert SHA-256", Some(certificate.sha256_fingerprint.clone())),
                 ],
                 cx,
             ))
             .child(
-                v_flex()
-                    .w_full()
-                    .gap_1p5()
-                    .child(self.heading("Extensions", cx))
-                    .children(certificate.extensions.iter().enumerate().map(
-                        |(index, extension)| {
-                            v_flex()
-                                .id(("extension", index))
-                                .w_full()
-                                .gap_0p5()
-                                .child(div().text_sm().font_weight(FontWeight::MEDIUM).child(
-                                    if extension.critical {
-                                        format!("{} · critical", extension.name)
-                                    } else {
-                                        extension.name.clone()
-                                    },
-                                ))
-                                .child(
-                                    div()
-                                        .text_xs()
-                                        .text_color(cx.theme().muted_foreground)
-                                        .child(SelectableText::new(
-                                            "details",
-                                            extension.details.clone(),
-                                        )),
-                                )
-                        },
-                    )),
+                self.disclosure(
+                    &format!("Extensions · {}", certificate.extensions.len()),
+                    &format!("certificate:{index}:extensions"),
+                    v_flex().w_full().gap_3().children(
+                        certificate
+                            .extensions
+                            .iter()
+                            .enumerate()
+                            .map(|(index, extension)| {
+                                v_flex()
+                                    .id(("extension", index))
+                                    .w_full()
+                                    .gap_1()
+                                    .child(div().text_sm().font_weight(FontWeight::MEDIUM).child(
+                                        SelectableText::new(
+                                            "name",
+                                            if extension.critical {
+                                                format!("{} · critical", extension.name)
+                                            } else {
+                                                extension.name.clone()
+                                            },
+                                        ),
+                                    ))
+                                    .child(div().text_xs().child(SelectableText::new(
+                                        "details",
+                                        extension.details.clone(),
+                                    )))
+                            }),
+                    ),
+                    false,
+                    cx,
+                ),
             )
             .child(
-                v_flex()
-                    .w_full()
-                    .gap_1p5()
-                    .child(self.heading("Public key PEM", cx))
-                    .child(
-                        div()
-                            .w_full()
-                            .p_2()
-                            .rounded_md()
-                            .bg(cx.theme().muted.opacity(0.5))
-                            .font_family("monospace")
-                            .text_xs()
-                            .child(SelectableText::new(
-                                "public-key-pem",
-                                certificate.public_key_pem.clone(),
-                            )),
-                    ),
+                self.disclosure(
+                    "Public key & fingerprint",
+                    &format!("certificate:{index}:key"),
+                    v_flex()
+                        .w_full()
+                        .gap_3()
+                        .child(self.field_rows(
+                            &[
+                                ("Key details".into(), certificate.public_key_details.clone()),
+                                (
+                                    "Cert SHA-256".into(),
+                                    Some(certificate.sha256_fingerprint.clone()),
+                                ),
+                            ],
+                            cx,
+                        ))
+                        .child(
+                            div()
+                                .w_full()
+                                .min_w_0()
+                                .p_2()
+                                .rounded_md()
+                                .bg(cx.theme().muted.opacity(0.5))
+                                .font_family("monospace")
+                                .text_xs()
+                                .child(SelectableText::new(
+                                    "public-key-pem",
+                                    certificate.public_key_pem.clone(),
+                                )),
+                        ),
+                    false,
+                    cx,
+                ),
             )
             .into_any_element()
     }
 
-    /// A titled block of label/value rows. Absent values are shown rather than
-    /// hidden: "this object has no owner" is information.
     fn section(
         &self,
         title: impl Into<SharedString>,
@@ -815,45 +1183,38 @@ impl DetailView {
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
         let title: SharedString = title.into();
+        let rows: Vec<_> = rows
+            .into_iter()
+            .map(|(k, v)| (k.into().to_string(), v))
+            .collect();
         v_flex()
             .id(title.clone())
-            .gap_1()
+            .gap_3()
             .w_full()
+            .min_w_0()
             .child(self.heading(title, cx))
-            .children(rows.into_iter().enumerate().map(|(index, (label, value))| {
-                let label: SharedString = label.into();
-                v_flex()
-                    .id(("overview-field", index))
-                    .w_full()
-                    .min_w_0()
-                    .gap_0p5()
-                    .py_1()
-                    .child(
-                        div()
-                            .text_xs()
-                            .text_color(cx.theme().muted_foreground)
-                            .child(label),
-                    )
-                    .child(match value {
-                        Some(value) => div()
-                            .w_full()
-                            .text_sm()
-                            .whitespace_normal()
-                            .child(SelectableText::new("value", value)),
-                        None => div()
-                            .text_sm()
-                            .text_color(cx.theme().muted_foreground)
-                            .child(SelectableText::new("value", "<none>")),
-                    })
-            }))
+            .child(self.field_rows(&rows, cx))
     }
 
     fn heading(&self, title: impl Into<SharedString>, cx: &mut Context<Self>) -> impl IntoElement {
-        div()
-            .text_xs()
-            .font_weight(FontWeight::SEMIBOLD)
-            .text_color(cx.theme().muted_foreground)
-            .child(title.into().to_uppercase())
+        let title = title.into();
+        h_flex()
+            .min_w_0()
+            .gap_2()
+            .items_center()
+            .text_sm()
+            .font_weight(FontWeight::MEDIUM)
+            .child(
+                crate::icons::overview(&title)
+                    .size_3p5()
+                    .text_color(cx.theme().muted_foreground),
+            )
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .child(SelectableText::new("heading", title)),
+            )
     }
 
     fn metadata_entries(
@@ -876,15 +1237,27 @@ impl DetailView {
         v_flex()
             .gap_2()
             .w_full()
-            .child(self.heading(group.title(), cx))
+            .items_start()
+            .child(
+                h_flex()
+                    .gap_2()
+                    .child(self.heading(group.title(), cx))
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(cx.theme().muted_foreground)
+                            .child(entries.len().to_string()),
+                    ),
+            )
             .children(entries.iter().take(visible_count).map(|(key, value)| {
                 div()
                     .w_full()
                     .min_w_0()
-                    .p_2()
+                    .px_2()
+                    .py_0p5()
                     .rounded_md()
                     .bg(cx.theme().muted.opacity(0.5))
-                    .text_sm()
+                    .text_xs()
                     .whitespace_normal()
                     .child(SelectableText::new(
                         SharedString::from(format!("{}-{key}", group.title())),
@@ -896,6 +1269,7 @@ impl DetailView {
                     Button::new(SharedString::from(format!("toggle-{}", group.title())))
                         .ghost()
                         .small()
+                        .text_color(cx.theme().resource_link())
                         .label(if expanded {
                             "Show less".to_string()
                         } else {
@@ -919,74 +1293,132 @@ impl DetailView {
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         v_flex()
-            .gap_1p5()
+            .gap_2()
             .w_full()
-            .child(self.heading("Containers", cx))
-            .children(containers.into_iter().map(|container| {
-                let tone = if container.ready {
-                    Tone::Healthy
+            .child(self.heading(
+                if self.kind.resource.kind == "Pod" {
+                    "Containers"
                 } else {
-                    crate::status::tone(&container.state)
-                };
-
-                v_flex()
-                    .id(SharedString::from(format!("container-{}", container.name)))
-                    .w_full()
-                    .gap_0p5()
-                    .p_2()
-                    .rounded_md()
-                    .bg(cx.theme().muted.opacity(0.5))
-                    .child(
-                        h_flex()
-                            .flex_wrap()
-                            .gap_2()
-                            .items_center()
-                            .text_sm()
-                            .child(div().font_weight(FontWeight::MEDIUM).child(
-                                SelectableText::new(
-                                    "name",
-                                    format!("{}{}", container.category, container.name),
-                                ),
+                    "Pod template"
+                },
+                cx,
+            ))
+            .children(
+                containers
+                    .into_iter()
+                    .enumerate()
+                    .map(|(index, container)| {
+                        let tone = if container.ready {
+                            Tone::Healthy
+                        } else {
+                            crate::status::tone(&container.state)
+                        };
+                        let key = format!("container:{}{}", container.category, container.name);
+                        let default_open = index == 0 && container.category.is_empty();
+                        let expanded = self.expanded_sections.contains(&key) != default_open;
+                        let body = v_flex()
+                            .w_full()
+                            .min_w_0()
+                            .px_3()
+                            .pb_3()
+                            .gap_3()
+                            .child(self.field_rows(
+                                &[
+                                    ("Image".into(), Some(container.image)),
+                                    ("Ports".into(), container.ports),
+                                ],
+                                cx,
                             ))
+                            .child(self.overview_table(&container.resources, cx))
+                            .child(self.disclosure(
+                                "Probes, environment & mounts",
+                                &format!("{key}:configuration"),
+                                self.field_rows(&container.fields, cx),
+                                false,
+                                cx,
+                            ))
+                            .when(!container.status_fields.is_empty(), |this| {
+                                this.child(self.disclosure(
+                                    "Runtime details",
+                                    &format!("{key}:runtime"),
+                                    self.field_rows(&container.status_fields, cx),
+                                    false,
+                                    cx,
+                                ))
+                            });
+                        v_flex()
+                            .id(SharedString::from(key.clone()))
+                            .w_full()
+                            .min_w_0()
+                            .rounded_md()
+                            .border_1()
+                            .border_color(cx.theme().border)
                             .child(
-                                div()
-                                    .text_xs()
-                                    .text_color(cx.theme().tone(tone))
-                                    .child(SelectableText::new("state", container.state)),
+                                h_flex()
+                                    .w_full()
+                                    .min_w_0()
+                                    .flex_wrap()
+                                    .gap_2()
+                                    .p_2()
+                                    .items_center()
+                                    .child(
+                                        Button::new("toggle-container")
+                                            .ghost()
+                                            .xsmall()
+                                            .toggled(expanded)
+                                            .icon(if expanded {
+                                                gpui_kit::component::IconName::ChevronDown
+                                            } else {
+                                                gpui_kit::component::IconName::ChevronRight
+                                            })
+                                            .tooltip(if expanded {
+                                                "Collapse container"
+                                            } else {
+                                                "Expand container"
+                                            })
+                                            .on_click(cx.listener(move |view, _, _, cx| {
+                                                if !view.expanded_sections.remove(&key) {
+                                                    view.expanded_sections.insert(key.clone());
+                                                }
+                                                cx.notify();
+                                            })),
+                                    )
+                                    .child(
+                                        div()
+                                            .flex_1()
+                                            .min_w_0()
+                                            .text_sm()
+                                            .font_weight(FontWeight::MEDIUM)
+                                            .child(SelectableText::new(
+                                                "name",
+                                                format!("{}{}", container.category, container.name),
+                                            )),
+                                    )
+                                    .child(
+                                        div()
+                                            .px_2()
+                                            .py_0p5()
+                                            .rounded_md()
+                                            .text_xs()
+                                            .bg(cx.theme().tone_surface(tone))
+                                            .text_color(cx.theme().tone(tone))
+                                            .child(SelectableText::new("state", container.state)),
+                                    )
+                                    .when(container.restarts > 0, |this| {
+                                        this.child(
+                                            div()
+                                                .text_xs()
+                                                .text_color(cx.theme().muted_foreground)
+                                                .child(SelectableText::new(
+                                                    "restarts",
+                                                    format!("{} restarts", container.restarts),
+                                                )),
+                                        )
+                                    }),
                             )
-                            .when(container.restarts > 0, |this| {
-                                this.child(
-                                    div()
-                                        .text_xs()
-                                        .text_color(cx.theme().muted_foreground)
-                                        .child(SelectableText::new(
-                                            "restarts",
-                                            format!("{} restarts", container.restarts),
-                                        )),
-                                )
-                            }),
-                    )
-                    .child(
-                        div()
-                            .text_xs()
-                            .text_color(cx.theme().muted_foreground)
-                            .child(SelectableText::new("image", container.image)),
-                    )
-                    .child(self.structured_section_key(
-                        "Configuration",
-                        &format!("{}-{}-configuration", container.category, container.name),
-                        &container.fields,
-                        cx,
-                    ))
-                    .when(!container.status_fields.is_empty(), |card| {
-                        card.child(self.structured_section_key(
-                            "Runtime",
-                            &format!("{}-{}-runtime", container.category, container.name),
-                            &container.status_fields,
-                            cx,
-                        ))
-                    })
-            }))
+                            .when(expanded, |this| this.child(body))
+                    }),
+            )
     }
 
     /// One editor per key, and one Save for all of them.
@@ -1564,6 +1996,32 @@ impl DetailView {
                         .as_str()
                         .unwrap_or("<no image>")
                         .to_string(),
+                    ports: container
+                        .get("ports")
+                        .and_then(Value::as_array)
+                        .filter(|v| !v.is_empty())
+                        .map(|ports| {
+                            ports
+                                .iter()
+                                .map(|port| {
+                                    let name = port["name"]
+                                        .as_str()
+                                        .map(|v| format!("{v}: "))
+                                        .unwrap_or_default();
+                                    format!(
+                                        "{name}{} / {}",
+                                        port["containerPort"],
+                                        port["protocol"].as_str().unwrap_or("TCP")
+                                    )
+                                })
+                                .collect::<Vec<_>>()
+                                .join("\n")
+                        }),
+                    resources: crate::overview::resource_table(
+                        &container["resources"]["requests"],
+                        &container["resources"]["limits"],
+                        ["Resource", "Requests", "Limits"],
+                    ),
                     ready: status.and_then(|s| s["ready"].as_bool()).unwrap_or(false),
                     restarts: status.and_then(|s| s["restartCount"].as_i64()).unwrap_or(0),
                     state: status.map(container_state).unwrap_or_else(|| {
@@ -1589,58 +2047,6 @@ impl DetailView {
             }
         }
         Some(containers)
-    }
-
-    fn structured_section(
-        &self,
-        title: &str,
-        rows: &[(String, Option<String>)],
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
-        self.structured_section_key(title, title, rows, cx)
-    }
-
-    fn structured_section_key(
-        &self,
-        title: &str,
-        section_key: &str,
-        rows: &[(String, Option<String>)],
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
-        if rows.is_empty() {
-            return div().into_any_element();
-        }
-        let expanded = self.expanded_sections.contains(section_key);
-        let shown = if expanded {
-            rows.len()
-        } else {
-            rows.len().min(12)
-        };
-        let key = section_key.to_string();
-        self.section(
-            SharedString::from(title.to_string()),
-            rows[..shown].to_vec(),
-            cx,
-        )
-        .when(rows.len() > 12, |section| {
-            section.child(
-                Button::new("toggle-fields")
-                    .ghost()
-                    .small()
-                    .label(if expanded {
-                        "Show less".into()
-                    } else {
-                        format!("Show {} more fields", rows.len() - shown)
-                    })
-                    .on_click(cx.listener(move |view, _, _, cx| {
-                        if !view.expanded_sections.remove(&key) {
-                            view.expanded_sections.insert(key.clone());
-                        }
-                        cx.notify();
-                    })),
-            )
-        })
-        .into_any_element()
     }
 
     /// Start a foreground-safe one-shot read whenever the Pod's owner identities change.
@@ -1710,6 +2116,8 @@ struct ContainerLine {
     fields: Vec<(String, Option<String>)>,
     status_fields: Vec<(String, Option<String>)>,
     image: String,
+    ports: Option<String>,
+    resources: crate::overview::Table,
     ready: bool,
     restarts: i64,
     state: String,

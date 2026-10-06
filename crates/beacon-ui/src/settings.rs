@@ -298,6 +298,9 @@ pub(crate) fn apply(window: Option<&mut Window>, cx: &mut App) {
     } else {
         None
     };
+    let custom_link = custom
+        .as_ref()
+        .is_some_and(|theme| theme.colors.contains_key("link"));
     cx.set_global(base.clone());
     let mode = if let Some(custom) = custom {
         let config = Rc::new(custom.config(&base));
@@ -310,6 +313,12 @@ pub(crate) fn apply(window: Option<&mut Window>, cx: &mut App) {
         ThemeMode::Light
     };
     Theme::change(mode, window, cx);
+    if !custom_link {
+        // The neutral palette otherwise gives links the same colour as text.
+        // Keep references visible while respecting every explicit theme override.
+        let theme = Theme::global_mut(cx);
+        theme.link = theme.info;
+    }
     Theme::sync_base(cx);
 }
 pub(crate) fn toggle(window: &mut Window, cx: &mut App) {

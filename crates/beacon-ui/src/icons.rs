@@ -43,3 +43,35 @@ pub(crate) fn custom() -> Icon {
 pub(crate) fn tools() -> Icon {
     Icon::default().data(include_bytes!("../assets/wrench.svg"))
 }
+
+pub(crate) fn resource(group: &str, kind: &str) -> Icon {
+    let category = match (group, kind) {
+        ("", "Pod" | "ReplicationController" | "PodTemplate") | ("apps", _) | ("batch", _) => {
+            Category::Workloads
+        }
+        ("", "Node" | "Namespace" | "Event") => Category::Cluster,
+        ("", "Service" | "Endpoints") | ("networking.k8s.io", _) => Category::Network,
+        ("", "PersistentVolume" | "PersistentVolumeClaim") | ("storage.k8s.io", _) => {
+            Category::Storage
+        }
+        ("", "ConfigMap" | "Secret") => Category::Config,
+        ("", "ServiceAccount") | ("rbac.authorization.k8s.io", _) => Category::AccessControl,
+        _ => return custom(),
+    };
+    section(&Section::Builtin(category))
+}
+
+pub(crate) fn overview(title: &str) -> Icon {
+    match title {
+        "Containers" | "Pod template" | "Runtime" | "Replicas & rollout" => {
+            section(&Section::Builtin(Category::Workloads))
+        }
+        "Networking" | "Ports" | "Routing" | "Default backend" => {
+            section(&Section::Builtin(Category::Network))
+        }
+        "Storage" | "Capacity & allocatable" => section(&Section::Builtin(Category::Storage)),
+        "Configuration" | "Secret" | "Data keys" => section(&Section::Builtin(Category::Config)),
+        "System" => section(&Section::Builtin(Category::Cluster)),
+        _ => Icon::new(IconName::Info),
+    }
+}
