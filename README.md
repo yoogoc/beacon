@@ -62,7 +62,7 @@ It uses your existing kubeconfig and cluster permissions, discovering both built
 ### Download a build
 
 Check [Releases](https://github.com/yoogoc/beacon/releases) for available platform artifacts.
-Builds from `main` are published as prereleases; `v*` tags trigger formal releases. Manually triggered packaging runs publish artifacts in
+Every push to `main` publishes a formal Release marked as Latest after packaging, using a `main-<commit SHA>` tag. `v*` tags also trigger formal releases. Manually triggered packaging runs publish artifacts in
 [Actions](https://github.com/yoogoc/beacon/actions/workflows/package.yml).
 
 | Platform | Package formats | Verification |

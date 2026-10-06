@@ -115,8 +115,9 @@ kube 走的是 rustls。也没有列 Vulkan 驱动（`mesa-vulkan-drivers` 之�
 触发限定在 **push 到 main、push `v*` tag、以及手动 dispatch** —— 不是所有分支。每个矩阵
 项都是一次完整的依赖树构建（含 GPUI），六份并行；特性分支不需要安装包，那是
 `.github/workflows/ci.yml` 的活。push 到 main 时 `release` job 创建
-`main-<完整 commit SHA>` 对应的 prerelease（显示名用七位短 SHA）；push `v*` tag 则创建
-正式 Release 并标记为 latest；手动 dispatch 只留 Actions artifact，不发 Release。
+`main-<完整 commit SHA>` 对应的正式 Release（显示名用七位短 SHA）并标记为 latest；
+push `v*` tag 也创建正式 Release 并标记为 latest；手动 dispatch 只留 Actions artifact，
+不发 Release。main 的标签按提交生成，不自动递增 `Cargo.toml` 中的应用版本号。
 
 下表的"状态"一律指**在本机验证到哪一步**；各平台当前的 CI 结果以 GitHub Actions 为准。
 
