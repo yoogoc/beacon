@@ -112,12 +112,87 @@ kube 走的是 rustls。也没有列 Vulkan 驱动（`mesa-vulkan-drivers` 之�
 
 `.github/workflows/package.yml`，矩阵是 mac / windows / linux × amd64 / arm64。
 
-触发限定在 **push 到 main、push `v*` tag、以及手动 dispatch** —— 不是所有分支。每个矩阵
-项都是一次完整的依赖树构建（含 GPUI），六份并行；特性分支不需要安装包，那是
-`.github/workflows/ci.yml` 的活。push 到 main 时 `release` job 创建
-`main-<完整 commit SHA>` 对应的正式 Release（显示名用七位短 SHA）并标记为 latest；
-push `v*` tag 也创建正式 Release 并标记为 latest；手动 dispatch 只留 Actions artifact，
-不发 Release。main 的标签按提交生成，不自动递增 `Cargo.toml` 中的应用版本号。
+触发限定在 **push 到 main、push `v*` tag、以及手动 dispatch**。其他分支和 PR 运行
+`.github/workflows/ci.yml`；main 和发布标签通过可复用的同一 CI 工作流执行检查，不重复触发一份独立 CI。
+
+发布依次执行：
+
+1. `prepare` 校验版本并生成本次构建版本。
+2. `checks` 执行发布脚本测试、格式检查、Clippy，以及 macOS / Linux / Windows 构建和测试。
+3. `package` 将同一个版本写入各平台的 Cargo.toml 和 Cargo.lock，再构建和打包。
+4. `release` 先创建草稿并上传全部可用产物，再公开发布。已公开的同名 Release 不允许被重跑覆盖。
+
+| 触发 | 版本 / 标签 | GitHub 发布状态 |
+| --- | --- | --- |
+| push main | `0.2.0-dev.<GITHUB_RUN_NUMBER>` / `v0.2.0-dev.<GITHUB_RUN_NUMBER>` | Pre-release，不抢占 Latest |
+| push `vX.Y.Z` 标签 | `X.Y.Z`，必须与源码版本完全一致 | 全部平台打包成功后发布正式 Release，标记 Latest |
+| 手动 dispatch | 同样生成唯一的 `X.Y.Z-dev.<GITHUB_RUN_NUMBER>` | 只上传 Actions artifact，不发 Release |
+
+`Cargo.toml` 的 `[workspace.package].version` 是版本唯一来源，当前下一轮开发目标为
+`0.2.0-dev.0`。CI 使用发布工作流的运行编号替换 `dev.0`，不把构建编号提交回仓库；
+重跑同一次工作流沿用同一编号。编号可能有空缺，不影响排序。
+应用启动日志、界面版本及安装包都从这次修改后的 Cargo 版本读取；各个 workspace crate 的
+锁定版本同步修改，第三方依赖的版本与校验和保持不变。
+macOS 的 `assets/packaging/Info.plist` 同步生成：`CFBundleShortVersionString` 使用数字版本
+（例如 `0.2.0`），`CFBundleVersion` 将运行编号编码为递增的数字版本，`BeaconVersion` 保留完整版本。
+应用界面与 DMG 文件名仍使用 `0.2.0-dev.101`。
+Debian 安装包使用 `0.2.0~dev.101`，使开发版的包版本低于 `0.2.0` 正式版；
+Linux AppImage、Windows 安装包文件名及应用内版本继续使用完整 SemVer。
+Release 说明记录完整提交 SHA、工作流链接和实际提供的平台产物，便于反馈和定位问题。
+
+### 版本规则与正式发版
+
+Beacon 当前处于 `0.x` 阶段，采用以下项目约定：
+
+| 变化 | 示例 | 版本选择 |
+| --- | --- | --- |
+| 兼容的修复、小幅优化 | 修复 Shell、日志或布局问题 | `0.2.0 → 0.2.1` |
+| 新功能，或需要说明的不兼容变更 | 新资源视图、配置格式变化 | `0.2.1 → 0.3.0` |
+| 核心流程稳定，开始承诺升级兼容性 | 配置迁移、主要操作与平台支持已有明确保证 | `1.0.0` |
+
+从 `1.0.0` 起，兼容修复升 patch，兼容的新功能升 minor，不兼容的配置 / 行为或平台支持变化升 major。
+同一轮包含多种变更时取最高级别；代码重构或依赖升级本身不决定大小版本。
+
+假设正在开发 `0.2.0`，确认可发布后：
+
+```sh
+# 同时更新 workspace、Cargo.lock 中的本地 crate 版本与 macOS 版本元数据。
+python3 scripts/release.py set 0.2.0
+
+# 检查修改并提交。先在 main 发布工作流中验证这份代码。
+git diff -- Cargo.toml Cargo.lock assets/packaging/Info.plist
+git add Cargo.toml Cargo.lock assets/packaging/Info.plist
+git commit -m "chore(release): prepare 0.2.0"
+git push origin main
+
+# 上一步检查与打包通过后，在同一提交上创建正式标签。
+git tag -a v0.2.0 -m "Beacon 0.2.0"
+git push origin v0.2.0
+```
+
+创建标签时应仍在准备版本的同一提交上；标签触发后会再次执行完整检查与打包。
+`v0.2.0` 配 `0.2.0-dev.0` 或 `0.2.1` 会在准备阶段失败。
+本地版本脚本需要 Python 3.11 或更新版本；CI 固定使用 Python 3.12。
+
+正式发布后，继续开发修复版或功能版时设置新的目标，例如：
+
+```sh
+python3 scripts/release.py set 0.2.1-dev.0
+git add Cargo.toml Cargo.lock assets/packaging/Info.plist
+git commit -m "chore(release): start 0.2.1 development"
+git push origin main
+```
+
+随后 main 发布 `0.2.1-dev.<编号>`；开发新功能时将目标改成 `0.3.0-dev.0`。
+每次正常 push 无需手动修改版本。正式发布说明中还应补充本轮用户可见的变化、已知问题，以及需要用户执行的迁移步骤。
+历史 `main-<SHA>` Release 不会被本流程修改；首次正式发布前 GitHub 上可能仍显示旧的 Latest，
+首次 `vX.Y.Z` 正式发布后由新版本接替。
+
+发布脚本的本地验证：
+
+```sh
+python3 -m unittest discover -s scripts/tests -p 'test_*.py' -v
+```
 
 下表的"状态"一律指**在本机验证到哪一步**；各平台当前的 CI 结果以 GitHub Actions 为准。
 
@@ -135,13 +210,15 @@ runner 正在退役。本机实测过这条路 —— 产物落在 `target/x86_6
 所以工作流里的上传路径统一用 triple 目录。
 
 CI 先用矩阵里的 target 显式执行
-`cargo build --release -p beacon --target <triple>`，再把同一个 target 传给 cargo-packager。
+`cargo build --locked --release -p beacon --target <triple>`，再把同一个 target 传给 cargo-packager。
+打包工具固定为本机已验证的 cargo-packager 0.11.8。
+Linux 的 DEB 单独读取发布脚本生成的配置，以适配 Debian 的 `~dev` 排序；AppImage 仍从 Cargo 元数据读取配置。
 构建步骤**不放在 cargo-packager 的 hook 里**：hook 在 Unix 上过 `sh`、在 Windows 上过
 `cmd.exe`，没有一个 hook 字符串能在两边都正确展开 `--target`。
 
-**没验证过的平台标了 `continue-on-error: true`。** 那不是为了让徽章好看：已验证的平台一旦
-坏掉照样让整个 run 变红，而没建过的平台不会把它掩盖掉。每个 `true` 都是一句关于"到底验证
-到哪"的声明 —— 某个平台第一次成功出包之后，就该把它删掉。
+**开发版对 `unproven: true` 的打包平台允许失败。** 已验证的 macOS 打包失败、任意平台的
+共享 CI 构建或测试失败，都会阻止发布。正式版不允许任何打包平台失败，确保不会把缺少平台安装包的版本标成 Latest。
+某个平台验证成功后应将它的 `unproven` 改成 `false`。
 
 **两个 arm64 runner label 我在这台机器上没法验证。** `ubuntu-24.04-arm` 和
 `windows-11-arm` 是 GitHub 较新提供的；如果仓库拿不到它们，那两项会以"找不到 runner"失败，

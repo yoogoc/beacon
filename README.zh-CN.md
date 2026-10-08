@@ -63,7 +63,9 @@ Beacon 使用 Rust 和 GPUI 构建，将集群、资源列表、详情和容器�
 ### 下载构建
 
 在 [Releases](https://github.com/yoogoc/beacon/releases) 查找对应平台的产物。
-每次 push 到 `main`，打包完成后自动发布正式 Release 并标记为 Latest，标签为 `main-<commit SHA>`；`v*` 标签也会触发正式 Release。手动运行打包任务的产物位于
+每次 push 到 `main`，检查与必需的打包任务通过后自动发布**开发预发布版**，例如 `v0.2.0-dev.101`。
+正式 `vX.Y.Z` 标签必须与 Cargo 版本一致；全部平台打包成功后发布正式 Release 并标记为 **Latest**。
+版本选择和操作步骤见[正式发版流程](docs/PACKAGING.md#版本规则与正式发版)。手动运行打包任务的产物位于
 [Actions](https://github.com/yoogoc/beacon/actions/workflows/package.yml)。
 
 | 平台 | 打包格式 | 验证情况 |
