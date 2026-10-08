@@ -2008,6 +2008,26 @@ impl BeaconApp {
                     .text_color(cx.theme().muted_foreground)
                     .child(copyable_text("connection-detail", detail)),
             )
+            .when_some(
+                state.and_then(|(id, state)| {
+                    matches!(state, TabState::Connecting).then(|| id.clone())
+                }),
+                |body, cluster| {
+                    body.child(
+                        Button::new("cancel-cluster-connection")
+                            .outline()
+                            .small()
+                            .label("Cancel connection")
+                            .on_click(cx.listener(move |view, _, window, cx| {
+                                // A queued click must not disconnect a session
+                                // that finished connecting in the meantime.
+                                if view.connections.read(cx).connecting(&cluster) {
+                                    view.disconnect(&cluster, window, cx);
+                                }
+                            })),
+                    )
+                },
+            )
             .into_any_element()
     }
 
