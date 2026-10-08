@@ -481,6 +481,7 @@ fn node() -> Vec<ColumnDef> {
     vec![
         computed("Status", 152.0, |cell| node_status(cell.data)),
         flexible("Roles", 1.0, node_roles),
+        ColumnDef::new("Taints", ColumnWidth::Fixed(80.0), ColumnSource::Taints),
         cpu(),
         memory(),
         // kubectl puts Age before Version here, and only here.
@@ -791,7 +792,9 @@ mod tests {
     fn node_puts_age_before_version() {
         assert_eq!(
             headers("", "Node", false),
-            ["Name", "Status", "Roles", "CPU", "Memory", "Age", "Version"]
+            [
+                "Name", "Status", "Roles", "Taints", "CPU", "Memory", "Age", "Version"
+            ]
         );
     }
 
@@ -996,6 +999,7 @@ mod tests {
             [
                 "Ready",
                 "control-plane,master",
+                "0",
                 "<none>",
                 "<none>",
                 "v1.33.3+k3s1"

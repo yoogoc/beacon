@@ -21,7 +21,7 @@ use gpui_kit::component::checkbox::Checkbox;
 use gpui_kit::component::menu::{PopupMenu, PopupMenuItem};
 use gpui_kit::component::table::{Column, ColumnSort, TableDelegate, TableState};
 use gpui_kit::component::tooltip::Tooltip;
-use gpui_kit::component::{ActiveTheme as _, Disableable as _, h_flex};
+use gpui_kit::component::{ActiveTheme as _, Disableable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use nucleo_matcher::{
@@ -981,6 +981,42 @@ impl TableDelegate for ResourceTable {
                         }),
                 )
                 .tooltip(move |window, cx| Tooltip::new(summary.clone()).build(window, cx))
+                .into_any_element();
+        }
+
+        if matches!(definition.source, ColumnSource::Taints) {
+            let Some(object) = self.key_at(row).and_then(|key| self.object(key)) else {
+                return h_flex().into_any_element();
+            };
+            let taints = beacon_columns::node::taint_descriptions(&object.data);
+            let summary = if taints.is_empty() {
+                "No taints".to_string()
+            } else {
+                taints.join("\n")
+            };
+            return h_flex()
+                .id(("node-taints", row))
+                .size_full()
+                .items_center()
+                .aria_label(format!("{} taints: {summary}", taints.len()))
+                .text_color(if taints.is_empty() {
+                    cx.theme().muted_foreground
+                } else {
+                    cx.theme().foreground
+                })
+                .child(value.display().to_string())
+                .tooltip(move |window, cx| {
+                    let taints = taints.clone();
+                    Tooltip::element(move |_, _| {
+                        v_flex()
+                            .max_w(px(560.))
+                            .gap_1()
+                            .child(format!("Taints · {}", taints.len()))
+                            .when(taints.is_empty(), |this| this.child("No taints"))
+                            .children(taints.iter().map(|taint| div().child(taint.clone())))
+                    })
+                    .build(window, cx)
+                })
                 .into_any_element();
         }
 

@@ -97,6 +97,7 @@ enum Outcome {
 
 pub struct ClusterView {
     session: Arc<ClusterSession>,
+    is_eks: bool,
     health: Health,
 
     /// The kinds this cluster serves, grouped for the sidebar.
@@ -202,6 +203,7 @@ impl ClusterView {
         namespace: Option<String>,
         initial_kind: Option<Arc<Kind>>,
         initial_scope: Option<BTreeSet<String>>,
+        is_eks: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -228,6 +230,7 @@ impl ClusterView {
         let split = cx.new(|_| ResizableState::default());
 
         let mut this = Self {
+            is_eks,
             health: Health::Connecting,
             catalog,
             kind: None,
@@ -1280,12 +1283,16 @@ impl ClusterView {
         // The Namespace column earns its place as soon as the rows can come
         // from more than one.
         let mixed = kind.namespaced && self.scoped_to.len() != 1;
-        ColumnSet::resolve(
+        let mut columns = ColumnSet::resolve(
             &kind.resource.group,
             &kind.resource.kind,
             mixed,
             printer_columns,
-        )
+        );
+        if self.is_eks && kind.resource.group.is_empty() && kind.resource.kind == "Node" {
+            beacon_columns::node::add_node_group(&mut columns);
+        }
+        columns
     }
 
     /// Follows the session's health. `tokio::sync::watch` is a plain channel

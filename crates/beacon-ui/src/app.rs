@@ -627,8 +627,19 @@ impl BeaconApp {
         let initial_kind = self.tabs[index].initial_kind.take();
         let initial_scope = self.tabs[index].initial_scope.take();
         let initial_mode = self.tabs[index].initial_mode;
+        let is_eks = self
+            .context_entry(session.id())
+            .is_some_and(|entry| entry.eks().is_some());
         let view = cx.new(|cx| {
-            ClusterView::new(session, namespace, initial_kind, initial_scope, window, cx)
+            ClusterView::new(
+                session,
+                namespace,
+                initial_kind,
+                initial_scope,
+                is_eks,
+                window,
+                cx,
+            )
         });
 
         if initial_mode != Mode::Objects {

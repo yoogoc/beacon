@@ -15,6 +15,7 @@ pub mod age;
 pub mod builtin;
 pub mod containers;
 pub mod event;
+pub mod node;
 pub mod path;
 pub mod pod;
 pub mod printer;
@@ -207,6 +208,8 @@ pub enum ColumnSource {
     Namespace,
     /// Per-container Pod health, rendered as dots by the UI.
     Containers,
+    /// Node taint count, with individual taints shown in the UI tooltip.
+    Taints,
     /// Derived from `metadata.creationTimestamp`.
     Age,
     /// A field path from a CRD's `additionalPrinterColumns`, evaluated against
@@ -228,6 +231,7 @@ impl std::fmt::Debug for ColumnSource {
             Self::Name => f.write_str("Name"),
             Self::Namespace => f.write_str("Namespace"),
             Self::Containers => f.write_str("Containers"),
+            Self::Taints => f.write_str("Taints"),
             Self::Age => f.write_str("Age"),
             Self::JsonPath { expression, kind } => {
                 write!(f, "JsonPath({expression:?}, {kind:?})")
@@ -272,6 +276,7 @@ impl ColumnDef {
             ColumnSource::Name => cell.metadata.name.clone().into(),
             ColumnSource::Namespace => cell.metadata.namespace.clone().into(),
             ColumnSource::Containers => CellValue::text(containers::description(cell.data)),
+            ColumnSource::Taints => CellValue::text(node::taint_count(cell.data).to_string()),
             ColumnSource::Age => cell
                 .metadata
                 .creation_timestamp
