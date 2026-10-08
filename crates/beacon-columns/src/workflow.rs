@@ -22,8 +22,8 @@ pub(crate) fn add_execution_times(columns: &mut ColumnSet) {
     columns.columns.splice(
         index..index,
         [
-            ("STARTED", ".status.startedAt"),
-            ("FINISHED", ".status.finishedAt"),
+            ("Started", ".status.startedAt"),
+            ("Finished", ".status.finishedAt"),
         ]
         .map(|(header, expression)| {
             ColumnDef::new(
@@ -48,7 +48,7 @@ mod tests {
     fn workflow_times_survive_missing_crd_columns_and_preserve_published_columns() {
         assert_eq!(
             ColumnSet::for_kind("argoproj.io", "Workflow", true).headers(),
-            ["Name", "Namespace", "STARTED", "FINISHED", "Age"]
+            ["Name", "Namespace", "Started", "Finished", "Age"]
         );
         let published = json!([
             {"name":"Status","type":"string","jsonPath":".status.phase"},
@@ -58,7 +58,7 @@ mod tests {
         ]);
         assert_eq!(
             ColumnSet::resolve("argoproj.io", "Workflow", false, Some(&published)).headers(),
-            ["Name", "Status", "STARTED", "FINISHED", "Age"]
+            ["Name", "Status", "Started", "Finished", "Age"]
         );
         assert_eq!(
             ColumnSet::for_kind("example.com", "Workflow", false).headers(),
