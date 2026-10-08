@@ -3,7 +3,7 @@
 <plist version="1.0">
 <dict>
 	<key>BeaconVersion</key>
-	<string>0.2.0-dev.0</string>
+	<string>0.2.0</string>
 	<key>CFBundleShortVersionString</key>
 	<string>0.2.0</string>
 	<key>CFBundleVersion</key>
