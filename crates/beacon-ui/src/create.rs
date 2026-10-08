@@ -19,6 +19,7 @@ pub(crate) enum CreateEvent {
 
 enum Status {
     Idle,
+    Reviewing,
     Running { dry_run: bool },
     Validated,
     Failed(String),
@@ -30,6 +31,7 @@ pub(crate) struct CreateView {
     editor: Entity<EditorState>,
     status: Status,
     _operation: Option<Task<()>>,
+    _review: Option<Task<()>>,
     _changes: Subscription,
 }
 
@@ -61,12 +63,13 @@ impl CreateView {
             editor,
             status: Status::Idle,
             _operation: None,
+            _review: None,
             _changes: changes,
         }
     }
 
     pub fn is_running(&self) -> bool {
-        matches!(self.status, Status::Running { .. })
+        matches!(self.status, Status::Running { .. } | Status::Reviewing)
     }
 
     fn manifest(&self, cx: &App) -> Result<Value, String> {
@@ -85,6 +88,78 @@ impl CreateView {
                 return;
             }
         };
+        if !dry_run {
+            self.review(manifest, window, cx);
+            return;
+        }
+        self.send(manifest, true, window, cx);
+    }
+
+    fn review(&mut self, manifest: Value, window: &mut Window, cx: &mut Context<Self>) {
+        self.status = Status::Reviewing;
+        cx.notify();
+        let name = manifest
+            .pointer("/metadata/name")
+            .and_then(Value::as_str)
+            .map(str::to_string)
+            .unwrap_or_else(|| {
+                format!(
+                    "{} (generated name)",
+                    manifest
+                        .pointer("/metadata/generateName")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                )
+            });
+        let target = manifest
+            .pointer("/metadata/namespace")
+            .and_then(Value::as_str)
+            .map(|namespace| format!("{namespace}/{name}"))
+            .unwrap_or(name);
+        let context = format!(
+            "{} · {} · {}",
+            self.session.id().display_name(),
+            self.kind.resource.kind,
+            target
+        );
+        let preparing =
+            Bridge::global(cx).run(async move { crate::yaml_review::Preview::create(manifest) });
+        self._review = Some(cx.spawn_in(window, async move |this, cx| {
+            let result = preparing.await;
+            let _ = this.update_in(cx, |view, window, cx| {
+                match result {
+                    Ok(Ok(preview)) => {
+                        let review =
+                            crate::yaml_review::open(preview, context, true, false, window, cx);
+                        cx.subscribe_in(
+                            &review,
+                            window,
+                            |view, _, event: &crate::yaml_review::ReviewEvent, window, cx| {
+                                view.status = Status::Idle;
+                                if let crate::yaml_review::ReviewEvent::Confirmed(manifest) = event
+                                {
+                                    view.send((**manifest).clone(), false, window, cx);
+                                }
+                                cx.notify();
+                            },
+                        )
+                        .detach();
+                    }
+                    Ok(Err(error)) => view.status = Status::Failed(error),
+                    Err(error) => view.status = Status::Failed(error.to_string()),
+                }
+                cx.notify();
+            });
+        }));
+    }
+
+    fn send(
+        &mut self,
+        manifest: Value,
+        dry_run: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.status = Status::Running { dry_run };
         cx.notify();
         let session = self.session.clone();
@@ -131,6 +206,10 @@ impl Render for CreateView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let running = self.is_running();
         let (tone, message) = match &self.status {
+            Status::Reviewing => (
+                Tone::Progressing,
+                "Preparing YAML changes for review…".into(),
+            ),
             Status::Idle => (
                 Tone::Unknown,
                 "Edit one resource manifest. Existing names are refused.".to_string(),
@@ -279,8 +358,8 @@ impl Render for CreateView {
 fn parse(yaml: &str, kind: &Kind) -> Result<Value, String> {
     let manifest: Value =
         serde_saphyr::from_str(yaml).map_err(|error| format!("This is not valid YAML: {error}"))?;
-    ops::prepare_create(kind, manifest.clone()).map_err(|error| error.to_string())?;
-    Ok(manifest)
+    let object = ops::prepare_create(kind, manifest).map_err(|error| error.to_string())?;
+    serde_json::to_value(object).map_err(|error| error.to_string())
 }
 
 fn template(kind: &Kind, namespace: Option<&str>) -> String {

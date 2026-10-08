@@ -52,7 +52,7 @@ Beacon 使用 Rust 和 GPUI 构建，将集群、资源列表、详情和容器�
 | **资源详情** | Overview、YAML、Events；可复制的字段、折叠的标签和注解；容器端口、资源请求与限制、探针、环境变量与挂载；点击 Owner 跳转。 |
 | **Argo Workflows** | 独立资源分组、Workflow 与模板执行图、CronWorkflow 运行历史；节点详情通过独立浮层显示 Pod 容器、输入输出、产物与 YAML；控制器资源在侧栏默认折叠。 |
 | **Pod 工具** | 流式日志、单次 Exec、交互式 Shell 和端口转发；独立的底部工具面板；用实心 / 空心圆显示普通 / Init 容器状态。 |
-| **资源写操作** | YAML 创建与服务端预校验、Server-Side Apply、重启、扩缩容、单个及批量删除；按资源类型显示右键菜单和权限预检结果。 |
+| **资源写操作** | YAML 创建与服务端预校验，创建或 Apply 前预览 YAML diff 并确认；重启、扩缩容、单个及批量删除；按资源类型显示右键菜单和权限预检结果。 |
 | **ConfigMap 与 Secret** | 按键查看和编辑 Data；Secret 值默认遮盖；TLS 证书展示主题、签发者、有效期、算法、强度、扩展和公钥。 |
 | **指标与 Helm** | Pod / Node 的 CPU、内存指标可来自 Kubernetes Metrics API 或 Prometheus；从集群读取 Helm Release。 |
 | **外观与连接** | 浅色、深色、命名的自定义主题；字体和颜色配置保存到本地；全局代理与集群独立代理。 |

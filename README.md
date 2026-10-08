@@ -52,7 +52,7 @@ It uses your existing kubeconfig and cluster permissions, discovering both built
 | **Resource details** | Overview, YAML, and Events; selectable values; collapsible labels and annotations; container ports, requests and limits, probes, environment, and mounts; clickable owner links. |
 | **Argo Workflows** | Dedicated resource group, Workflow and template graphs, CronWorkflow run history, and separate node details with Pod containers, inputs, outputs, artifacts, and YAML. Controller resources stay collapsed in the sidebar. |
 | **Pod tools** | Stream logs, run a command, open an interactive shell, and forward ports. Use a separate bottom panel and filled / hollow markers for regular / init container states. |
-| **Resource operations** | Create YAML resources with server validation, edit with Server-Side Apply, restart, scale, and delete individually or in bulk. Context menus reflect resource types and permission checks. |
+| **Resource operations** | Create YAML resources with server validation, review a YAML diff before creating or applying changes, restart, scale, and delete individually or in bulk. Context menus reflect resource types and permission checks. |
 | **ConfigMaps and Secrets** | View and edit data by key. Secret values start concealed. Inspect TLS certificate subjects, issuers, validity, algorithms, key strength, extensions, and public keys. |
 | **Metrics and Helm** | Read Pod / Node CPU and memory from the Kubernetes Metrics API or Prometheus, and inspect Helm releases stored in the cluster. |
 | **Appearance and connections** | Light, dark, and named custom themes; locally saved fonts and colors; global and per-cluster proxies. |

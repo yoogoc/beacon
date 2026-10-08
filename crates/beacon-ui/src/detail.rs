@@ -154,6 +154,7 @@ pub struct DetailView {
     revealed: bool,
     yaml_editor: Entity<EditorState>,
     apply: Apply,
+    reviewing: bool,
 
     events: ResourceStore,
     events_listed: bool,
@@ -166,6 +167,7 @@ pub struct DetailView {
 
     _yaml_task: Option<Task<()>>,
     _apply_task: Option<Task<()>>,
+    _review_task: Option<Task<()>>,
     _events_task: Option<Task<()>>,
     _clock: Task<()>,
 }
@@ -226,12 +228,14 @@ impl DetailView {
             revealed: false,
             yaml_editor,
             apply: Apply::Idle,
+            reviewing: false,
             events: ResourceStore::new(),
             events_listed: false,
             rules,
             now: Timestamp::now(),
             _yaml_task: None,
             _apply_task: None,
+            _review_task: None,
             _events_task: None,
             _clock: Task::ready(()),
         };
@@ -288,11 +292,18 @@ impl DetailView {
         cx.notify();
     }
 
-    /// Sends the edited YAML back with Server-Side Apply.
+    fn busy(&self) -> bool {
+        self.reviewing || matches!(self.apply, Apply::Running)
+    }
+
+    /// Reviews the edited YAML before Server-Side Apply.
     ///
     /// `force` takes ownership of the fields another manager holds. It is only
     /// ever reached from the conflict view, after the refusal has been read.
     pub fn apply(&mut self, force: bool, window: &mut Window, cx: &mut Context<Self>) {
+        if self.busy() {
+            return;
+        }
         let yaml = self.yaml_editor.read(cx).value().to_string();
 
         let object = match parse(&yaml) {
@@ -304,7 +315,73 @@ impl DetailView {
             }
         };
 
-        self.send(object, force, window, cx);
+        self.review(object, force, window, cx);
+    }
+
+    /// Fetch fresh comparison data; the draft is frozen until confirmed or cancelled.
+    fn review(&mut self, object: Value, force: bool, window: &mut Window, cx: &mut Context<Self>) {
+        if self.busy() || !crate::actions::may_apply(&self.kind, self.rules.as_deref()) {
+            return;
+        }
+        self.reviewing = true;
+        cx.notify();
+        let session = self.session.clone();
+        let resource = self.kind.resource.clone();
+        let target = self.target.clone();
+        let preparing = Bridge::global(cx).run(async move {
+            let current = session
+                .get_object(resource, target.namespace, target.name)
+                .await
+                .map_err(|error| error.user_message())?;
+            let current = serde_json::to_value(current).map_err(|error| error.to_string())?;
+            crate::yaml_review::Preview::apply(current, object)
+        });
+        self._review_task = Some(cx.spawn_in(window, async move |this, cx| {
+            let result = preparing.await;
+            let _ = this.update_in(cx, |view, window, cx| {
+                match result {
+                    Ok(Ok(preview)) => {
+                        let context = format!(
+                            "{} · {} · {}",
+                            view.session.id().display_name(),
+                            view.kind.resource.kind,
+                            view.target
+                        );
+                        let review =
+                            crate::yaml_review::open(preview, context, false, force, window, cx);
+                        cx.subscribe_in(
+                            &review,
+                            window,
+                            move |view, _, event: &crate::yaml_review::ReviewEvent, window, cx| {
+                                view.reviewing = false;
+                                if let crate::yaml_review::ReviewEvent::Confirmed(object) = event {
+                                    if crate::actions::may_apply(&view.kind, view.rules.as_deref())
+                                    {
+                                        view.send((**object).clone(), force, window, cx);
+                                    } else {
+                                        view.apply = Apply::Failed(
+                                            "You no longer have permission to apply this resource."
+                                                .into(),
+                                        );
+                                    }
+                                }
+                                cx.notify();
+                            },
+                        )
+                        .detach();
+                    }
+                    Ok(Err(error)) => {
+                        view.reviewing = false;
+                        view.apply = Apply::Failed(error);
+                    }
+                    Err(error) => {
+                        view.reviewing = false;
+                        view.apply = Apply::Failed(error.to_string());
+                    }
+                }
+                cx.notify();
+            });
+        }));
     }
 
     /// Applies one object and reports what came back.
@@ -417,6 +494,9 @@ impl DetailView {
     /// label -- travel back exactly as they arrived rather than depending on
     /// which fields this field manager happens to own.
     pub fn apply_data(&mut self, force: bool, window: &mut Window, cx: &mut Context<Self>) {
+        if self.busy() {
+            return;
+        }
         let Data::Ready(keys) = &self.data else {
             return;
         };
@@ -442,7 +522,7 @@ impl DetailView {
             }
         };
 
-        self.send(object, force, window, cx);
+        self.review(object, force, window, cx);
     }
 
     /// Fetches the object in full and renders it as YAML.
@@ -1944,7 +2024,7 @@ impl DetailView {
                         .child("Hidden. Reveal to read or edit it.")
                         .into_any_element(),
                     (Some(editor), false) => Textarea::new(editor)
-                        .readonly(!may_apply)
+                        .readonly(!may_apply || self.busy())
                         .into_any_element(),
                     (None, _) => div()
                         .w_full()
@@ -1982,7 +2062,7 @@ impl DetailView {
         may_apply: bool,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        let running = matches!(self.apply, Apply::Running);
+        let running = self.busy();
         let revealed = self.revealed;
 
         v_flex()
@@ -2009,6 +2089,7 @@ impl DetailView {
                                 .danger()
                                 .small()
                                 .label("Save anyway")
+                                .disabled(running || !may_apply)
                                 .on_click(cx.listener(|view, _, window, cx| {
                                     view.apply_data(true, window, cx)
                                 })),
@@ -2030,7 +2111,13 @@ impl DetailView {
                         Button::new("save-data")
                             .primary()
                             .small()
-                            .label(if running { "Saving…" } else { "Save" })
+                            .label(if self.reviewing {
+                                "Reviewing…"
+                            } else if running {
+                                "Saving…"
+                            } else {
+                                "Save"
+                            })
                             .disabled(!may_apply || running || (secret && !revealed))
                             .on_click(cx.listener(|view, _, window, cx| {
                                 view.apply_data(false, window, cx)
@@ -2053,7 +2140,7 @@ impl DetailView {
                     .child(
                         div().flex_1().overflow_hidden().p_2().child(
                             Editor::new(&self.yaml_editor)
-                                .readonly(!may_apply)
+                                .readonly(!may_apply || self.busy())
                                 .bordered(false)
                                 .h(relative(1.)),
                         ),
@@ -2066,7 +2153,7 @@ impl DetailView {
 
     /// The bar under the editor: what applying would do, and what it did.
     fn render_apply_bar(&self, may_apply: bool, cx: &mut Context<Self>) -> impl IntoElement {
-        let running = matches!(self.apply, Apply::Running);
+        let running = self.busy();
 
         v_flex()
             .w_full()
@@ -2092,6 +2179,7 @@ impl DetailView {
                                 .danger()
                                 .small()
                                 .label("Apply anyway")
+                                .disabled(running || !may_apply)
                                 .on_click(
                                     cx.listener(|view, _, window, cx| view.apply(true, window, cx)),
                                 ),
@@ -2110,7 +2198,13 @@ impl DetailView {
                         Button::new("apply")
                             .primary()
                             .small()
-                            .label(if running { "Applying…" } else { "Apply" })
+                            .label(if self.reviewing {
+                                "Reviewing…"
+                            } else if running {
+                                "Applying…"
+                            } else {
+                                "Apply"
+                            })
                             .disabled(!may_apply || running)
                             .on_click(
                                 cx.listener(|view, _, window, cx| view.apply(false, window, cx)),
@@ -2124,6 +2218,13 @@ impl DetailView {
     /// A conflict gets the most room: the field list and who owns it is the
     /// whole decision, and "apply anyway" should not be taken without it.
     fn render_apply_status(&self, cx: &mut Context<Self>) -> AnyElement {
+        if self.reviewing {
+            return div()
+                .text_xs()
+                .text_color(cx.theme().muted_foreground)
+                .child("Preparing YAML changes for review…")
+                .into_any_element();
+        }
         match &self.apply {
             Apply::Idle => div()
                 .text_xs()

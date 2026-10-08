@@ -32,6 +32,7 @@ pub mod theme;
 mod tls;
 mod workspace;
 mod yaml_folding;
+mod yaml_review;
 
 pub use app::BeaconApp;
 pub use bridge::Bridge;

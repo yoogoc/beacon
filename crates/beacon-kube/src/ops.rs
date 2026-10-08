@@ -308,10 +308,7 @@ pub async fn apply(
 
     // GET responses include field ownership records, but Kubernetes forbids
     // submitting them in a Server-Side Apply request.
-    let mut object = object.clone();
-    if let Some(metadata) = object.get_mut("metadata").and_then(Value::as_object_mut) {
-        metadata.remove("managedFields");
-    }
+    let object = prepare_apply(object.clone());
 
     match api(client, resource, namespace)
         .patch(name, &params, &Patch::Apply(&object))
@@ -328,6 +325,14 @@ pub async fn apply(
         }
         Err(error) => Err(Error::Api(error)),
     }
+}
+
+/// The exact manifest submitted by Apply, also used by the confirmation diff.
+pub fn prepare_apply(mut object: Value) -> Value {
+    if let Some(metadata) = object.get_mut("metadata").and_then(Value::as_object_mut) {
+        metadata.remove("managedFields");
+    }
+    object
 }
 
 /// Reads the API server's conflict message.
