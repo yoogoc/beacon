@@ -1,14 +1,15 @@
-# Beacon patches to gpui-base 0.6.4
+# Beacon patches to gpui-base 0.7.1
 
-This directory contains the published `gpui-base` 0.6.4 source from crates.io
-(upstream commit `3c387ae0a3e9b14ee39fe98be2b51a882800aa16`, `crates/base`).
-Its Apache 2.0 license is preserved in `LICENSE-APACHE`.
+This directory contains `crates/base` from the GPUI Kit commit
+`3cc2d0d624ce124be62eb4670e04197bc78bb8a5`. This snapshot follows the
+0.7.1 release and includes the optional GPUI Fast backend. Its Apache 2.0
+license is preserved in `LICENSE-APACHE`.
 
-Beacon pins gpui-kit 0.6.4. That release supports manual editor folding but
-does not expose an API to collapse selected sections when a document loads.
-The workspace Cargo patch keeps the same version and adds this capability.
+The standalone `Cargo.toml` resolves upstream workspace inheritance with the
+same dependency versions, features and Clippy settings. The workspace patches
+the Git source of GPUI Kit so every layer uses this matching Base implementation.
 
-Only `src/input/base/state.rs` differs from the published source:
+`src/input/base/state.rs` adds initial folding support:
 
 - `EditorState::set_initial_folded_lines` accepts zero-based header lines.
 - Pending folds are applied when synchronous or asynchronous syntax parsing
@@ -18,13 +19,19 @@ Only `src/input/base/state.rs` differs from the published source:
 - Two regression tests cover delayed parsing, manual unfolding, unchanged
   document contents, and cancellation.
 
+`src/input/base/element.rs` sizes the scrollable content using visible display
+rows instead of unfolded rows. This prevents scrolling into blank space after
+folding large YAML fields. A regression test verifies the scroll height and
+that the last visible line remains in the viewport at the bottom.
+
 Beacon calls the API once when it loads resource YAML. Remove this vendor patch
 when the pinned upstream version offers an equivalent supported API.
 
-Run the patch's editor regression tests from the workspace root:
+Run the patch's editor regression tests with the selected GPUI Fast backend:
 
 ```sh
-cargo test --manifest-path vendor/gpui-base/Cargo.toml --target-dir target --lib initial_folds
+cargo test --manifest-path vendor/gpui-base/Cargo.toml --target-dir target --features gpui-fast --lib initial_folds
+cargo test --manifest-path vendor/gpui-base/Cargo.toml --target-dir target --features gpui-fast --lib folded_editor_scroll
 ```
 
 The vendored library is excluded from workspace membership; this command creates

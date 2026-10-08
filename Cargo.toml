@@ -19,11 +19,9 @@ beacon-ui = { path = "crates/beacon-ui" }
 # gpui-component and the default icon assets, so the UI lists one dependency.
 # GPUI's API still moves between patch releases -- keep this pinned and treat
 # an upgrade as its own task.
-# `tree-sitter-yaml` syntax-highlights the YAML pane. It was off until now
-# only because it needs `tree-sitter` 0.26.13, which crates.io did not have;
-# it does now, so the pinned 0.6.4 resolves it and the `.language("yaml")` the
-# pane already asked for finally means something.
-gpui-kit = { version = "=0.6.4", features = ["tree-sitter-yaml"] }
+# GPUI Fast support landed after the 0.7.1 release. Pin the supporting commit
+# and enable its retained rendering backend across Kit and its platform layers.
+gpui-kit = { git = "https://github.com/longbridge/gpui-kit", rev = "3cc2d0d624ce124be62eb4670e04197bc78bb8a5", features = ["gpui-fast", "tree-sitter-yaml"] }
 
 # Kubernetes. Default features already give us client + rustls-tls + ring;
 # rustls matters because it keeps the three CI targets free of an OpenSSL
@@ -81,7 +79,7 @@ lto = "thin"
 codegen-units = 1
 strip = true
 
-# Keep the existing editor version with the initial-folds API patch documented
-# in vendor/gpui-base/BEACON-PATCHES.md.
-[patch.crates-io]
+# Preserve the initial-folds API on the matching GPUI Fast-compatible Base.
+# See vendor/gpui-base/BEACON-PATCHES.md for provenance and regression tests.
+[patch."https://github.com/longbridge/gpui-kit"]
 gpui-base = { path = "vendor/gpui-base" }

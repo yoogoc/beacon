@@ -120,8 +120,22 @@ GPUI 视图在前台线程更新。`beacon-ui/src/bridge.rs` 桥接两个执行�
 
 ## 依赖与打包
 
-`gpui-kit` 固定为 `=0.6.4`，统一引入 GPUI、组件和图标；
-`tree-sitter-yaml` 提供 YAML 高亮。升级时应一起检查这些 API，保留 Cargo.lock。
+`gpui-kit` 固定到上游提交 `3cc2d0d624ce124be62eb4670e04197bc78bb8a5`（0.7.1 之后），
+统一引入 GPUI、组件和图标，并默认启用 `gpui-fast` 后端。
+正式发布的 0.7.1 尚无这个开关，因此使用固定 Git 提交并保留 Cargo.lock；
+`tree-sitter-yaml` 继续提供 YAML 高亮。升级时应一起检查这些 API。
+`vendor/gpui-base` 基于该提交，保留 YAML 初始折叠补丁，并修正折叠后的滚动高度；来源与测试命令见
+[BEACON-PATCHES.md](../vendor/gpui-base/BEACON-PATCHES.md)。
+
+GPUI Fast 的 Retained Mode 会复用未变化的视图。改变未被实体或全局状态追踪的
+渲染数据时，应调用 `cx.notify()`；不要在每次渲染或 prepaint 时无条件修改全局状态。
+窗口拖拽的命中区域属于测量缓存，使用内部可变性更新，不触发下一帧的全局失效。
+排查视图未更新时，可临时禁用视图复用进行对比：
+
+```sh
+GPUI_VIEW_RETENTION=0 cargo run --locked -p beacon
+```
+
 `k8s-openapi` 0.28 的时间类型使用 jiff。
 kube 启用 `http-proxy` 与 `socks5`，支持连接配置中的代理；不要误删这些功能。
 

@@ -12,6 +12,7 @@
 //! costs a view and nothing else.
 
 use std::{
+    cell::{Cell, RefCell},
     collections::{BTreeSet, HashMap},
     path::PathBuf,
     sync::Arc,
@@ -180,9 +181,11 @@ struct WorkspaceWindow {
     view: WeakEntity<BeaconApp>,
     handle: AnyWindowHandle,
     main: bool,
-    bounds: Bounds<Pixels>,
-    panes: HashMap<PaneId, Bounds<Pixels>>,
-    tabs: HashMap<u64, Bounds<Pixels>>,
+    // Hit-test geometry is written during rendering. Keep it outside tracked
+    // global mutations so measuring a frame does not invalidate retained views.
+    bounds: Cell<Bounds<Pixels>>,
+    panes: RefCell<HashMap<PaneId, Bounds<Pixels>>>,
+    tabs: RefCell<HashMap<u64, Bounds<Pixels>>>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -329,9 +332,9 @@ impl BeaconApp {
                 view: weak,
                 handle: window.window_handle(),
                 main: main_window,
-                bounds: window.bounds(),
-                panes: HashMap::new(),
-                tabs: HashMap::new(),
+                bounds: Cell::new(window.bounds()),
+                panes: RefCell::new(HashMap::new()),
+                tabs: RefCell::new(HashMap::new()),
             },
         );
         cx.on_release(move |_, cx| {
@@ -1004,25 +1007,25 @@ impl BeaconApp {
         let windows = &cx.global::<WorkspaceWindows>().windows;
         let (id, entry) = if let Some(stack) = cx.window_stack() {
             stack.iter().find_map(|handle| {
-                windows
-                    .iter()
-                    .find(|(_, entry)| entry.handle == *handle && entry.bounds.contains(&position))
+                windows.iter().find(|(_, entry)| {
+                    entry.handle == *handle && entry.bounds.get().contains(&position)
+                })
             })
         } else {
             // Platforms without native stacking information still route drags
             // outside the source window to another workspace.
             windows
                 .get(&preferred)
-                .filter(|entry| entry.bounds.contains(&position))
+                .filter(|entry| entry.bounds.get().contains(&position))
                 .map(|entry| (&preferred, entry))
                 .or_else(|| {
                     windows
                         .iter()
-                        .find(|(_, entry)| entry.bounds.contains(&position))
+                        .find(|(_, entry)| entry.bounds.get().contains(&position))
                 })
         }?;
-        let (pane, bounds) = entry
-            .panes
+        let panes = entry.panes.borrow();
+        let (pane, bounds) = panes
             .iter()
             .find(|(_, bounds)| bounds.contains(&position))?;
         let local = position - bounds.origin;
@@ -1030,6 +1033,7 @@ impl BeaconApp {
         let before = if tab_bar {
             entry
                 .tabs
+                .borrow()
                 .iter()
                 .filter(|(_, tab)| {
                     tab.origin.y >= bounds.origin.y
@@ -1113,7 +1117,7 @@ impl BeaconApp {
             .global::<WorkspaceWindows>()
             .windows
             .values()
-            .any(|entry| entry.bounds.contains(&position))
+            .any(|entry| entry.bounds.get().contains(&position))
         {
             cx.defer(move |cx| {
                 let _ = source_handle.update(cx, |_, window, cx| {
@@ -1664,12 +1668,8 @@ impl BeaconApp {
                 cx.listener(move |app, _, window, cx| app.focus_pane(pane_id, window, cx)),
             )
             .on_prepaint(move |bounds, window, cx| {
-                if let Some(entry) = cx
-                    .global_mut::<WorkspaceWindows>()
-                    .windows
-                    .get_mut(&workspace_id)
-                {
-                    entry.panes.insert(
+                if let Some(entry) = cx.global::<WorkspaceWindows>().windows.get(&workspace_id) {
+                    entry.panes.borrow_mut().insert(
                         pane_id,
                         Bounds::new(window.bounds().origin + bounds.origin, bounds.size),
                     );
@@ -1790,12 +1790,10 @@ impl BeaconApp {
                     .child(div().size(px(7.)).flex_shrink_0().rounded_full().bg(color))
                     .child(div().min_w_0().truncate().child(what))
                     .on_prepaint(move |bounds, window, cx| {
-                        if let Some(entry) = cx
-                            .global_mut::<WorkspaceWindows>()
-                            .windows
-                            .get_mut(&workspace_id)
+                        if let Some(entry) =
+                            cx.global::<WorkspaceWindows>().windows.get(&workspace_id)
                         {
-                            entry.tabs.insert(
+                            entry.tabs.borrow_mut().insert(
                                 id,
                                 Bounds::new(window.bounds().origin + bounds.origin, bounds.size),
                             );
@@ -2355,12 +2353,11 @@ impl BeaconApp {
 
 impl Render for BeaconApp {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let sheets = Root::render_sheet_layer(window, cx);
         let id = cx.entity_id();
-        if let Some(entry) = cx.global_mut::<WorkspaceWindows>().windows.get_mut(&id) {
-            entry.bounds = window.bounds();
-            entry.panes.clear();
-            entry.tabs.clear();
+        if let Some(entry) = cx.global::<WorkspaceWindows>().windows.get(&id) {
+            entry.bounds.set(window.bounds());
+            entry.panes.borrow_mut().clear();
+            entry.tabs.borrow_mut().clear();
         }
         div()
             .id("beacon-workspace")
@@ -2456,6 +2453,5 @@ impl Render for BeaconApp {
                 // Deferred so it paints over the table rather than under it.
                 this.child(deferred(self.render_palette(cx)))
             })
-            .children(sheets)
     }
 }

@@ -139,6 +139,11 @@ Configuration paths, proxy behavior, and Prometheus label requirements are cover
 
 ## Development
 
+Beacon enables the experimental GPUI Fast retained rendering backend through a
+pinned GPUI Kit commit after 0.7.1. YAML highlighting and initial field folding
+remain enabled. See the [development guide (中文)](docs/DEVELOPMENT.md#依赖与打包)
+for dependency pins, patch tests, and rendering diagnostics.
+
 ```sh
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets -- -D warnings
