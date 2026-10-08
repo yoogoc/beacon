@@ -1,12 +1,13 @@
 //! Pod logs, commands and interactive shells in the independent bottom panel.
 
-use std::sync::Arc;
+use std::{collections::VecDeque, sync::Arc};
 
 use beacon_kube::{
     ClusterSession, DynamicObject, LogBuffer, LogEvent, LogOptions, ObjectRef, Rules,
 };
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::{Input, InputState};
+use gpui_kit::component::scroll::{Scrollbar, ScrollbarMode};
 use gpui_kit::component::spinner::Spinner;
 use gpui_kit::component::tab::{Tab, TabBar};
 use gpui_kit::component::{ActiveTheme as _, Disableable as _, Sizable as _, h_flex, v_flex};
@@ -49,6 +50,7 @@ pub(crate) struct PodToolsView {
     log_options: LogOptions,
     log_status: LogStatus,
     log_scroll: UniformListScrollHandle,
+    log_widths: LogLineWidths,
     _logs_task: Option<Task<()>>,
     _exec_task: Option<Task<()>>,
 }
@@ -72,6 +74,42 @@ enum LogStatus {
     /// The stream ended, which for a followed log means the container did.
     Ended,
     Failed(String),
+}
+
+/// Keep measured widths aligned with the bounded log buffer. Only arriving
+/// lines need shaping; scrolling through history reuses their measurements.
+#[derive(Default)]
+struct LogLineWidths {
+    font: Option<(Font, Pixels)>,
+    dropped: usize,
+    widths: VecDeque<Pixels>,
+}
+
+impl LogLineWidths {
+    fn widest(
+        &mut self,
+        logs: &LogBuffer,
+        font: Font,
+        font_size: Pixels,
+        mut measure: impl FnMut(&str) -> Pixels,
+    ) -> Option<usize> {
+        let font = (font, font_size);
+        if self.font.as_ref() != Some(&font) || logs.dropped() < self.dropped {
+            self.widths.clear();
+            self.font = Some(font);
+        }
+        let removed = logs.dropped().saturating_sub(self.dropped);
+        self.widths.drain(..removed.min(self.widths.len()));
+        self.dropped = logs.dropped();
+        self.widths.truncate(logs.len());
+        self.widths
+            .extend(logs.lines().skip(self.widths.len()).map(&mut measure));
+        self.widths
+            .iter()
+            .enumerate()
+            .reduce(|widest, line| if line.1 > widest.1 { line } else { widest })
+            .map(|(index, _)| index)
+    }
 }
 
 impl PodToolsView {
@@ -101,6 +139,7 @@ impl PodToolsView {
             log_options: LogOptions::default(),
             log_status: LogStatus::Unopened,
             log_scroll: UniformListScrollHandle::new(),
+            log_widths: LogLineWidths::default(),
             _logs_task: None,
             _exec_task: None,
         };
@@ -216,6 +255,8 @@ impl PodToolsView {
         };
 
         self.logs.clear();
+        self.log_widths = LogLineWidths::default();
+        self.log_scroll = UniformListScrollHandle::new();
         self.log_status = LogStatus::Following;
 
         let stream = self.session.follow_logs(
@@ -296,7 +337,7 @@ impl PodToolsView {
                 .is_some_and(|shell| shell.read(cx).focus_handle(cx).is_focused(window))
     }
 
-    fn render_logs(&self, cx: &mut Context<Self>) -> AnyElement {
+    fn render_logs(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         if self.target.namespace.is_none() {
             return self.notice("A pod outside a namespace has no logs.", Tone::Unknown, cx);
         }
@@ -320,7 +361,33 @@ impl PodToolsView {
                     .map(|line| SharedString::from(line.to_string()))
                     .collect();
 
-                uniform_list("log-lines", lines.len(), move |range, _, _| {
+                let font = Font {
+                    family: "monospace".into(),
+                    ..window.text_style().font()
+                };
+                let font_size = window.rem_size() * 0.75;
+                let widest = self
+                    .log_widths
+                    .widest(&self.logs, font.clone(), font_size, |line| {
+                        window
+                            .text_system()
+                            .shape_line(
+                                line.to_string().into(),
+                                font_size,
+                                &[TextRun {
+                                    len: line.len(),
+                                    font: font.clone(),
+                                    color: cx.theme().foreground,
+                                    background_color: None,
+                                    underline: None,
+                                    strikethrough: None,
+                                }],
+                                None,
+                            )
+                            .width
+                    });
+
+                let list = uniform_list("log-lines", lines.len(), move |range, _, _| {
                     range
                         .filter_map(|index| lines.get(index).cloned().map(|line| (index, line)))
                         .map(|(index, line)| {
@@ -334,9 +401,21 @@ impl PodToolsView {
                         })
                         .collect()
                 })
+                .with_width_from_item(widest)
+                .with_horizontal_sizing_behavior(ListHorizontalSizingBehavior::Unconstrained)
                 .track_scroll(&self.log_scroll)
                 .size_full()
-                .into_any_element()
+                // Leave the last line above the persistent horizontal thumb.
+                .pb_3();
+
+                div()
+                    .relative()
+                    .size_full()
+                    .min_w_0()
+                    .overflow_hidden()
+                    .child(list)
+                    .child(Scrollbar::horizontal(&self.log_scroll).mode(ScrollbarMode::Always))
+                    .into_any_element()
             }
         };
 
@@ -433,7 +512,7 @@ impl PodToolsView {
                         },
                     )),
             )
-            .child(div().flex_1().overflow_hidden().child(body))
+            .child(div().flex_1().min_size_0().overflow_hidden().child(body))
             .into_any_element()
     }
 
@@ -616,9 +695,9 @@ impl PodToolsView {
 }
 
 impl Render for PodToolsView {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let body = match self.tab {
-            PodToolTab::Logs => self.render_logs(cx),
+            PodToolTab::Logs => self.render_logs(window, cx),
             PodToolTab::Exec => self.render_exec(cx),
             PodToolTab::Shell => self.render_shell(cx),
         };
@@ -628,5 +707,78 @@ impl Render for PodToolsView {
             .bg(cx.theme().background)
             .child(self.render_header(cx))
             .child(div().flex_1().min_h_0().overflow_hidden().child(body))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::LogLineWidths;
+    use beacon_kube::LogBuffer;
+    use gpui_kit::{font, px};
+
+    #[test]
+    fn log_widths_use_measured_geometry_and_only_measure_new_lines() {
+        let mut logs = LogBuffer::new();
+        logs.extend(["short", "a longer ASCII line", "中文"].map(str::to_string));
+        let mut widths = LogLineWidths::default();
+        let font = font("monospace");
+        let mut measured = 0;
+        let mut measure = |line: &str| {
+            measured += 1;
+            px(if line == "中文" {
+                200.
+            } else {
+                line.len() as f32
+            })
+        };
+        assert_eq!(
+            widths.widest(&logs, font.clone(), px(12.), &mut measure),
+            Some(2)
+        );
+        assert_eq!(
+            widths.widest(&logs, font.clone(), px(12.), &mut measure),
+            Some(2)
+        );
+        logs.push("new line".to_string());
+        assert_eq!(
+            widths.widest(&logs, font.clone(), px(12.), &mut measure),
+            Some(2)
+        );
+        assert_eq!(measured, 4);
+
+        let mut measured = 0;
+        assert_eq!(
+            widths.widest(&logs, font, px(14.), |line| {
+                measured += 1;
+                px(line.len() as f32)
+            }),
+            Some(1)
+        );
+        assert_eq!(measured, 4);
+    }
+
+    #[test]
+    fn dropping_the_widest_line_updates_the_scroll_range_without_reshaping_history() {
+        let mut logs = LogBuffer::new();
+        logs.push("the widest old line".to_string());
+        logs.extend(std::iter::repeat_n("x".to_string(), 49_999));
+        let mut widths = LogLineWidths::default();
+        let font = font("monospace");
+        assert_eq!(
+            widths.widest(&logs, font.clone(), px(12.), |line| px(line.len() as f32)),
+            Some(0)
+        );
+
+        logs.push("tail".to_string());
+        assert_eq!(logs.dropped(), 1);
+        let mut measured = 0;
+        assert_eq!(
+            widths.widest(&logs, font, px(12.), |line| {
+                measured += 1;
+                px(line.len() as f32)
+            }),
+            Some(49_999)
+        );
+        assert_eq!(measured, 1);
     }
 }
