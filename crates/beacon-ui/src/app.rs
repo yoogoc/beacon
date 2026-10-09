@@ -1368,6 +1368,9 @@ impl BeaconApp {
     }
 
     fn render_title_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        // TitleBar marks its content as a native window drag area. Each
+        // control must occlude that hitbox so Windows delivers client clicks
+        // to the button instead of treating them as caption interactions.
         let is_dark = cx.theme().is_dark();
         let title_bar = TitleBar::new().on_close_window(cx.listener(|view, _, window, cx| {
             if view.main_window {
@@ -1389,6 +1392,7 @@ impl BeaconApp {
                         .gap_3()
                         .child(
                             Button::new("toggle-sidebar")
+                                .occlude()
                                 .ghost()
                                 .small()
                                 .icon(if self.sidebar_collapsed {
@@ -1410,6 +1414,7 @@ impl BeaconApp {
                         .when(!cfg!(target_os = "macos"), |bar| {
                             bar.child(
                                 Button::new("view-menu")
+                                    .occlude()
                                     .ghost()
                                     .small()
                                     .label("Menu")
@@ -1423,6 +1428,7 @@ impl BeaconApp {
                 )
                 .child(
                     Button::new("toggle-theme")
+                        .occlude()
                         .ghost()
                         .small()
                         .label(if is_dark { "Light" } else { "Dark" })
