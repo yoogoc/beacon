@@ -98,6 +98,32 @@ env -u all_proxy -u ALL_PROXY cargo packager -p beacon --release --formats app,d
 但仓库里**没有 LICENSE 文件**。配置里因此没有 `license-file`；要发布的话这个得补上
 （涉及版权署名，留给你定）。
 
+## Windows 的 VC++ 运行库
+
+`.cargo/config.toml` 为 `x86_64-pc-windows-msvc` 与
+`aarch64-pc-windows-msvc` 启用 `-C target-feature=+crt-static`，将 VC++ 运行库
+静态链接进应用。Windows 构建应显式指定 `--target`，让这些参数只作用于目标代码，
+构建脚本和过程宏仍按宿主配置编译：
+
+```sh
+cargo build --locked --release -p beacon --target aarch64-pc-windows-msvc
+cargo packager -p beacon --release --target aarch64-pc-windows-msvc --formats nsis
+```
+
+x64 构建将 target 换成 `x86_64-pc-windows-msvc`。如果环境设置了 `RUSTFLAGS`
+或 `CARGO_ENCODED_RUSTFLAGS`，它会覆盖配置文件中的参数，必须同时保留
+`-C target-feature=+crt-static`；共享 CI 在 `-D warnings` 之外显式保留此参数，
+并在原生 Windows ARM64 runner 上执行构建和测试。
+
+发布工作流在打包前用 `scripts/check-windows-runtime.ps1` 调用 MSVC 的
+`dumpbin /DEPENDENTS`，发现 `VCRUNTIME`、`MSVCP`、`CONCRT` 或 `VCOMP` DLL 依赖
+就拒绝生成安装包，避免构建机器已安装运行库而掩盖问题。Windows 系统 DLL 仍由操作系统提供。
+
+旧版若启动时提示缺少 `VCRUNTIME140.dll`，可先安装微软官方的
+[ARM64 VC++ 运行库](https://aka.ms/vc14/vc_redist.arm64.exe)（原生 ARM64 应用）或
+[x64 VC++ 运行库](https://aka.ms/vc14/vc_redist.x64.exe)（x64 应用），再启动 Beacon。
+这些链接来自[微软的运行库下载文档](https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist)。
+
 ## `.deb` 的 depends 不是自动推出来的
 
 cargo-packager **不探测 `.deb` 依赖**，只写配置里的 `depends`，不配就产出一个

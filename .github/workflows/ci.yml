@@ -80,10 +80,22 @@ jobs:
   build:
     name: build (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    env:
+      # RUSTFLAGS replaces .cargo/config.toml's target flags, rather than
+      # appending to them. Keep warnings fatal and the Windows CRT static.
+      RUSTFLAGS: ${{ startsWith(matrix.os, 'windows-') && '-D warnings -C target-feature=+crt-static' || '-D warnings' }}
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-latest, ubuntu-latest, windows-latest]
+        include:
+          - os: macos-latest
+            target: aarch64-apple-darwin
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+          - os: windows-11-arm
+            target: aarch64-pc-windows-msvc
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -99,14 +111,19 @@ jobs:
       - uses: ./.github/actions/linux-deps
         if: runner.os == 'Linux'
 
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.98"
+          targets: ${{ matrix.target }}
+
       - uses: Swatinem/rust-cache@v2
         with:
           key: ${{ matrix.os }}
 
       - name: Build
-        run: cargo build --locked --workspace --all-targets
+        run: cargo build --locked --workspace --all-targets --target ${{ matrix.target }}
 
       # beacon-kube and beacon-columns are headless by construction, so the
       # whole test suite runs on a CI runner without a display.
       - name: Test
-        run: cargo test --locked --workspace
+        run: cargo test --locked --workspace --target ${{ matrix.target }}
