@@ -87,13 +87,13 @@ macOS 需要 Xcode Command Line Tools；Linux 的系统依赖、Windows 的 MSVC
 ```sh
 git clone https://github.com/yoogoc/beacon.git
 cd beacon
-cargo run --locked -p beacon
+cargo run --locked
 ```
 
 Beacon 读取 `KUBECONFIG`，未设置时读取 `~/.kube/config`。如需指定配置：
 
 ```sh
-KUBECONFIG=/path/to/kubeconfig cargo run --locked -p beacon
+KUBECONFIG=/path/to/kubeconfig cargo run --locked
 ```
 
 首次启动后：

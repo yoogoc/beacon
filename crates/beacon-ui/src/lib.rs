@@ -39,4 +39,5 @@ mod yaml_review;
 pub use app::BeaconApp;
 pub use bridge::Bridge;
 pub use cluster::ClusterView;
+pub use icons::Assets;
 pub use table::ResourceTable;

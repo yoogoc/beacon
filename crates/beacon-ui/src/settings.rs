@@ -322,6 +322,20 @@ pub(crate) fn apply(window: Option<&mut Window>, cx: &mut App) {
     }
     Theme::sync_base(cx);
 }
+/// Build a local preview without changing the application theme or persisted settings.
+pub(crate) fn preview_theme(appearance: &Appearance, custom: &CustomTheme, cx: &App) -> Theme {
+    let mut theme = store(cx).read(cx).base.clone();
+    let config = match appearance {
+        Appearance::Custom(_) => Rc::new(custom.config(&theme)),
+        Appearance::Dark => theme.dark_theme.clone(),
+        Appearance::Light => theme.light_theme.clone(),
+    };
+    theme.apply_config(&config);
+    if !matches!(appearance, Appearance::Custom(_)) || !custom.colors.contains_key("link") {
+        theme.link = theme.info;
+    }
+    theme
+}
 pub(crate) fn toggle(window: &mut Window, cx: &mut App) {
     let mut p = store(cx).read(cx).preferences.clone();
     p.appearance = if Theme::global(cx).is_dark() {

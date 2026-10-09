@@ -88,13 +88,13 @@ macOS requires Xcode Command Line Tools. Linux system dependencies and the Windo
 ```sh
 git clone https://github.com/yoogoc/beacon.git
 cd beacon
-cargo run --locked -p beacon
+cargo run --locked
 ```
 
 Beacon reads `KUBECONFIG`, falling back to `~/.kube/config`. To select a configuration:
 
 ```sh
-KUBECONFIG=/path/to/kubeconfig cargo run --locked -p beacon
+KUBECONFIG=/path/to/kubeconfig cargo run --locked
 ```
 
 On your first launch:

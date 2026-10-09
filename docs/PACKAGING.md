@@ -34,7 +34,8 @@ cargo packager -p beacon --release --formats nsis      # Windows
 已验证：打出来的 bundle 里 `Contents/Resources/beacon.icns` 与
 `assets/app-icon/beacon.icns` **字节一致**（sha256 相同）。
 
-界面内的图标是另一回事，由 `gpui_kit::assets::Assets` 提供，在 `main.rs` 里注册。
+界面内的图标是另一回事，由 `beacon_ui::Assets` 在 `main.rs` 里注册，
+包含 GPUI Kit 的默认图标以及设置页需要的额外图标。
 
 Windows 的桌面和开始菜单快捷方式从 `beacon.exe` 读取图标。
 `crates/beacon/build.rs` 在 Windows 目标构建时编译 `assets/packaging/beacon.rc`，

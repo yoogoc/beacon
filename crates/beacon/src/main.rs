@@ -33,7 +33,7 @@ fn main() -> anyhow::Result<()> {
     );
 
     gpui_kit::application()
-        .with_assets(gpui_kit::assets::Assets)
+        .with_assets(beacon_ui::Assets)
         .run(move |cx: &mut App| {
             gpui_kit::init(cx);
             beacon_ui::app::init(log_directory, cx);

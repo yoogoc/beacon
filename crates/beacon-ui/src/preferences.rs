@@ -4,12 +4,15 @@ use beacon_kube::{
     ClusterId,
     connection::{MetricsSource, Prometheus, Proxy},
 };
-use gpui_kit::component::{Disableable as _, Selectable as _};
+use gpui_kit::assets::IconName;
+use gpui_kit::component::{Disableable as _, Selectable as _, Sizable as _};
 use gpui_kit::component::{
+    Icon,
     button::{Button, ButtonVariants as _},
-    checkbox::Checkbox,
-    input::{Input, InputState},
+    input::{Input, InputEvent, InputState},
     menu::{DropdownMenu as _, PopupMenuItem},
+    radio::Radio,
+    switch::Switch,
 };
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
@@ -128,7 +131,9 @@ fn value(input: &Entity<InputState>, cx: &App) -> String {
 }
 fn field(label: &str, input: &Entity<InputState>) -> AnyElement {
     v_flex()
-        .gap_1()
+        .gap_2()
+        .flex_1()
+        .min_w_0()
         .w_full()
         .child(
             div()
@@ -141,12 +146,108 @@ fn field(label: &str, input: &Entity<InputState>) -> AnyElement {
 }
 fn heading(text: &str) -> AnyElement {
     div()
-        .mt_3()
-        .mb_1()
-        .text_lg()
-        .font_weight(FontWeight::SEMIBOLD)
+        .text_sm()
+        .font_weight(FontWeight::MEDIUM)
         .child(text.to_string())
         .into_any_element()
+}
+fn setting_row(label: &str, description: &str, control: impl IntoElement, cx: &App) -> AnyElement {
+    h_flex()
+        .w_full()
+        .items_center()
+        .justify_between()
+        .gap_4()
+        .py_4()
+        .border_b_1()
+        .border_color(cx.theme().border)
+        .child(
+            v_flex()
+                .flex_1()
+                .min_w_0()
+                .gap_1()
+                .child(
+                    div()
+                        .text_sm()
+                        .font_weight(FontWeight::MEDIUM)
+                        .child(label.to_owned()),
+                )
+                .child(hint(description, cx)),
+        )
+        .child(div().flex_shrink_0().child(control))
+        .into_any_element()
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Section {
+    Appearance,
+    Themes,
+    Network,
+    Updates,
+    Identity,
+    Connection,
+    Metrics,
+    Yaml,
+}
+impl Section {
+    const APPLICATION: [Self; 4] = [Self::Appearance, Self::Themes, Self::Network, Self::Updates];
+    const CLUSTER: [Self; 4] = [Self::Identity, Self::Connection, Self::Metrics, Self::Yaml];
+
+    fn id(self) -> &'static str {
+        match self {
+            Self::Appearance => "settings-appearance",
+            Self::Themes => "settings-themes",
+            Self::Network => "settings-network",
+            Self::Updates => "settings-updates",
+            Self::Identity => "settings-identity",
+            Self::Connection => "settings-connection",
+            Self::Metrics => "settings-metrics",
+            Self::Yaml => "settings-yaml",
+        }
+    }
+    fn label(self) -> &'static str {
+        match self {
+            Self::Appearance => "Appearance",
+            Self::Themes => "Custom themes",
+            Self::Network => "Network",
+            Self::Updates => "Updates",
+            Self::Identity => "Identity",
+            Self::Connection => "Connection",
+            Self::Metrics => "Metrics",
+            Self::Yaml => "YAML editor",
+        }
+    }
+    fn title(self) -> &'static str {
+        match self {
+            Self::Identity => "Cluster identity",
+            Self::Network => "Global proxy",
+            Self::Metrics => "Metrics source",
+            _ => self.label(),
+        }
+    }
+    fn description(self) -> &'static str {
+        match self {
+            Self::Appearance => "Make Beacon feel at home.",
+            Self::Themes => "Fine-tune typography and colors, with a live preview.",
+            Self::Network => "Choose how Beacon connects to clusters and checks for updates.",
+            Self::Updates => "Keep Beacon up to date on your preferred release channel.",
+            Self::Identity => "Give this cluster a familiar name and icon.",
+            Self::Connection => "Configure the proxy used when connecting to this cluster.",
+            Self::Metrics => "Choose where pod and node usage metrics come from.",
+            Self::Yaml => "Choose which fields start collapsed when opening a resource.",
+        }
+    }
+    fn icon(self) -> IconName {
+        match self {
+            Self::Appearance => IconName::Palette,
+            Self::Themes => IconName::Paintbrush,
+            Self::Network => IconName::Network,
+            Self::Updates => IconName::Download,
+            Self::Identity => IconName::ShipWheel,
+            Self::Connection => IconName::Unplug,
+            Self::Metrics => IconName::ChartNoAxesCombined,
+            Self::Yaml => IconName::FileText,
+        }
+    }
 }
 fn hint(text: &str, cx: &App) -> AnyElement {
     div()
@@ -154,6 +255,9 @@ fn hint(text: &str, cx: &App) -> AnyElement {
         .text_color(cx.theme().muted_foreground)
         .child(text.to_string())
         .into_any_element()
+}
+fn inline_action(button: impl IntoElement) -> AnyElement {
+    h_flex().child(button).into_any_element()
 }
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum ProxyChoice {
@@ -202,6 +306,9 @@ struct ThemeEditor {
     mono_size: Entity<InputState>,
     role: String,
     color: Entity<InputState>,
+    light_preview: gpui_kit::component::Theme,
+    dark_preview: gpui_kit::component::Theme,
+    preview: gpui_kit::component::Theme,
 }
 struct ClusterEditor {
     id: ClusterId,
@@ -218,8 +325,8 @@ struct ClusterEditor {
     node_memory: Entity<InputState>,
 }
 enum Page {
-    Application(ThemeEditor),
-    Cluster(ClusterEditor),
+    Application(Box<ThemeEditor>),
+    Cluster(Box<ClusterEditor>),
 }
 struct PreferencesView {
     focus: FocusHandle,
@@ -232,6 +339,11 @@ struct PreferencesView {
     _font_ready: Option<Subscription>,
     updates: beacon_updater::Preferences,
     _updates: Option<Subscription>,
+    section: Section,
+    queries_expanded: bool,
+    dirty: bool,
+    _inputs: Vec<Subscription>,
+    _connections: Subscription,
 }
 impl PreferencesView {
     fn new(id: Option<ClusterId>, window: &mut Window, cx: &mut Context<Self>) -> Self {
@@ -249,6 +361,9 @@ impl PreferencesView {
                     }
                 };
                 let editor = ThemeEditor {
+                    light_preview: settings::preview_theme(&Appearance::Light, &custom, cx),
+                    dark_preview: settings::preview_theme(&Appearance::Dark, &custom, cx),
+                    preview: settings::preview_theme(&preferences.appearance, &custom, cx),
                     appearance: preferences.appearance.clone(),
                     name: input("Theme name", custom.name.clone(), false, window, cx),
                     font: input("Font family", custom.font_family.clone(), false, window, cx),
@@ -282,7 +397,7 @@ impl PreferencesView {
                     custom,
                 };
                 (
-                    Page::Application(editor),
+                    Page::Application(Box::new(editor)),
                     ProxyEditor::new(Some(preferences.proxy), window, cx),
                 )
             }
@@ -318,7 +433,7 @@ impl PreferencesView {
                     node_memory: input("Node memory query", prom.node_memory, false, window, cx),
                 };
                 (
-                    Page::Cluster(editor),
+                    Page::Cluster(Box::new(editor)),
                     ProxyEditor::new(cluster.proxy, window, cx),
                 )
             }
@@ -332,6 +447,50 @@ impl PreferencesView {
         let updates = settings::store(cx).read(cx).preferences.updates.clone();
         let update_subscription =
             crate::updates::maybe_store(cx).map(|store| cx.observe(&store, |_, _, cx| cx.notify()));
+        let inputs = match &page {
+            Page::Application(t) => {
+                vec![&t.name, &t.font, &t.size, &t.mono, &t.mono_size, &t.color]
+            }
+            Page::Cluster(c) => vec![
+                &c.alias,
+                &c.yaml_field,
+                &c.url,
+                &c.token,
+                &c.pod_cpu,
+                &c.pod_memory,
+                &c.node_cpu,
+                &c.node_memory,
+            ],
+        };
+        let input_subscriptions = inputs
+            .into_iter()
+            .chain([&proxy.url])
+            .map(|input| {
+                cx.subscribe(input, |view, _, event: &InputEvent, cx| {
+                    if matches!(event, InputEvent::Change) {
+                        if view.section == Section::Themes
+                            && let Page::Application(t) = &mut view.page
+                        {
+                            t.appearance = Appearance::Custom(t.custom.name.clone());
+                        }
+                        view.dirty = true;
+                        view.message = None;
+                        view.refresh_theme_preview(cx);
+                        cx.notify();
+                    }
+                })
+            })
+            .collect();
+        let section = if matches!(page, Page::Application(_)) {
+            Section::Appearance
+        } else {
+            Section::Identity
+        };
+        let connections = cx
+            .global::<crate::connections::SharedConnections>()
+            .0
+            .clone();
+        let connection_subscription = cx.observe(&connections, |_, _, cx| cx.notify());
         Self {
             updates,
             _updates: update_subscription,
@@ -343,6 +502,11 @@ impl PreferencesView {
             _test: None,
             fonts,
             _font_ready: font_ready,
+            section,
+            queries_expanded: false,
+            dirty: false,
+            _inputs: input_subscriptions,
+            _connections: connection_subscription,
         }
     }
     fn title(&self) -> String {
@@ -350,6 +514,42 @@ impl PreferencesView {
             Page::Application(_) => "Beacon — Settings".into(),
             Page::Cluster(c) => format!("Beacon — Cluster settings · {}", c.id.display_name()),
         }
+    }
+    fn refresh_theme_preview(&mut self, cx: &App) {
+        let Page::Application(t) = &mut self.page else {
+            return;
+        };
+        let mut custom = t.custom.clone();
+        custom.font_family = value(&t.font, cx);
+        custom.mono_font_family = value(&t.mono, cx);
+        if let Ok(size) = value(&t.size, cx).parse::<f32>()
+            && (10. ..=30.).contains(&size)
+        {
+            custom.font_size = size;
+        }
+        if let Ok(size) = value(&t.mono_size, cx).parse::<f32>()
+            && (10. ..=30.).contains(&size)
+        {
+            custom.mono_font_size = size;
+        }
+        let color = value(&t.color, cx).trim().to_owned();
+        if color.is_empty() {
+            custom.colors.remove(&t.role);
+        } else if gpui_kit::component::try_parse_color(&color).is_ok() {
+            custom.colors.insert(t.role.clone(), color);
+        }
+        let appearance = if self.section == Section::Themes {
+            Appearance::Custom(custom.name.clone())
+        } else {
+            t.appearance.clone()
+        };
+        t.preview = settings::preview_theme(&appearance, &custom, cx);
+    }
+    fn select_section(&mut self, section: Section, window: &mut Window, cx: &mut Context<Self>) {
+        self.focus.focus(window, cx);
+        self.section = section;
+        self.refresh_theme_preview(cx);
+        cx.notify();
     }
     fn sync_color(&mut self, cx: &App) -> Result<(), String> {
         if let Page::Application(t) = &mut self.page {
@@ -461,6 +661,7 @@ impl PreferencesView {
                 }
             }
             settings::save(preferences, window, cx)?;
+            self.dirty = false;
             if reconnect && let Some(target) = target {
                 settings::store(cx).update(cx, |_, cx| cx.emit(settings::Changed(Some(target))));
             }
@@ -472,7 +673,7 @@ impl PreferencesView {
                 if reconnect {
                     "Saved. Reconnecting cluster…"
                 } else if matches!(self.page, Page::Cluster(_)) {
-                    "Saved. YAML folding applies when resource YAML is next opened. No reconnect is needed for folding changes."
+                    "Saved. YAML folding applies the next time a resource opens. Reconnect to apply connection changes."
                 } else {
                     "Saved. Connection changes apply when the cluster next connects."
                 }
@@ -492,6 +693,7 @@ impl PreferencesView {
             c.yaml_folding.add(&value(&c.yaml_field, cx))?;
             c.yaml_field
                 .update(cx, |input, cx| input.set_value("", window, cx));
+            self.dirty = true;
             self.message = None;
             cx.notify();
         }
@@ -509,9 +711,24 @@ impl PreferencesView {
                     .gap_2()
                     .items_center()
                     .justify_between()
+                    .py_3()
+                    .border_b_1()
+                    .border_color(cx.theme().border)
                     .child(
-                        Checkbox::new(("yaml-fold-field", index))
-                            .label(field.path.clone())
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .font_family(cx.theme().mono_font_family.clone())
+                            .text_sm()
+                            .child(crate::copyable_text::copyable_text(
+                                ("yaml-fold-path", index),
+                                field.path.clone(),
+                            )),
+                    )
+                    .child(
+                        Switch::new(("yaml-fold-field", index))
+                            .accessibility_label(format!("Collapse {}", field.path))
+                            .color(cx.theme().link)
                             .checked(field.collapsed)
                             .on_click(cx.listener(move |view, checked, _, cx| {
                                 if let Page::Cluster(c) = &mut view.page
@@ -519,6 +736,7 @@ impl PreferencesView {
                                 {
                                     field.collapsed = *checked;
                                 }
+                                view.dirty = true;
                                 view.message = None;
                                 cx.notify();
                             })),
@@ -526,21 +744,25 @@ impl PreferencesView {
                     .child(
                         Button::new(("remove-yaml-fold-field", index))
                             .ghost()
-                            .label("Remove")
+                            .icon(IconName::X)
+                            .tooltip(format!("Remove {}", field.path))
                             .on_click(cx.listener(move |view, _, _, cx| {
                                 if let Page::Cluster(c) = &mut view.page
                                     && index < c.yaml_folding.fields.len()
                                 {
                                     c.yaml_folding.fields.remove(index);
                                 }
+                                view.dirty = true;
                                 view.message = None;
                                 cx.notify();
                             })),
                     )
             });
-        v_flex().gap_2()
-            .child(heading("YAML folding"))
-            .child(hint("Checked fields collapse when resource YAML opens in this cluster. Uncheck all fields to keep YAML expanded. Changes apply on the next opening, without reconnecting.", cx))
+        v_flex().gap_3()
+            .child(heading("Collapsed by default"))
+            .child(h_flex().text_xs().text_color(cx.theme().muted_foreground).justify_between()
+                .pb_2().border_b_1().border_color(cx.theme().border)
+                .child("Field path").child(div().pr(px(46.)).child("Collapse")))
             .children(rows)
             .child(h_flex().gap_2().items_center()
                 .child(div().flex_1().min_w_0().child(Input::new(&c.yaml_field)))
@@ -552,15 +774,16 @@ impl PreferencesView {
                         }
                     }))))
             .child(hint("Use dot-separated paths, such as metadata.annotations or spec.template.spec.containers. Paths below a list apply to every item.", cx))
-            .child(Button::new("reset-yaml-folding").ghost().label("Restore defaults")
+            .child(inline_action(Button::new("reset-yaml-folding").link().icon(IconName::RotateCcw).label("Restore defaults")
                 .on_click(cx.listener(|view, _, window, cx| {
                     if let Page::Cluster(c) = &mut view.page {
                         c.yaml_folding = Default::default();
                         c.yaml_field.update(cx, |input, cx| input.set_value("", window, cx));
                     }
+                    view.dirty = true;
                     view.message = None;
                     cx.notify();
-                })))
+                }))))
             .into_any_element()
     }
     fn select_theme(&mut self, name: String, window: &mut Window, cx: &mut Context<Self>) {
@@ -594,6 +817,8 @@ impl PreferencesView {
                 )
             });
             t.custom = custom;
+            self.dirty = true;
+            self.refresh_theme_preview(cx);
             self.message = None;
             cx.notify();
         }
@@ -622,6 +847,7 @@ impl PreferencesView {
                                 c.icon = ClusterIcon::Custom(path);
                             }
                             view.message = None;
+                            view.dirty = true;
                         }
                         Err(error) => view.message = Some((true, error)),
                     };
@@ -679,29 +905,61 @@ impl PreferencesView {
     }
     fn proxy_form(&self, cx: &mut Context<Self>) -> AnyElement {
         let choices = [
-            (ProxyChoice::Inherit, "Use global proxy"),
-            (ProxyChoice::System, "Kubeconfig / environment"),
-            (ProxyChoice::Direct, "Direct"),
-            (ProxyChoice::Custom, "Custom proxy"),
+            (
+                ProxyChoice::Inherit,
+                "Use global proxy",
+                "Follow the application network settings.",
+            ),
+            (
+                ProxyChoice::System,
+                "Kubeconfig / environment",
+                "Use your existing network configuration.",
+            ),
+            (
+                ProxyChoice::Direct,
+                "Direct connection",
+                "Connect without a proxy.",
+            ),
+            (
+                ProxyChoice::Custom,
+                "Custom proxy",
+                "Set an explicit HTTP, HTTPS or SOCKS5 proxy.",
+            ),
         ];
         let cluster = matches!(self.page, Page::Cluster(_));
         let buttons = choices
             .into_iter()
-            .filter(|(choice, _)| cluster || *choice != ProxyChoice::Inherit)
-            .map(|(choice, label)| {
-                Button::new(label)
-                    .outline()
-                    .selected(self.proxy.choice == choice)
+            .filter(|(choice, _, _)| cluster || *choice != ProxyChoice::Inherit)
+            .enumerate()
+            .map(|(index, (choice, label, description))| {
+                Radio::new(("proxy-choice", index))
+                    .w_full()
+                    .p_3()
+                    .border_b_1()
+                    .border_color(cx.theme().border)
+                    .checked(self.proxy.choice == choice)
                     .label(label)
+                    .child(hint(description, cx))
                     .on_click(cx.listener(move |view, _, _, cx| {
                         view.proxy.choice = choice;
+                        view.dirty = true;
                         view.message = None;
                         cx.notify();
                     }))
             });
-        v_flex().gap_2()
-            .child(heading(if cluster { "Connection proxy" } else { "Global proxy" }))
-            .child(h_flex().gap_2().flex_wrap().children(buttons))
+        v_flex().gap_4()
+            .child(v_flex().w_full().border_1().border_color(cx.theme().border).rounded_lg().overflow_hidden().children(buttons))
+            .when(self.proxy.choice == ProxyChoice::Inherit, |form| {
+                let global = settings::store(cx).read(cx).preferences.proxy.clone();
+                let label = match global {
+                    Proxy::System => "Kubeconfig / environment".to_owned(),
+                    Proxy::Direct => "Direct connection".to_owned(),
+                    Proxy::Custom(url) => url,
+                };
+                form.child(v_flex().p_3().gap_1().rounded_lg().bg(cx.theme().muted)
+                    .child(hint("Global proxy", cx))
+                    .child(crate::copyable_text::copyable_text("inherited-proxy", label)))
+            })
             .when(self.proxy.choice == ProxyChoice::Custom, |form| {
                 form.child(field("Proxy URL (http / https / socks5)", &self.proxy.url))
                     .when(value(&self.proxy.url, cx).starts_with("socks5:"), |form| {
@@ -709,6 +967,7 @@ impl PreferencesView {
                     })
             })
             .child(hint("An explicit proxy overrides NO_PROXY. Direct bypasses both kubeconfig and environment proxies.", cx))
+            .child(hint(if cluster { "Connection changes take effect after reconnecting." } else { "Clusters can override this setting in their connection preferences." }, cx))
             .into_any_element()
     }
     fn save_updates(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -777,25 +1036,35 @@ impl PreferencesView {
                     ..
                 }
         );
+        let check_button = Button::new("check-updates")
+            .outline()
+            .icon(IconName::RefreshCw)
+            .label("Check for updates")
+            .disabled(busy || ready)
+            .on_click(|_, _, cx| crate::updates::store(cx).update(cx, |view, cx| view.check(cx)));
         let mut form = v_flex().gap_3()
-            .child(heading("Updates"))
-            .child(hint(&format!("Current version: {}", env!("CARGO_PKG_VERSION")), cx))
-            .child(Checkbox::new("auto-check-updates").label("Automatically check for updates").checked(self.updates.auto_check)
-                .on_click(cx.listener(|view, checked, window, cx| { view.updates.auto_check = *checked; view.save_updates(window, cx); })))
-            .child(Checkbox::new("auto-download-updates").label("Automatically download updates").checked(self.updates.auto_download).disabled(!can_install)
-                .on_click(cx.listener(|view, checked, window, cx| { view.updates.auto_download = *checked; view.save_updates(window, cx); })))
+            .child(h_flex().gap_3().p_4().rounded_lg().bg(cx.theme().muted).items_center()
+                .child(Icon::new(IconName::RadioTower).size_6().text_color(cx.theme().link))
+                .child(v_flex().flex_1().gap_1()
+                    .child(div().font_weight(FontWeight::MEDIUM).child(format!("Beacon {}", env!("CARGO_PKG_VERSION"))))
+                    .child(hint(if self.updates.channel == Channel::Stable { "Stable release" } else { "Development release" }, cx)))
+                .child(check_button))
+            .child(setting_row("Check automatically", "Check for new releases in the background.",
+                Switch::new("auto-check-updates").accessibility_label("Automatically check for updates").color(cx.theme().link).checked(self.updates.auto_check)
+                    .on_click(cx.listener(|view, checked, window, cx| { view.updates.auto_check = *checked; view.save_updates(window, cx); })), cx))
+            .child(setting_row("Download automatically", "Ask before restarting to install an update.",
+                Switch::new("auto-download-updates").accessibility_label("Automatically download updates").color(cx.theme().link).checked(self.updates.auto_download).disabled(!can_install)
+                    .on_click(cx.listener(|view, checked, window, cx| { view.updates.auto_download = *checked; view.save_updates(window, cx); })), cx))
             .child(hint("Checks run shortly after startup and every 24 hours. Installation always requires restart confirmation. Downloads use the saved global proxy.", cx))
-            .child(h_flex().gap_2().children([(Channel::Stable, "Stable"), (Channel::Development, "Development")].into_iter().map(|(channel, label)| {
-                Button::new(label).outline().selected(self.updates.channel == channel).label(label).disabled(matches!(updater.status, Status::Installing))
+            .child(setting_row("Release channel", "Choose which releases you receive.", h_flex().gap_2().children([(Channel::Stable, "Stable"), (Channel::Development, "Development")].into_iter().map(|(channel, label)| {
+                Button::new(label).outline().small().selected(self.updates.channel == channel).label(label).disabled(matches!(updater.status, Status::Installing))
                     .on_click(cx.listener(move |view, _, window, cx| { view.updates.channel = channel; view.save_updates(window, cx); }))
-            })))
+            })), cx))
             .when(self.updates.channel == Channel::Development, |form| form.child(hint("Development releases may contain unfinished changes. Beacon will never automatically downgrade to an older version.", cx)))
             .child(div().text_sm().text_color(if matches!(updater.status, Status::Failed { .. }) { cx.theme().danger } else { cx.theme().foreground })
                 .child(crate::copyable_text::copyable_text("update-status", message)))
             .when_some(updater.receipt.clone(), |form, receipt| form.child(crate::copyable_text::copyable_text("update-install-result", receipt)))
             .child(h_flex().gap_2().flex_wrap()
-                .child(Button::new("check-updates").outline().label("Check for updates").disabled(busy || ready)
-                    .on_click(|_, _, cx| crate::updates::store(cx).update(cx, |view, cx| view.check(cx))))
                 .when(busy && !matches!(updater.status, Status::Installing), |bar| bar.child(Button::new("cancel-update").ghost().label("Cancel")
                     .on_click(|_, _, cx| crate::updates::store(cx).update(cx, |view, cx| view.cancel(cx)))))
                 .when(download && can_install, |bar| bar.child(Button::new("download-update").primary().label(if matches!(updater.status, Status::Failed { .. }) { "Retry download" } else { "Download update" })
@@ -856,7 +1125,7 @@ impl PreferencesView {
         form.into_any_element()
     }
 
-    fn theme_form(&self, t: &ThemeEditor, cx: &mut Context<Self>) -> AnyElement {
+    fn saved_theme_picker(&self, t: &ThemeEditor, cx: &mut Context<Self>) -> AnyElement {
         let names: Vec<_> = settings::store(cx)
             .read(cx)
             .preferences
@@ -864,31 +1133,19 @@ impl PreferencesView {
             .keys()
             .cloned()
             .collect();
+        let empty = names.is_empty();
         let weak = cx.entity().downgrade();
-        let custom = matches!(t.appearance, Appearance::Custom(_));
-        let appearances = [(false, "Light"), (true, "Dark")]
-            .into_iter()
-            .map(|(dark, label)| {
-                let appearance = if dark {
-                    Appearance::Dark
-                } else {
-                    Appearance::Light
-                };
-                Button::new(label)
-                    .outline()
-                    .selected(t.appearance == appearance)
-                    .label(label)
-                    .on_click(cx.listener(move |view, _, _, cx| {
-                        if let Page::Application(t) = &mut view.page {
-                            t.appearance = appearance.clone();
-                        }
-                        view.message = None;
-                        cx.notify();
-                    }))
-            });
-        let saved = Button::new("saved-themes")
+        Button::new("saved-themes")
             .outline()
-            .label("Saved themes")
+            .w(px(200.))
+            .disabled(empty)
+            .label(if empty {
+                "No saved themes".to_owned()
+            } else if let Appearance::Custom(name) = &t.appearance {
+                name.clone()
+            } else {
+                "Choose a theme".to_owned()
+            })
             .dropdown_menu(move |mut menu, _, _| {
                 for name in &names {
                     let target = name.clone();
@@ -902,29 +1159,269 @@ impl PreferencesView {
                     ));
                 }
                 menu
-            });
-        let form = v_flex().gap_3().child(heading("Appearance")).child(
-            h_flex()
-                .gap_2()
-                .flex_wrap()
-                .children(appearances)
+            })
+            .into_any_element()
+    }
+
+    fn theme_thumbnail(theme: &gpui_kit::component::Theme) -> AnyElement {
+        h_flex()
+            .w_full()
+            .h(px(78.))
+            .rounded_md()
+            .overflow_hidden()
+            .border_1()
+            .border_color(theme.border)
+            .bg(theme.background)
+            .child(
+                v_flex()
+                    .w(relative(0.25))
+                    .h_full()
+                    .p_2()
+                    .gap_2()
+                    .bg(theme.muted)
+                    .children((0..3).map(|_| {
+                        div()
+                            .w_full()
+                            .h(px(3.))
+                            .rounded_full()
+                            .bg(theme.muted_foreground.opacity(0.45))
+                    })),
+            )
+            .child(
+                v_flex()
+                    .flex_1()
+                    .min_w_0()
+                    .p_2()
+                    .gap_2()
+                    .child(
+                        div()
+                            .w(relative(0.6))
+                            .h(px(4.))
+                            .rounded_full()
+                            .bg(theme.link),
+                    )
+                    .children([1., 1., 0.7].into_iter().map(|width| {
+                        div()
+                            .w(relative(width))
+                            .h(px(4.))
+                            .rounded_full()
+                            .bg(theme.muted_foreground.opacity(0.35))
+                    })),
+            )
+            .into_any_element()
+    }
+
+    fn appearance_form(&self, t: &ThemeEditor, cx: &mut Context<Self>) -> AnyElement {
+        let choices = [
+            (Appearance::Light, "Light", &t.light_preview),
+            (Appearance::Dark, "Dark", &t.dark_preview),
+            (
+                Appearance::Custom(t.custom.name.clone()),
+                "Custom",
+                &t.preview,
+            ),
+        ]
+        .into_iter()
+        .map(|(appearance, label, theme)| {
+            let selected = match &appearance {
+                Appearance::Custom(_) => matches!(t.appearance, Appearance::Custom(_)),
+                _ => t.appearance == appearance,
+            };
+            Button::new(label)
+                .outline()
+                .selected(selected)
+                .accessibility_label(format!("{label} theme"))
+                .flex_1()
+                .min_w_0()
+                .h_auto()
+                .p_2()
+                .rounded_lg()
+                .bg(if selected {
+                    cx.theme().link.opacity(0.09)
+                } else {
+                    cx.theme().background
+                })
+                .border_color(if selected {
+                    cx.theme().link
+                } else {
+                    cx.theme().border
+                })
+                .text_color(cx.theme().foreground)
                 .child(
-                    Button::new("custom-theme")
-                        .outline()
-                        .selected(custom)
-                        .label("Custom theme")
-                        .on_click(cx.listener(|view, _, _, cx| {
-                            if let Page::Application(t) = &mut view.page {
-                                t.appearance = Appearance::Custom(t.custom.name.clone());
-                            }
-                            cx.notify();
-                        })),
+                    v_flex()
+                        .w_full()
+                        .gap_2()
+                        .child(Self::theme_thumbnail(theme))
+                        .child(
+                            h_flex()
+                                .w_full()
+                                .justify_between()
+                                .text_sm()
+                                .child(label)
+                                .child(Icon::new(IconName::CircleCheck).size_4().text_color(
+                                    if selected {
+                                        cx.theme().link
+                                    } else {
+                                        cx.theme().transparent
+                                    },
+                                )),
+                        ),
                 )
-                .child(saved),
-        );
-        if !custom {
-            return form.into_any_element();
-        }
+                .on_click(cx.listener(move |view, _, _, cx| {
+                    if let Page::Application(t) = &mut view.page {
+                        t.appearance = appearance.clone();
+                    }
+                    view.dirty = true;
+                    view.message = None;
+                    view.refresh_theme_preview(cx);
+                    cx.notify();
+                }))
+        });
+        v_flex()
+            .gap_3()
+            .w_full()
+            .child(heading("Theme"))
+            .child(h_flex().w_full().gap_3().items_stretch().children(choices))
+            .child(setting_row(
+                "Saved custom theme",
+                "Stored locally on this device.",
+                self.saved_theme_picker(t, cx),
+                cx,
+            ))
+            .child(inline_action(
+                Button::new("edit-custom-theme")
+                    .link()
+                    .icon(IconName::SlidersHorizontal)
+                    .label("Edit custom theme")
+                    .on_click(cx.listener(|view, _, window, cx| {
+                        if let Page::Application(t) = &mut view.page {
+                            t.appearance = Appearance::Custom(t.custom.name.clone());
+                        }
+                        view.dirty = true;
+                        view.select_section(Section::Themes, window, cx);
+                    })),
+            ))
+            .child(hint(
+                "Theme changes apply across Beacon windows after saving.",
+                cx,
+            ))
+            .child(heading("Preview"))
+            .child(self.theme_preview(t))
+            .into_any_element()
+    }
+
+    fn theme_preview(&self, t: &ThemeEditor) -> AnyElement {
+        let theme = &t.preview;
+        v_flex()
+            .id("theme-preview")
+            .w_full()
+            .rounded_lg()
+            .overflow_hidden()
+            .border_1()
+            .border_color(theme.border)
+            .bg(theme.background)
+            .text_color(theme.foreground)
+            .font_family(theme.font_family.clone())
+            .text_size(theme.font_size * 0.82)
+            .child(
+                h_flex()
+                    .gap_2()
+                    .px_3()
+                    .py_2()
+                    .border_b_1()
+                    .border_color(theme.border)
+                    .text_size(px(11.))
+                    .text_color(theme.muted_foreground)
+                    .child(Icon::new(IconName::RadioTower).size_3())
+                    .child("Beacon · Theme preview"),
+            )
+            .child(
+                h_flex()
+                    .items_stretch()
+                    .child(
+                        v_flex()
+                            .w(px(90.))
+                            .flex_shrink_0()
+                            .bg(theme.muted)
+                            .p_3()
+                            .gap_3()
+                            .text_size(px(11.))
+                            .child(div().text_color(theme.link).child("Workloads"))
+                            .child(div().text_color(theme.muted_foreground).child("Network"))
+                            .child(div().text_color(theme.muted_foreground).child("Config"))
+                            .child(div().text_color(theme.muted_foreground).child("Storage")),
+                    )
+                    .child(
+                        v_flex()
+                            .flex_1()
+                            .min_w_0()
+                            .p_3()
+                            .gap_3()
+                            .child(
+                                h_flex()
+                                    .items_center()
+                                    .justify_between()
+                                    .gap_2()
+                                    .child(
+                                        h_flex()
+                                            .gap_2()
+                                            .items_center()
+                                            .child(
+                                                div().font_weight(FontWeight::MEDIUM).child("Pods"),
+                                            )
+                                            .child(
+                                                div()
+                                                    .text_size(px(11.))
+                                                    .text_color(theme.muted_foreground)
+                                                    .font_family(theme.mono_font_family.clone())
+                                                    .child("default"),
+                                            ),
+                                    )
+                                    .child(
+                                        div()
+                                            .rounded_md()
+                                            .px_2()
+                                            .py_1()
+                                            .text_size(px(11.))
+                                            .bg(theme.button_primary)
+                                            .text_color(theme.button_primary_foreground)
+                                            .child("Create"),
+                                    ),
+                            )
+                            .child(
+                                h_flex()
+                                    .justify_between()
+                                    .pb_2()
+                                    .border_b_1()
+                                    .border_color(theme.border)
+                                    .text_size(px(11.))
+                                    .text_color(theme.muted_foreground)
+                                    .child("Name")
+                                    .child("Status"),
+                            )
+                            .children(["api-server", "worker"].into_iter().map(|name| {
+                                h_flex()
+                                    .justify_between()
+                                    .gap_2()
+                                    .text_size(px(11.))
+                                    .child(name)
+                                    .child(
+                                        h_flex()
+                                            .gap_1()
+                                            .items_center()
+                                            .text_color(theme.success)
+                                            .child(
+                                                div().size(px(5.)).rounded_full().bg(theme.success),
+                                            )
+                                            .child("Running"),
+                                    )
+                            })),
+                    ),
+            )
+            .into_any_element()
+    }
+
+    fn theme_form(&self, t: &ThemeEditor, cx: &mut Context<Self>) -> AnyElement {
         let bases = [(false, "Light base"), (true, "Dark base")]
             .into_iter()
             .map(|(dark, label)| {
@@ -935,15 +1432,18 @@ impl PreferencesView {
                     .on_click(cx.listener(move |view, _, _, cx| {
                         if let Page::Application(t) = &mut view.page {
                             t.custom.dark = dark;
+                            t.appearance = Appearance::Custom(t.custom.name.clone());
                         }
+                        view.dirty = true;
+                        view.refresh_theme_preview(cx);
                         cx.notify();
                     }))
             });
-        let bases = h_flex().gap_2().children(bases);
         let roles = settings::color_roles();
         let weak = cx.entity().downgrade();
         let colors = Button::new("theme-color-role")
             .outline()
+            .w_full()
             .label(t.role.clone())
             .dropdown_menu(move |mut menu, _, _| {
                 for role in roles {
@@ -958,29 +1458,45 @@ impl PreferencesView {
                 }
                 menu
             });
-        form.child(field("Theme name (save a new name to create another theme)", &t.name))
-            .child(bases)
-            .child(h_flex().gap_3().child(field("Text font", &t.font)).child(field("Text size (px)", &t.size)))
-            .child(h_flex().gap_3().child(field("Monospace font", &t.mono)).child(field("Monospace size (px)", &t.mono_size)))
-            .child(self.font_picker(cx))
-            .child(heading("Colors"))
-            .child(hint("Choose any UI color token, including each button variant's text, background, hover and active colors. Empty values inherit the base theme.", cx))
-            .child(colors)
-            .child(field("Hex color (#RGB, #RRGGBB or #RRGGBBAA)", &t.color))
-            .child(Button::new("set-theme-color").outline().label("Set color")
-                .on_click(cx.listener(|view, _, _, cx| {
-                    view.message = Some(match view.sync_color(cx) {
-                        Ok(()) => (false, "Color added to this theme. Save to apply it.".into()),
-                        Err(error) => (true, error),
-                    });
-                    cx.notify();
-                }))
-            )
-            .child(v_flex().gap_1().children(t.custom.colors.iter().map(|(role, color)| {
-                h_flex().gap_2().text_sm().child(role.clone()).child(color.clone())
-            })))
+        let swatch =
+            gpui_kit::component::try_parse_color(&value(&t.color, cx)).unwrap_or(cx.theme().muted);
+        v_flex().gap_5().w_full()
+            .child(field("Theme name", &t.name))
+            .child(hint("Save with a new name to create another theme. Themes are stored locally.", cx))
+            .child(setting_row("Base theme", "Use the base colors for any unset fields.", h_flex().gap_2().children(bases), cx))
+            .child(v_flex().gap_3().child(heading("Typography"))
+                .child(h_flex().gap_3().items_end().child(field("Interface font", &t.font))
+                    .child(div().w(px(100.)).flex_shrink_0().child(field("Size · px", &t.size))))
+                .child(h_flex().gap_3().items_end().child(field("Monospace font", &t.mono))
+                    .child(div().w(px(100.)).flex_shrink_0().child(field("Size · px", &t.mono_size))))
+                .child(self.font_picker(cx)))
+            .child(v_flex().gap_3().child(heading("Colors"))
+                .child(hint("Choose any UI color, including button text, background, hover and active states. Empty values inherit the base theme.", cx))
+                .child(colors)
+                .child(h_flex().gap_3().items_end()
+                    .child(field("Hex color · #RGB, #RRGGBB or #RRGGBBAA", &t.color))
+                    .child(div().size(px(32.)).flex_shrink_0().rounded_md().border_1().border_color(cx.theme().border).bg(swatch))
+                    .child(Button::new("set-theme-color").outline().label("Set color")
+                        .on_click(cx.listener(|view, _, _, cx| {
+                            if let Page::Application(t) = &mut view.page { t.appearance = Appearance::Custom(t.custom.name.clone()); }
+                            view.message = Some(match view.sync_color(cx) {
+                                Ok(()) => { view.dirty = true; (false, "Color added to this theme. Save to apply it.".into()) },
+                                Err(error) => (true, error),
+                            });
+                            view.refresh_theme_preview(cx);
+                            cx.notify();
+                        }))))
+                .child(v_flex().gap_2().children(t.custom.colors.iter().map(|(role, color)| {
+                    h_flex().gap_2().items_center().py_2().border_b_1().border_color(cx.theme().border).text_sm()
+                        .child(div().size(px(16.)).flex_shrink_0().rounded_sm().bg(gpui_kit::component::try_parse_color(color).unwrap_or(cx.theme().muted)))
+                        .child(div().flex_1().min_w_0().child(role.clone()))
+                        .child(div().text_color(cx.theme().muted_foreground).child(color.clone()))
+                }))))
+            .child(heading("Preview"))
+            .child(self.theme_preview(t))
             .into_any_element()
     }
+
     fn select_color(&mut self, role: String, window: &mut Window, cx: &mut Context<Self>) {
         if let Err(error) = self.sync_color(cx) {
             self.message = Some((true, error));
@@ -992,6 +1508,7 @@ impl PreferencesView {
             t.role = role;
             t.color.update(cx, |s, cx| s.set_value(color, window, cx));
         }
+        self.refresh_theme_preview(cx);
         cx.notify();
     }
     fn font_picker(&self, cx: &mut Context<Self>) -> AnyElement {
@@ -1025,7 +1542,12 @@ impl PreferencesView {
                                             t.font.update(cx, |s, cx| {
                                                 s.set_value(font.clone(), window, cx)
                                             });
+                                            t.appearance =
+                                                Appearance::Custom(t.custom.name.clone());
                                         }
+                                        view.dirty = true;
+                                        view.refresh_theme_preview(cx);
+                                        cx.notify();
                                     });
                                 },
                             ));
@@ -1049,7 +1571,12 @@ impl PreferencesView {
                                             t.mono.update(cx, |s, cx| {
                                                 s.set_value(font.clone(), window, cx)
                                             });
+                                            t.appearance =
+                                                Appearance::Custom(t.custom.name.clone());
                                         }
+                                        view.dirty = true;
+                                        view.refresh_theme_preview(cx);
+                                        cx.notify();
                                     });
                                 },
                             ));
@@ -1059,8 +1586,35 @@ impl PreferencesView {
             )
             .into_any_element()
     }
-    fn cluster_form(&self, c: &ClusterEditor, cx: &mut Context<Self>) -> AnyElement {
-        let icons: Vec<_> = [
+    fn identity_form(
+        &self,
+        c: &ClusterEditor,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let alias = value(&c.alias, cx);
+        let name = if alias.trim().is_empty() {
+            c.id.display_name().to_owned()
+        } else {
+            alias.trim().to_owned()
+        };
+        let connections = cx
+            .global::<crate::connections::SharedConnections>()
+            .0
+            .read(cx);
+        let (status, color) = if connections.sessions.contains_key(&c.id) {
+            ("Connected", cx.theme().success)
+        } else if connections.connecting(&c.id) {
+            ("Connecting", cx.theme().warning)
+        } else {
+            ("Not connected", cx.theme().muted_foreground)
+        };
+        let columns = if window.viewport_size().width < px(800.) {
+            3
+        } else {
+            6
+        };
+        let icons = [
             (ClusterIcon::Kubernetes, "Kubernetes"),
             (ClusterIcon::Server, "Server"),
             (ClusterIcon::Cloud, "Cloud"),
@@ -1070,85 +1624,268 @@ impl PreferencesView {
         ]
         .into_iter()
         .map(|(icon, label)| {
+            let selected = c.icon == icon;
             Button::new(label)
                 .outline()
-                .selected(c.icon == icon)
-                .icon(settings::icon(&icon))
-                .label(label)
+                .selected(selected)
+                .h_auto()
+                .p_3()
+                .w_full()
+                .bg(if selected {
+                    cx.theme().link.opacity(0.09)
+                } else {
+                    cx.theme().background
+                })
+                .border_color(if selected {
+                    cx.theme().link
+                } else {
+                    cx.theme().border
+                })
+                .text_color(if selected {
+                    cx.theme().link
+                } else {
+                    cx.theme().foreground
+                })
+                .accessibility_label(format!("{label} cluster icon"))
+                .child(
+                    v_flex()
+                        .items_center()
+                        .gap_2()
+                        .child(settings::icon(&icon).size_5())
+                        .child(div().text_xs().child(label)),
+                )
                 .on_click(cx.listener(move |view, _, _, cx| {
                     if let Page::Cluster(c) = &mut view.page {
                         c.icon = icon.clone();
                     }
+                    view.dirty = true;
+                    view.message = None;
                     cx.notify();
                 }))
-        })
-        .collect();
-        let metrics: Vec<_> = [
-            (0, "Kubernetes Metrics API"),
-            (1, "Prometheus"),
-            (2, "Disabled"),
+        });
+        v_flex().gap_5()
+            .child(h_flex().gap_3().p_4().rounded_lg().bg(cx.theme().muted).items_center()
+                .child(div().size(px(40.)).flex_shrink_0().rounded_lg().bg(cx.theme().link.opacity(0.1)).text_color(cx.theme().link)
+                    .flex().items_center().justify_center().child(settings::icon(&c.icon).size_6()))
+                .child(v_flex().flex_1().min_w_0().gap_1().child(div().font_weight(FontWeight::MEDIUM)
+                    .child(crate::copyable_text::copyable_text("cluster-display-name", name)))
+                    .child(hint(c.id.display_name(), cx)))
+                .child(h_flex().gap_1().items_center().text_xs().text_color(color)
+                    .child(div().size(px(5.)).rounded_full().bg(color)).child(status)))
+            .child(v_flex().gap_2().child(field("Display name", &c.alias))
+                .child(hint("Used in the sidebar, tabs and status bar. Leave empty to use the kubeconfig name.", cx)))
+            .child(v_flex().gap_3().child(heading("Cluster icon"))
+                .child(div().grid().grid_cols(columns).gap_2().children(icons))
+                .child(inline_action(Button::new("custom-cluster-icon").link().icon(IconName::Upload).label("Import SVG…")
+                    .on_click(cx.listener(|view, _, window, cx| view.choose_icon(window, cx)))))
+                .when(matches!(c.icon, ClusterIcon::Custom(_)), |form| form.child(h_flex().gap_2()
+                    .child(settings::icon(&c.icon)).child(hint("Custom SVG icon", cx)))))
+            .child(v_flex().gap_1().p_3().rounded_lg().bg(cx.theme().muted)
+                .child(hint("Kubeconfig context", cx))
+                .child(div().font_family(cx.theme().mono_font_family.clone()).text_sm()
+                    .child(crate::copyable_text::copyable_text("cluster-context", c.id.to_string()))))
+            .into_any_element()
+    }
+
+    fn metrics_form(&self, c: &ClusterEditor, cx: &mut Context<Self>) -> AnyElement {
+        let choices = [
+            (
+                0,
+                "Kubernetes Metrics API",
+                "Use metrics-server from this cluster.",
+            ),
+            (1, "Prometheus", "Query an external Prometheus endpoint."),
+            (2, "Disabled", "Do not fetch usage metrics."),
         ]
         .into_iter()
-        .map(|(source, label)| {
-            Button::new(label)
-                .outline()
-                .selected(c.metrics == source)
+        .map(|(source, label, description)| {
+            Radio::new(("metrics-source", source as usize))
+                .w_full()
+                .p_3()
+                .border_b_1()
+                .border_color(cx.theme().border)
+                .checked(c.metrics == source)
                 .label(label)
+                .child(hint(description, cx))
                 .on_click(cx.listener(move |view, _, _, cx| {
                     if let Page::Cluster(c) = &mut view.page {
                         c.metrics = source;
                     }
+                    view.dirty = true;
                     view.message = None;
                     cx.notify();
                 }))
-        })
-        .collect();
-        v_flex().gap_3().child(heading("Cluster identity"))
-            .child(hint(&format!("Kubeconfig context: {}", c.id), cx))
-            .child(field("Alias (empty uses the kubeconfig name)", &c.alias))
-            .child(h_flex().gap_2().flex_wrap().children(icons).child(
-                Button::new("custom-cluster-icon").outline().label("Choose SVG…")
-                    .on_click(cx.listener(|view, _, window, cx| view.choose_icon(window, cx)))
-            ))
-            .when(matches!(c.icon, ClusterIcon::Custom(_)), |form| {
-                form.child(h_flex().gap_2().child(settings::icon(&c.icon)).child("Custom SVG icon"))
-            })
-            .child(self.yaml_folding_form(c, cx))
-            .child(self.proxy_form(cx))
-            .child(heading("Metrics source"))
-            .child(h_flex().gap_2().children(metrics))
-            .when(c.metrics == 1, |form| {
-                form.child(field("Prometheus URL (base path supported)", &c.url))
-                    .child(field("Bearer token (optional)", &c.token))
-                    .child(hint("Queries return CPU in cores and memory in bytes. Pod results require namespace/pod labels; node results require a node label. Add cluster selectors when Prometheus contains multiple clusters.", cx))
-                    .child(field("Pod CPU query", &c.pod_cpu))
-                    .child(field("Pod memory query", &c.pod_memory))
-                    .child(field("Node CPU query", &c.node_cpu))
-                    .child(field("Node memory query", &c.node_memory))
-                    .child(Button::new("test-metrics").outline().disabled(self.testing)
-                        .label(if self.testing { "Testing…" } else { "Test metrics source" })
-                        .on_click(cx.listener(|view, _, window, cx| view.test_metrics(window, cx)))
+        });
+        v_flex().gap_4()
+            .child(v_flex().border_1().border_color(cx.theme().border).rounded_lg().overflow_hidden().children(choices))
+            .when(c.metrics == 1, |form| form
+                .child(field("Prometheus URL", &c.url))
+                .child(hint("A URL with a base path is supported.", cx))
+                .child(field("Bearer token · optional", &c.token))
+                .child(v_flex().gap_4().pt_3().border_t_1().border_color(cx.theme().border)
+                    .child(inline_action(Button::new("metrics-query-disclosure").ghost().icon(if self.queries_expanded { IconName::ChevronDown } else { IconName::ChevronRight })
+                        .label("Query configuration").on_click(cx.listener(|view, _, _, cx| {
+                            view.queries_expanded = !view.queries_expanded;
+                            cx.notify();
+                        }))))
+                    .when(self.queries_expanded, |queries| queries
+                        .child(field("Pod CPU query", &c.pod_cpu))
+                        .child(field("Pod memory query", &c.pod_memory))
+                        .child(field("Node CPU query", &c.node_cpu))
+                        .child(field("Node memory query", &c.node_memory))
+                        .child(hint("Queries return CPU in cores and memory in bytes. Pod results require namespace/pod labels; node results require a node label. Add cluster selectors when Prometheus contains multiple clusters.", cx))))
+                .child(inline_action(Button::new("test-metrics").outline().icon(IconName::Activity).disabled(self.testing)
+                    .label(if self.testing { "Testing…" } else { "Test metrics source" })
+                    .on_click(cx.listener(|view, _, window, cx| view.test_metrics(window, cx))))))
+            .when(c.metrics == 0, |form| form.child(hint("Uses metrics.k8s.io. Clusters without metrics-server show no CPU or memory samples.", cx)))
+            .into_any_element()
+    }
+
+    fn sidebar(&self, cx: &mut Context<Self>) -> AnyElement {
+        let cluster = matches!(self.page, Page::Cluster(_));
+        let (icon, subtitle) = match &self.page {
+            Page::Application(_) => (Icon::new(IconName::RadioTower), "Preferences".to_owned()),
+            Page::Cluster(c) => (settings::icon(&c.icon), c.id.display_name().to_owned()),
+        };
+        let sections = if cluster {
+            Section::CLUSTER
+        } else {
+            Section::APPLICATION
+        };
+        v_flex()
+            .w(px(180.))
+            .flex_shrink_0()
+            .h_full()
+            .min_h_0()
+            .bg(cx.theme().sidebar)
+            .border_r_1()
+            .border_color(cx.theme().border)
+            .px_3()
+            .py_5()
+            .gap_5()
+            .child(
+                h_flex()
+                    .gap_3()
+                    .items_center()
+                    .px_1()
+                    .child(
+                        div()
+                            .size(px(32.))
+                            .flex_shrink_0()
+                            .rounded_lg()
+                            .bg(cx.theme().link.opacity(0.1))
+                            .text_color(cx.theme().link)
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .child(icon.size_5()),
                     )
-            })
-            .when(c.metrics == 0, |form| {
-                form.child(hint("Uses metrics.k8s.io. Clusters without metrics-server show no CPU or memory samples.", cx))
-            })
+                    .child(
+                        v_flex()
+                            .flex_1()
+                            .min_w_0()
+                            .gap_1()
+                            .child(div().font_weight(FontWeight::MEDIUM).child(if cluster {
+                                "Cluster"
+                            } else {
+                                "Beacon"
+                            }))
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .text_color(cx.theme().muted_foreground)
+                                    .truncate()
+                                    .child(subtitle),
+                            ),
+                    ),
+            )
+            .child(
+                v_flex()
+                    .gap_2()
+                    .child(
+                        div()
+                            .px_2()
+                            .text_xs()
+                            .text_color(cx.theme().muted_foreground)
+                            .child(if cluster {
+                                "THIS CLUSTER"
+                            } else {
+                                "APPLICATION"
+                            }),
+                    )
+                    .children(sections.into_iter().map(|section| {
+                        let selected = self.section == section;
+                        Button::new(section.id())
+                            .ghost()
+                            .selected(selected)
+                            .w_full()
+                            .justify_start()
+                            .h(px(38.))
+                            .accessibility_label(section.label())
+                            .child(
+                                h_flex()
+                                    .w_full()
+                                    .gap_2()
+                                    .items_center()
+                                    .child(Icon::new(section.icon()).size_4())
+                                    .child(
+                                        div().flex_1().min_w_0().truncate().child(section.label()),
+                                    ),
+                            )
+                            .text_sm()
+                            .bg(if selected {
+                                cx.theme().link.opacity(0.1)
+                            } else {
+                                cx.theme().transparent
+                            })
+                            .text_color(if selected {
+                                cx.theme().link
+                            } else {
+                                cx.theme().foreground
+                            })
+                            .on_click(cx.listener(move |view, _, window, cx| {
+                                view.select_section(section, window, cx)
+                            }))
+                    })),
+            )
+            .child(
+                div()
+                    .px_2()
+                    .text_xs()
+                    .text_color(cx.theme().muted_foreground)
+                    .child(if cluster {
+                        "Settings stored locally".to_owned()
+                    } else {
+                        format!("Version {}", env!("CARGO_PKG_VERSION"))
+                    }),
+            )
             .into_any_element()
     }
 }
 impl Render for PreferencesView {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let body = match &self.page {
-            Page::Application(t) => v_flex()
-                .gap_4()
-                .child(self.updates_form(cx))
-                .child(self.theme_form(t, cx))
-                .child(self.proxy_form(cx))
-                .into_any_element(),
-            Page::Cluster(c) => self.cluster_form(c, cx),
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let body = match (&self.page, self.section) {
+            (Page::Application(t), Section::Appearance) => self.appearance_form(t, cx),
+            (Page::Application(t), Section::Themes) => self.theme_form(t, cx),
+            (Page::Application(_), Section::Updates) => self.updates_form(cx),
+            (Page::Cluster(c), Section::Identity) => self.identity_form(c, window, cx),
+            (Page::Cluster(c), Section::Metrics) => self.metrics_form(c, cx),
+            (Page::Cluster(c), Section::Yaml) => self.yaml_folding_form(c, cx),
+            _ => self.proxy_form(cx),
         };
         let directory = settings::store(cx).read(cx).directory.clone();
         let cluster = matches!(self.page, Page::Cluster(_));
+        let status = if self.dirty {
+            "Unsaved changes"
+        } else {
+            match self.section {
+                Section::Yaml => "Folding applies the next time a resource opens",
+                Section::Identity => "Changes apply across cluster views after saving",
+                Section::Connection | Section::Metrics => "Connection changes require a reconnect",
+                Section::Updates => "Update preferences save automatically",
+                _ => "Changes apply across all windows after saving",
+            }
+        };
         v_flex()
             .size_full()
             .track_focus(&self.focus)
@@ -1158,81 +1895,135 @@ impl Render for PreferencesView {
                 window.defer(cx, |window, _| window.remove_window())
             })
             .child(
-                TitleBar::new().child(div().font_weight(FontWeight::SEMIBOLD).child(self.title())),
-            )
-            .child(
-                div()
-                    .id("preferences-scroll")
-                    .flex_1()
-                    .min_h_0()
-                    .overflow_y_scroll()
-                    .child(v_flex().p_4().gap_3().child(body).child(hint(
-                        &format!("Saved locally in {}", directory.display()),
-                        cx,
-                    ))),
-            )
-            .when_some(self.message.clone(), |page, (error, message)| {
-                page.child(
+                TitleBar::new().child(
                     div()
-                        .px_4()
-                        .py_2()
                         .text_sm()
-                        .text_color(if error {
-                            cx.theme().danger
+                        .font_weight(FontWeight::MEDIUM)
+                        .text_color(cx.theme().muted_foreground)
+                        .child(if cluster {
+                            "Cluster settings"
                         } else {
-                            cx.theme().success
-                        })
-                        .child(crate::copyable_text::copyable_text(
-                            "preferences-message",
-                            message,
-                        )),
-                )
-            })
+                            "Application settings"
+                        }),
+                ),
+            )
             .child(
                 h_flex()
-                    .justify_between()
-                    .p_3()
+                    .flex_1()
+                    .min_h_0()
+                    .items_stretch()
+                    .child(self.sidebar(cx))
+                    .child(
+                        div()
+                            .id(format!("preferences-scroll-{}", self.section.id()))
+                            .flex_1()
+                            .min_w_0()
+                            .min_h_0()
+                            .overflow_y_scroll()
+                            .child(
+                                v_flex()
+                                    .w_full()
+                                    .p_6()
+                                    .gap_5()
+                                    .child(
+                                        v_flex()
+                                            .gap_2()
+                                            .child(
+                                                div()
+                                                    .text_size(rems(1.35))
+                                                    .font_weight(FontWeight::MEDIUM)
+                                                    .child(self.section.title()),
+                                            )
+                                            .child(hint(self.section.description(), cx)),
+                                    )
+                                    .child(body),
+                            ),
+                    ),
+            )
+            .child(
+                v_flex()
+                    .flex_shrink_0()
                     .border_t_1()
                     .border_color(cx.theme().border)
-                    .child(
-                        Button::new("open-settings-folder")
-                            .ghost()
-                            .label("Open config folder")
-                            .on_click(cx.listener(move |view, _, _, cx| {
-                                match std::fs::create_dir_all(&directory) {
-                                    Ok(()) => cx.open_with_system(&directory),
-                                    Err(error) => {
-                                        view.message = Some((true, error.to_string()));
-                                        cx.notify();
-                                    }
-                                }
-                            })),
-                    )
+                    .when_some(self.message.clone(), |footer, (error, message)| {
+                        footer.child(
+                            div()
+                                .px_4()
+                                .pt_3()
+                                .text_sm()
+                                .text_color(if error {
+                                    cx.theme().danger
+                                } else {
+                                    cx.theme().success
+                                })
+                                .child(crate::copyable_text::copyable_text(
+                                    "preferences-message",
+                                    message,
+                                )),
+                        )
+                    })
                     .child(
                         h_flex()
-                            .gap_2()
+                            .items_center()
+                            .justify_between()
+                            .gap_3()
+                            .px_4()
+                            .py_3()
                             .child(
-                                Button::new("save-preferences")
-                                    .primary()
-                                    .label("Save")
-                                    .on_click(cx.listener(|view, _, window, cx| {
-                                        view.save(false, window, cx)
-                                    })),
+                                div()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .text_xs()
+                                    .text_color(cx.theme().muted_foreground)
+                                    .child(status),
                             )
-                            .when(cluster, |bar| {
-                                bar.child(
-                                    Button::new("save-reconnect")
-                                        .outline()
-                                        .label("Save and reconnect")
-                                        .on_click(cx.listener(|view, _, window, cx| {
-                                            view.save(true, window, cx)
-                                        })),
-                                )
-                            }),
+                            .child(
+                                h_flex()
+                                    .flex_shrink_0()
+                                    .gap_2()
+                                    .when(!cluster, |bar| {
+                                        bar.child(
+                                            Button::new("open-settings-folder")
+                                                .ghost()
+                                                .icon(IconName::FolderOpen)
+                                                .label("Config folder")
+                                                .tooltip(directory.display().to_string())
+                                                .on_click(cx.listener(move |view, _, _, cx| {
+                                                    match std::fs::create_dir_all(&directory) {
+                                                        Ok(()) => cx.open_with_system(&directory),
+                                                        Err(error) => {
+                                                            view.message =
+                                                                Some((true, error.to_string()));
+                                                            cx.notify();
+                                                        }
+                                                    }
+                                                })),
+                                        )
+                                    })
+                                    .when(cluster, |bar| {
+                                        bar.child(
+                                            Button::new("save-reconnect")
+                                                .outline()
+                                                .label("Save & reconnect")
+                                                .on_click(cx.listener(|view, _, window, cx| {
+                                                    view.save(true, window, cx)
+                                                })),
+                                        )
+                                    })
+                                    .child(
+                                        Button::new("save-preferences")
+                                            .primary()
+                                            .label("Save changes")
+                                            .on_click(cx.listener(|view, _, window, cx| {
+                                                view.save(false, window, cx)
+                                            })),
+                                    ),
+                            ),
                     ),
             )
     }
 }
+
 fn import_icon(path: PathBuf, directory: PathBuf) -> Result<PathBuf, String> {
     if !path
         .extension()
@@ -1294,6 +2085,10 @@ mod update_tests {
             .unwrap();
         };
         draw(cx);
+        cx.update_window(window, |_, window, cx| {
+            window.click("settings-updates", cx);
+        })
+        .unwrap();
         cx.update_window(window, |_, window, _| {
             assert!(window.find("check-updates").visible());
             assert!(window.find("auto-check-updates").visible());
@@ -1372,5 +2167,197 @@ mod update_tests {
             assert!(window.find("get-update-package").visible())
         })
         .unwrap();
+    }
+
+    fn setup(cx: &mut TestAppContext, directory: &std::path::Path) {
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            cx.set_reduce_motion(true);
+            crate::app::init(directory.join("logs"), cx);
+            settings::store(cx).update(cx, |state, _| {
+                state.preferences = settings::Preferences::default();
+                state.directory = directory.to_owned();
+                state.load_error = None;
+            });
+            settings::apply(None, cx);
+        });
+    }
+
+    #[::core::prelude::v1::test]
+    fn cluster_settings_keep_drafts_across_sections_and_save_together() {
+        let directory = tempfile::tempdir().unwrap();
+        let cx = &mut TestAppContext::single();
+        setup(cx, directory.path());
+        let id = ClusterId::new("test-cluster");
+        let (window, view) = cx.update(|cx| {
+            gpui_kit::open_window(
+                WindowOptions {
+                    window_bounds: Some(WindowBounds::Windowed(Bounds {
+                        origin: Default::default(),
+                        size: size(px(880.), px(760.)),
+                    })),
+                    ..Default::default()
+                },
+                cx,
+                |window, cx| {
+                    window.set_view_retention(false);
+                    cx.new(|cx| PreferencesView::new(Some(id.clone()), window, cx))
+                },
+            )
+            .unwrap()
+        });
+        cx.update_window(window, |_, window, cx| {
+            window.render_frame(cx);
+            view.update(cx, |view, cx| {
+                let Page::Cluster(c) = &view.page else {
+                    panic!()
+                };
+                c.alias
+                    .update(cx, |input, cx| input.set_value("Development", window, cx));
+                c.alias.read(cx).focus_handle(cx).focus(window, cx);
+            });
+            window.click("settings-connection", cx);
+            assert!(view.read(cx).focus.is_focused(window));
+            window.click(("proxy-choice", 3usize), cx);
+            view.update(cx, |view, cx| {
+                view.proxy.url.update(cx, |input, cx| {
+                    input.set_value("http://localhost:7890", window, cx)
+                })
+            });
+            window.click("settings-metrics", cx);
+            window.click(("metrics-source", 1usize), cx);
+            assert!(!view.read(cx).queries_expanded);
+            window.click("metrics-query-disclosure", cx);
+            assert!(view.read(cx).queries_expanded);
+            view.update(cx, |view, cx| {
+                let Page::Cluster(c) = &view.page else {
+                    panic!()
+                };
+                c.url.update(cx, |input, cx| {
+                    input.set_value("https://prometheus.example.com", window, cx)
+                });
+                c.pod_cpu.update(cx, |input, cx| {
+                    input.set_value("custom_cpu_query", window, cx)
+                });
+            });
+            window.click("settings-yaml", cx);
+            window.click(("yaml-fold-field", 1usize), cx);
+            view.update(cx, |view, cx| {
+                let Page::Cluster(c) = &view.page else {
+                    panic!()
+                };
+                c.yaml_field.update(cx, |input, cx| {
+                    input.set_value("spec.template.metadata", window, cx)
+                });
+            });
+            window.click("add-yaml-fold-field", cx);
+            window.click("settings-identity", cx);
+            let Page::Cluster(c) = &view.read(cx).page else {
+                panic!()
+            };
+            assert_eq!(value(&c.alias, cx), "Development");
+            assert_eq!(value(&c.pod_cpu, cx), "custom_cpu_query");
+            assert_eq!(c.yaml_folding.fields.len(), 6);
+            window.click("save-preferences", cx);
+        })
+        .unwrap();
+        cx.update(|cx| {
+            let store = settings::store(cx);
+            let saved = &store.read(cx).preferences.clusters[id.as_str()];
+            assert_eq!(saved.alias, "Development");
+            assert_eq!(
+                saved.proxy,
+                Some(Proxy::Custom("http://localhost:7890".into()))
+            );
+            let MetricsSource::Prometheus(metrics) = &saved.metrics else {
+                panic!()
+            };
+            assert_eq!(metrics.pod_cpu, "custom_cpu_query");
+            assert!(!saved.yaml_folding.fields[1].collapsed);
+            assert_eq!(saved.yaml_folding.fields[5].path, "spec.template.metadata");
+            assert!(!view.read(cx).dirty);
+            assert!(directory.path().join("settings.json").exists());
+            assert!(
+                cx.global::<crate::connections::SharedConnections>()
+                    .0
+                    .read(cx)
+                    .sessions
+                    .is_empty()
+            );
+        });
+    }
+
+    #[::core::prelude::v1::test]
+    fn custom_theme_preview_is_local_until_saved_from_another_section() {
+        let directory = tempfile::tempdir().unwrap();
+        let cx = &mut TestAppContext::single();
+        setup(cx, directory.path());
+        let (window, view) = cx.update(|cx| {
+            gpui_kit::open_window(
+                WindowOptions {
+                    window_bounds: Some(WindowBounds::Windowed(Bounds {
+                        origin: Default::default(),
+                        size: size(px(880.), px(760.)),
+                    })),
+                    ..Default::default()
+                },
+                cx,
+                |window, cx| {
+                    window.set_view_retention(false);
+                    cx.new(|cx| PreferencesView::new(None, window, cx))
+                },
+            )
+            .unwrap()
+        });
+        cx.update_window(window, |_, window, cx| {
+            let fonts = view.read(cx).fonts.clone().unwrap();
+            fonts.update(cx, |fonts, _| {
+                fonts._load = None;
+                fonts.names = Some(vec![CustomTheme::default().mono_font_family].into());
+            });
+            window.render_frame(cx);
+            let original = cx.theme().button_primary_foreground;
+            window.click("settings-themes", cx);
+            view.update(cx, |view, cx| {
+                let Page::Application(t) = &view.page else {
+                    panic!()
+                };
+                t.name
+                    .update(cx, |input, cx| input.set_value("Local preview", window, cx));
+                t.size
+                    .update(cx, |input, cx| input.set_value("18", window, cx));
+                t.color.update(cx, |input, cx| {
+                    input.set_value("#11AA77", window, cx);
+                    cx.emit(InputEvent::Change);
+                });
+            });
+            assert_eq!(cx.theme().button_primary_foreground, original);
+        })
+        .unwrap();
+        cx.update_window(window, |_, window, cx| {
+            window.render_frame(cx);
+            let Page::Application(t) = &view.read(cx).page else {
+                panic!()
+            };
+            assert_eq!(t.preview.button_primary_foreground, rgb(0x11aa77).into());
+            assert_eq!(t.preview.font_size, px(18.));
+            assert!(settings::store(cx).read(cx).preferences.themes.is_empty());
+            window.click("settings-network", cx);
+            window.click(("proxy-choice", 1usize), cx);
+            window.click("save-preferences", cx);
+        })
+        .unwrap();
+        cx.update(|cx| {
+            let store = settings::store(cx);
+            let saved = &store.read(cx).preferences;
+            assert_eq!(saved.appearance, Appearance::Custom("Local preview".into()));
+            assert_eq!(saved.themes["Local preview"].font_size, 18.);
+            assert_eq!(
+                saved.themes["Local preview"].colors["button.primary.foreground"],
+                "#11AA77"
+            );
+            assert_eq!(saved.proxy, Proxy::Direct);
+            assert!(!view.read(cx).dirty);
+        });
     }
 }

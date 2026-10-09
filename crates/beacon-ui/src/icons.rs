@@ -1,6 +1,43 @@
 //! Sidebar icons bundled with the binary; no external files are needed.
 use crate::catalog::{Category, Section};
 use gpui_kit::component::{Icon, IconName};
+use gpui_kit::{AssetSource, SharedString};
+use std::borrow::Cow;
+
+gpui_kit::assets::icon_assets!(
+    SettingsAssets,
+    [
+        Paintbrush,
+        Download,
+        ShipWheel,
+        Unplug,
+        ChartNoAxesCombined,
+        RadioTower,
+        SlidersHorizontal,
+        RotateCcw,
+        Upload,
+        Activity,
+        X,
+    ]
+);
+
+/// The default component icons plus the small set used by settings pages.
+pub struct Assets;
+impl AssetSource for Assets {
+    fn load(&self, path: &str) -> gpui_kit::Result<Option<Cow<'static, [u8]>>> {
+        if let Some(icon) = SettingsAssets.load(path)? {
+            return Ok(Some(icon));
+        }
+        gpui_kit::assets::Assets.load(path)
+    }
+    fn list(&self, path: &str) -> gpui_kit::Result<Vec<SharedString>> {
+        let mut paths = gpui_kit::assets::Assets.list(path)?;
+        paths.extend(SettingsAssets.list(path)?);
+        paths.sort();
+        paths.dedup();
+        Ok(paths)
+    }
+}
 
 pub(crate) fn kubernetes() -> Icon {
     Icon::default().data(include_bytes!("../assets/kubernetes.svg"))
