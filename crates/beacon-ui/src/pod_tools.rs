@@ -1,6 +1,6 @@
 //! Pod logs, commands and interactive shells in the independent bottom panel.
 
-use std::{collections::VecDeque, sync::Arc};
+use std::{collections::VecDeque, path::PathBuf, sync::Arc};
 
 use beacon_kube::{
     ClusterSession, DynamicObject, LogBuffer, LogEvent, LogOptions, ObjectRef, Rules,
@@ -8,12 +8,12 @@ use beacon_kube::{
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::{Input, InputState};
 use gpui_kit::component::scroll::{Scrollbar, ScrollbarMode};
+use gpui_kit::component::select::{SearchableVec, Select, SelectEvent, SelectGroup, SelectState};
 use gpui_kit::component::spinner::Spinner;
 use gpui_kit::component::tab::{Tab, TabBar};
 use gpui_kit::component::{ActiveTheme as _, Disableable as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
-use serde_json::Value;
 
 use crate::bridge::{Bridge, drain_into};
 use crate::theme::{BeaconTheme as _, Tone};
@@ -51,8 +51,15 @@ pub(crate) struct PodToolsView {
     log_status: LogStatus,
     log_scroll: UniformListScrollHandle,
     log_widths: LogLineWidths,
+    container_groups: Vec<ContainerGroup>,
+    container_picker: Entity<SelectState<ContainerChoices>>,
+    download: Download,
+    download_directory: Option<PathBuf>,
+    download_abort: Option<tokio::task::AbortHandle>,
     _logs_task: Option<Task<()>>,
+    _download_task: Option<Task<()>>,
     _exec_task: Option<Task<()>>,
+    _container_subscription: Subscription,
 }
 
 pub(crate) struct PodToolsClosed;
@@ -74,6 +81,94 @@ enum LogStatus {
     /// The stream ended, which for a followed log means the container did.
     Ended,
     Failed(String),
+}
+
+enum Download {
+    Idle,
+    Choosing,
+    Running(String),
+    Cancelling,
+    Saved { path: PathBuf, bytes: u64 },
+    Cancelled,
+    Failed(String),
+}
+
+type ContainerChoices = SearchableVec<SelectGroup<String>>;
+
+#[derive(Clone, PartialEq, Eq)]
+struct ContainerGroup {
+    title: &'static str,
+    names: Vec<String>,
+}
+
+fn container_groups(object: &DynamicObject) -> Vec<ContainerGroup> {
+    [
+        ("containers", "Containers"),
+        ("initContainers", "Init containers"),
+        ("ephemeralContainers", "Ephemeral containers"),
+    ]
+    .into_iter()
+    .filter_map(|(field, title)| {
+        let names: Vec<_> = object
+            .data
+            .get("spec")?
+            .get(field)?
+            .as_array()?
+            .iter()
+            .filter_map(|container| container.get("name")?.as_str().map(str::to_owned))
+            .collect();
+        (!names.is_empty()).then_some(ContainerGroup { title, names })
+    })
+    .collect()
+}
+
+fn default_container(object: &DynamicObject, groups: &[ContainerGroup]) -> Option<String> {
+    let normal = groups.iter().find(|group| group.title == "Containers");
+    object
+        .metadata
+        .annotations
+        .as_ref()
+        .and_then(|annotations| annotations.get("kubectl.kubernetes.io/default-container"))
+        .filter(|name| normal.is_some_and(|group| group.names.contains(name)))
+        .cloned()
+        .or_else(|| groups.first()?.names.first().cloned())
+}
+
+fn container_choices(groups: &[ContainerGroup]) -> ContainerChoices {
+    SearchableVec::new(
+        groups
+            .iter()
+            .map(|group| SelectGroup::new(group.title).items(group.names.clone()))
+            .collect::<Vec<_>>(),
+    )
+}
+
+fn log_filename(
+    target: &ObjectRef,
+    options: &LogOptions,
+    now: beacon_columns::Timestamp,
+) -> String {
+    fn part(value: &str, limit: usize) -> String {
+        value
+            .chars()
+            .take(limit)
+            .map(|ch| {
+                if ch.is_ascii_alphanumeric() || matches!(ch, '.' | '-' | '_') {
+                    ch
+                } else {
+                    '_'
+                }
+            })
+            .collect()
+    }
+    format!(
+        "pod_{}_{}_{}_{}{}.log",
+        part(target.namespace.as_deref().unwrap_or("default"), 32),
+        part(&target.name, 80),
+        part(options.container.as_deref().unwrap_or("default"), 48),
+        now.strftime("%Y%m%d-%H%M%S-UTC"),
+        if options.previous { "_previous" } else { "" }
+    )
 }
 
 /// Keep measured widths aligned with the bounded log buffer. Only arriving
@@ -126,6 +221,33 @@ impl PodToolsView {
                 .placeholder("A command to run, e.g. ls -la /etc")
                 .default_value("ls -la /")
         });
+        let container_groups = container_groups(&object);
+        let container = default_container(&object, &container_groups);
+        let container_picker = cx.new(|cx| {
+            let mut picker =
+                SelectState::new(container_choices(&container_groups), None, window, cx)
+                    .searchable(true);
+            if let Some(container) = &container {
+                picker.set_selected_value(container, window, cx);
+            }
+            picker
+        });
+        let subscription = cx.subscribe_in(
+            &container_picker,
+            window,
+            |view, _, event: &SelectEvent<ContainerChoices>, window, cx| {
+                if let SelectEvent::Confirm(Some(container)) = event {
+                    view.set_log_options(
+                        LogOptions {
+                            container: Some(container.clone()),
+                            ..view.log_options.clone()
+                        },
+                        window,
+                        cx,
+                    );
+                }
+            },
+        );
         let mut this = Self {
             session,
             target: ObjectRef::of(&object),
@@ -136,12 +258,22 @@ impl PodToolsView {
             ran: Exec::Idle,
             shell: None,
             logs: LogBuffer::new(),
-            log_options: LogOptions::default(),
+            log_options: LogOptions {
+                container,
+                ..Default::default()
+            },
             log_status: LogStatus::Unopened,
             log_scroll: UniformListScrollHandle::new(),
             log_widths: LogLineWidths::default(),
+            container_groups,
+            container_picker,
+            download: Download::Idle,
+            download_directory: None,
+            download_abort: None,
             _logs_task: None,
+            _download_task: None,
             _exec_task: None,
+            _container_subscription: subscription,
         };
         this.select(tab, window, cx);
         this
@@ -227,21 +359,161 @@ impl PodToolsView {
             )
     }
 
-    /// The containers this pod declares, for the log picker.
-    fn container_names(&self) -> Vec<String> {
-        self.object
-            .data
-            .get("spec")
-            .and_then(|spec| spec.get("containers"))
-            .and_then(Value::as_array)
-            .map(|containers| {
-                containers
-                    .iter()
-                    .filter_map(|container| container.get("name")?.as_str())
-                    .map(str::to_string)
-                    .collect()
-            })
-            .unwrap_or_default()
+    /// Keep newly added ephemeral containers available without resetting a selection.
+    fn sync_container_picker(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let groups = container_groups(&self.object);
+        if groups == self.container_groups {
+            return;
+        }
+        let selected = self
+            .log_options
+            .container
+            .clone()
+            .filter(|name| groups.iter().any(|group| group.names.contains(name)))
+            .or_else(|| default_container(&self.object, &groups));
+        self.container_picker.update(cx, |picker, cx| {
+            picker.set_items(container_choices(&groups), window, cx);
+            if let Some(selected) = &selected {
+                picker.set_selected_value(selected, window, cx);
+            } else {
+                picker.set_selected_index(None, window, cx);
+            }
+            cx.notify();
+        });
+        self.container_groups = groups;
+        if self.log_options.container != selected {
+            self.log_options.container = selected;
+            if self.log_status != LogStatus::Unopened {
+                self.follow_logs(window, cx);
+            }
+        }
+    }
+
+    fn download_active(&self) -> bool {
+        matches!(
+            self.download,
+            Download::Choosing | Download::Running(_) | Download::Cancelling
+        )
+    }
+
+    fn download_logs(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.download_active() {
+            return;
+        }
+        let Some(namespace) = self.target.namespace.clone() else {
+            return;
+        };
+        let options = self.log_options.clone();
+        let name = log_filename(&self.target, &options, beacon_columns::Timestamp::now());
+        let directory = self.download_directory.clone().unwrap_or_else(|| {
+            directories::UserDirs::new()
+                .map(|dirs| dirs.download_dir().unwrap_or(dirs.home_dir()).to_path_buf())
+                .unwrap_or_else(std::env::temp_dir)
+        });
+        let choosing = cx.prompt_for_new_path(&directory, Some(&name));
+        let session = self.session.clone();
+        let pod = self.target.name.clone();
+        let bridge = Bridge::global(cx).clone();
+        self.download = Download::Choosing;
+        self._download_task = Some(cx.spawn_in(window, async move |this, cx| {
+            let choice = choosing
+                .await
+                .map_err(|error| error.to_string())
+                .and_then(|result| result.map_err(|error| error.to_string()));
+            let path = match choice {
+                Ok(Some(path)) => path,
+                Ok(None) => {
+                    let _ = this.update(cx, |view, cx| {
+                        view.download = Download::Cancelled;
+                        cx.notify();
+                    });
+                    return;
+                }
+                Err(error) => {
+                    let _ = this.update(cx, |view, cx| {
+                        view.download =
+                            Download::Failed(format!("Could not open the save dialog: {error}"));
+                        cx.notify();
+                    });
+                    return;
+                }
+            };
+            let destination = path.clone();
+            let container = options
+                .container
+                .clone()
+                .unwrap_or_else(|| "default container".into());
+            let downloading = bridge.run_cancellable(async move {
+                session
+                    .download_logs(namespace, pod, options, destination)
+                    .await
+            });
+            let abort = downloading.abort_handle();
+            if this
+                .update(cx, |view, cx| {
+                    view.download_directory = path.parent().map(std::path::Path::to_path_buf);
+                    view.download_abort = Some(abort);
+                    view.download = Download::Running(container);
+                    cx.notify();
+                })
+                .is_err()
+            {
+                return;
+            }
+            let result = downloading.result().await;
+            let _ = this.update(cx, |view, cx| {
+                view.download_abort = None;
+                view.download = match result {
+                    Ok(Ok(bytes)) => Download::Saved { path, bytes },
+                    Ok(Err(error)) => Download::Failed(format!(
+                        "Could not download logs to {}: {error}",
+                        path.display()
+                    )),
+                    Err(error) if error.is_cancelled() => Download::Cancelled,
+                    Err(error) => Download::Failed(format!(
+                        "Could not download logs to {}: {error}",
+                        path.display()
+                    )),
+                };
+                cx.notify();
+            });
+        }));
+        cx.notify();
+    }
+
+    fn render_download_status(&self, cx: &App) -> Option<AnyElement> {
+        let (text, tone) = match &self.download {
+            Download::Idle => return None,
+            Download::Choosing => (
+                "Choose a folder and filename in the save dialog.".into(),
+                Tone::Progressing,
+            ),
+            Download::Running(container) => (
+                format!("Downloading logs for {container}…"),
+                Tone::Progressing,
+            ),
+            Download::Cancelling => ("Cancelling log download…".into(), Tone::Progressing),
+            Download::Saved { path, bytes } => (
+                format!("Saved logs to {} ({bytes} bytes)", path.display()),
+                Tone::Healthy,
+            ),
+            Download::Cancelled => ("Log download cancelled.".into(), Tone::Unknown),
+            Download::Failed(error) => (error.clone(), Tone::Critical),
+        };
+        Some(
+            div()
+                .w_full()
+                .flex_shrink_0()
+                .px_3()
+                .py_1()
+                .text_xs()
+                .text_color(cx.theme().tone(tone))
+                .child(crate::copyable_text::copyable_text(
+                    "log-download-status",
+                    text,
+                ))
+                .into_any_element(),
+        )
     }
 
     /// (Re)starts the log stream for the current container and options.
@@ -342,8 +614,6 @@ impl PodToolsView {
             return self.notice("A pod outside a namespace has no logs.", Tone::Unknown, cx);
         }
 
-        let containers = self.container_names();
-        let selected = self.log_options.container.clone();
         let count = self.logs.len();
         let dropped = self.logs.dropped();
 
@@ -423,8 +693,11 @@ impl PodToolsView {
             .size_full()
             .child(
                 h_flex()
+                    .id("pod-log-toolbar")
                     .w_full()
-                    .flex_wrap()
+                    .min_w_0()
+                    .overflow_x_scroll()
+                    .whitespace_nowrap()
                     .flex_shrink_0()
                     .px_3()
                     .py_1p5()
@@ -433,33 +706,18 @@ impl PodToolsView {
                     .border_b_1()
                     .border_color(cx.theme().border)
                     .text_xs()
-                    // A pod with one container needs no picker; one with three
-                    // is unreadable without it.
-                    .when(containers.len() > 1, |this| {
-                        this.children(containers.into_iter().enumerate().map(
-                            |(index, container)| {
-                                // With no container chosen the API serves the
-                                // first one, so that is the one shown as active.
-                                let active = match selected.as_deref() {
-                                    Some(chosen) => chosen == container,
-                                    None => index == 0,
-                                };
-                                let name = container.clone();
-                                Button::new(SharedString::from(format!("container-{container}")))
-                                    .xsmall()
-                                    .when(active, |button| button.primary())
-                                    .when(!active, |button| button.ghost())
-                                    .label(container)
-                                    .on_click(cx.listener(move |view, _, window, cx| {
-                                        let options = LogOptions {
-                                            container: Some(name.clone()),
-                                            ..view.log_options.clone()
-                                        };
-                                        view.set_log_options(options, window, cx);
-                                    }))
-                            },
-                        ))
-                    })
+                    .child(div().w(px(250.)).flex_shrink_0().child(
+                        Select::new(&self.container_picker)
+                            .id("pod-log-container")
+                            .xsmall()
+                            .w_full()
+                            .menu_width(px(300.))
+                            .title_prefix("Container: ")
+                            .placeholder("Select container")
+                            .accessibility_label("Log container")
+                            .search_placeholder("Search containers")
+                            .disabled(self.container_groups.is_empty())
+                    ))
                     .child(div().flex_1())
                     .child(
                         Button::new("previous")
@@ -490,6 +748,25 @@ impl PodToolsView {
                             })),
                     )
                     .child(
+                        Button::new("download-logs")
+                            .xsmall()
+                            .ghost()
+                            .label("Download")
+                            .disabled(self.download_active() || self.log_options.container.is_none())
+                            .tooltip("Save this container's complete available logs; choose a folder and filename")
+                            .on_click(cx.listener(|view, _, window, cx| view.download_logs(window, cx))),
+                    )
+                    .when(matches!(self.download, Download::Running(_)), |this| {
+                        this.child(Button::new("cancel-log-download").xsmall().ghost().label("Cancel")
+                            .on_click(cx.listener(|view, _, _, cx| {
+                                if let Some(abort) = &view.download_abort {
+                                    abort.abort();
+                                    view.download = Download::Cancelling;
+                                    cx.notify();
+                                }
+                            })))
+                    })
+                    .child(
                         Button::new("copy-logs")
                             .xsmall()
                             .ghost()
@@ -500,7 +777,7 @@ impl PodToolsView {
                                 ));
                             })),
                     )
-                    .child(div().text_color(cx.theme().muted_foreground).child(
+                    .child(div().flex_shrink_0().text_color(cx.theme().muted_foreground).child(
                         match (dropped, &self.log_status) {
                             // Saying so matters: what is shown starts
                             // mid-stream, and nothing else would say that.
@@ -512,6 +789,7 @@ impl PodToolsView {
                         },
                     )),
             )
+            .children(self.render_download_status(cx))
             .child(div().flex_1().min_size_0().overflow_hidden().child(body))
             .into_any_element()
     }
@@ -696,6 +974,7 @@ impl PodToolsView {
 
 impl Render for PodToolsView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.sync_container_picker(window, cx);
         let body = match self.tab {
             PodToolTab::Logs => self.render_logs(window, cx),
             PodToolTab::Exec => self.render_exec(cx),
@@ -712,9 +991,74 @@ impl Render for PodToolsView {
 
 #[cfg(test)]
 mod tests {
-    use super::LogLineWidths;
-    use beacon_kube::LogBuffer;
+    use super::{LogLineWidths, container_groups, default_container, log_filename};
+    use beacon_kube::{DynamicObject, LogBuffer, LogOptions, ObjectRef};
     use gpui_kit::{font, px};
+    use serde_json::json;
+
+    #[test]
+    fn log_containers_include_init_and_ephemeral_and_honor_the_default_annotation() {
+        let mut pod: DynamicObject = serde_json::from_value(json!({
+            "apiVersion": "v1", "kind": "Pod",
+            "metadata": {"name": "demo", "namespace": "default", "annotations": {
+                "kubectl.kubernetes.io/default-container": "app"
+            }},
+            "spec": {
+                "containers": [{"name": "sidecar"}, {"name": "app"}],
+                "initContainers": [{"name": "setup"}],
+                "ephemeralContainers": [{"name": "debug"}]
+            }
+        }))
+        .unwrap();
+        let groups = container_groups(&pod);
+        assert_eq!(groups.len(), 3);
+        assert_eq!(groups[0].names, ["sidecar", "app"]);
+        assert_eq!(groups[1].title, "Init containers");
+        assert_eq!(groups[1].names, ["setup"]);
+        assert_eq!(groups[2].title, "Ephemeral containers");
+        assert_eq!(groups[2].names, ["debug"]);
+        assert_eq!(default_container(&pod, &groups).as_deref(), Some("app"));
+
+        pod.metadata.annotations.as_mut().unwrap().insert(
+            "kubectl.kubernetes.io/default-container".into(),
+            "missing".into(),
+        );
+        assert_eq!(default_container(&pod, &groups).as_deref(), Some("sidecar"));
+        pod.data["spec"] = json!({"containers": [{"name": "only"}]});
+        let groups = container_groups(&pod);
+        assert_eq!(default_container(&pod, &groups).as_deref(), Some("only"));
+    }
+
+    #[test]
+    fn log_download_names_are_portable_and_identify_the_source() {
+        let now = "2026-10-09T07:08:09Z".parse().unwrap();
+        let options = LogOptions {
+            container: Some("app".into()),
+            previous: true,
+            timestamps: true,
+        };
+        assert_eq!(
+            log_filename(
+                &ObjectRef::new(Some("default".into()), "demo"),
+                &options,
+                now
+            ),
+            "pod_default_demo_app_20261009-070809-UTC_previous.log"
+        );
+        let name = log_filename(
+            &ObjectRef::new(Some("n".repeat(63)), "p".repeat(253)),
+            &LogOptions {
+                container: Some("unsafe:/\\ name".repeat(20)),
+                ..options
+            },
+            now,
+        );
+        assert!(name.len() < 255);
+        assert!(
+            name.chars()
+                .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '.' | '-' | '_'))
+        );
+    }
 
     #[test]
     fn log_widths_use_measured_geometry_and_only_measure_new_lines() {

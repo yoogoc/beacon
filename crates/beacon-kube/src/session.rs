@@ -428,6 +428,17 @@ impl ClusterSession {
         crate::logs::follow(self.client.clone(), namespace, pod, options, &self.runtime)
     }
 
+    /// Save the selected container's complete available log snapshot.
+    pub async fn download_logs(
+        self: Arc<Self>,
+        namespace: String,
+        pod: String,
+        options: LogOptions,
+        path: std::path::PathBuf,
+    ) -> Result<u64, String> {
+        crate::logs::download(self.client.clone(), namespace, pod, options, path).await
+    }
+
     /// The underlying client, for the operations in [`crate::ops`].
     pub fn client(&self) -> &Client {
         &self.client

@@ -26,6 +26,10 @@ pub struct Cancellable<T> {
 }
 
 impl<T> Cancellable<T> {
+    pub fn abort_handle(&self) -> tokio::task::AbortHandle {
+        self.task.abort_handle()
+    }
+
     pub async fn result(mut self) -> Result<T, tokio::task::JoinError> {
         (&mut self.task).await
     }
