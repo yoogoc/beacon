@@ -18,6 +18,7 @@ mod create;
 pub mod detail;
 mod filters;
 mod icons;
+mod node_pods;
 mod overview;
 pub mod palette;
 mod pod_tools;

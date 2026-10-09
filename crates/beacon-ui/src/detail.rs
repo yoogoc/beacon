@@ -37,6 +37,7 @@ use crate::tls::{self, CertificateInfo};
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DetailTab {
     Overview,
+    Pods,
     /// A ConfigMap's or Secret's keys, one editor each.
     Data,
     Yaml,
@@ -47,6 +48,9 @@ impl DetailTab {
     /// Pod streams and terminals belong to the independent bottom panel.
     fn for_kind(kind: &Kind) -> Vec<Self> {
         let mut tabs = vec![Self::Overview];
+        if kind.resource.group.is_empty() && kind.resource.kind == "Node" {
+            tabs.push(Self::Pods);
+        }
         if data::is_keyed(&kind.resource.group, &kind.resource.kind) {
             tabs.push(Self::Data);
         }
@@ -57,6 +61,7 @@ impl DetailTab {
     fn label(&self) -> &'static str {
         match self {
             Self::Overview => "Overview",
+            Self::Pods => "Pods",
             Self::Data => "Data",
             Self::Yaml => "YAML",
             Self::Events => "Events",
@@ -130,6 +135,7 @@ pub struct DetailView {
     annotations_expanded: bool,
     expanded_sections: BTreeSet<String>,
     overview: crate::overview::Projection,
+    node_pods: Option<Entity<crate::node_pods::NodePodsView>>,
     argo_nodes: Arc<beacon_kube::argo::Nodes>,
     argo_graph: crate::argo::Graph,
     argo_graph_error: Option<String>,
@@ -209,6 +215,7 @@ impl DetailView {
             annotations_expanded: false,
             expanded_sections: BTreeSet::new(),
             overview,
+            node_pods: None,
             argo_nodes: Arc::new(beacon_kube::argo::Nodes::new()),
             argo_graph: crate::argo::Graph::default(),
             argo_graph_error: None,
@@ -283,8 +290,15 @@ impl DetailView {
         if self.tab == tab {
             return;
         }
+        // Replacing the Overview with a nested table changes the retained
+        // paint tree. GPUI Fast 0.1.x can replay obsolete child ranges at
+        // this boundary; draw a fresh frame when entering or leaving Pods.
+        if self.tab == DetailTab::Pods || tab == DetailTab::Pods {
+            window.refresh();
+        }
         self.tab = tab;
         match tab {
+            DetailTab::Pods if self.node_pods.is_none() => self.load_node_pods(window, cx),
             DetailTab::Data if matches!(self.data, Data::Unopened) => self.load_data(window, cx),
             DetailTab::Yaml if matches!(self.yaml, Yaml::Unopened) => self.load_yaml(window, cx),
             _ => {}
@@ -294,6 +308,51 @@ impl DetailView {
 
     fn busy(&self) -> bool {
         self.reviewing || matches!(self.apply, Apply::Running)
+    }
+
+    fn load_node_pods(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(kind) = self
+            .session
+            .discovery()
+            .kinds()
+            .iter()
+            .find(|kind| kind.resource.group.is_empty() && kind.resource.kind == "Pod")
+            .cloned()
+            .map(Arc::new)
+        else {
+            return;
+        };
+        let session = self.session.clone();
+        let node = self.target.name.clone();
+        let pods =
+            cx.new(|cx| crate::node_pods::NodePodsView::new(session, kind, node, window, cx));
+        cx.subscribe(&pods, |_, _, event: &OwnerRequested, cx| {
+            cx.emit(OwnerRequested {
+                kind: event.kind.clone(),
+                target: event.target.clone(),
+            });
+        })
+        .detach();
+        self.node_pods = Some(pods);
+    }
+
+    fn render_node_pods(&self, cx: &mut Context<Self>) -> AnyElement {
+        match &self.node_pods {
+            Some(pods) => div()
+                .size_full()
+                .min_size_0()
+                .child(pods.clone())
+                .into_any_element(),
+            None => div()
+                .p_4()
+                .text_sm()
+                .text_color(cx.theme().muted_foreground)
+                .child(copyable_text(
+                    "node-pods-unavailable",
+                    "The Pod resource is not available in this cluster.",
+                ))
+                .into_any_element(),
+        }
     }
 
     /// Reviews the edited YAML before Server-Side Apply.
@@ -2713,6 +2772,7 @@ impl Render for DetailView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let body = match self.tab {
             DetailTab::Overview => self.render_overview(cx),
+            DetailTab::Pods => self.render_node_pods(cx),
             DetailTab::Data => self.render_data(cx),
             DetailTab::Yaml => self.render_yaml(cx),
             DetailTab::Events => self.render_events(cx),

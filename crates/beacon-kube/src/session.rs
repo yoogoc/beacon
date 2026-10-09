@@ -468,6 +468,11 @@ impl ClusterSession {
         Ok(api.get(&name).await?)
     }
 
+    /// A paginated snapshot with the exact same selectors as a subscription.
+    pub async fn list_objects(self: Arc<Self>, key: WatchKey) -> Result<Vec<Arc<DynamicObject>>> {
+        crate::watch::snapshot(self.client.clone(), key).await
+    }
+
     /// The `additionalPrinterColumns` a kind publishes for itself.
     ///
     /// Read from the CRD the first time a kind is opened and remembered after

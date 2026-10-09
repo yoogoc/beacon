@@ -48,6 +48,7 @@ const FLEX_UNIT: f32 = 140.0;
 
 pub struct ResourceTable {
     context_view: Option<WeakEntity<ClusterView>>,
+    selection_column: bool,
     columns: ColumnSet,
     store: ResourceStore,
     /// The store in display order. Rebuilt whenever the store or the sort
@@ -120,6 +121,7 @@ impl ResourceTable {
     pub fn new(columns: ColumnSet) -> Self {
         Self {
             context_view: None,
+            selection_column: true,
             columns,
             store: ResourceStore::new(),
             rows: Vec::new(),
@@ -134,6 +136,12 @@ impl ResourceTable {
             metrics: Metrics::default(),
             loading: false,
         }
+    }
+
+    /// Related-resource lists use row navigation without batch selection.
+    pub(crate) fn without_selection(mut self) -> Self {
+        self.selection_column = false;
+        self
     }
 
     /// The containing cluster handles actions on the row under the pointer.
@@ -658,7 +666,7 @@ impl SortKey {
 
 impl TableDelegate for ResourceTable {
     fn columns_count(&self, _: &App) -> usize {
-        self.columns.len() + 1
+        self.columns.len() + usize::from(self.selection_column)
     }
 
     /// Draws the component's skeleton rows instead of an empty table. The
@@ -673,7 +681,7 @@ impl TableDelegate for ResourceTable {
     }
 
     fn column(&self, index: usize, _: &App) -> Column {
-        if index == 0 {
+        if self.selection_column && index == 0 {
             return Column::new("select", "")
                 .width(px(44.))
                 .min_width(px(44.))
@@ -682,7 +690,8 @@ impl TableDelegate for ResourceTable {
                 .movable(false)
                 .selectable(false);
         }
-        let Some(definition) = self.columns.columns.get(index - 1) else {
+        let data_index = index - usize::from(self.selection_column);
+        let Some(definition) = self.columns.columns.get(data_index) else {
             return Column::new("", "");
         };
 
@@ -695,7 +704,7 @@ impl TableDelegate for ResourceTable {
             Sort::ByColumn {
                 index: sorted,
                 descending,
-            } if sorted == index - 1 => {
+            } if sorted == data_index => {
                 if descending {
                     ColumnSort::Descending
                 } else {
@@ -718,10 +727,10 @@ impl TableDelegate for ResourceTable {
         _: &mut Window,
         cx: &mut Context<TableState<Self>>,
     ) {
-        if index == 0 {
+        if self.selection_column && index == 0 {
             return;
         }
-        self.sort_by(index - 1, sort);
+        self.sort_by(index - usize::from(self.selection_column), sort);
         cx.notify();
     }
 
@@ -731,7 +740,7 @@ impl TableDelegate for ResourceTable {
         _: &mut Window,
         cx: &mut Context<TableState<Self>>,
     ) -> impl IntoElement {
-        if column != 0 {
+        if !self.selection_column || column != 0 {
             return div()
                 .size_full()
                 .child(self.column(column, cx).name)
@@ -895,7 +904,7 @@ impl TableDelegate for ResourceTable {
         _: &mut Window,
         cx: &mut Context<TableState<Self>>,
     ) -> impl IntoElement {
-        if column == 0 {
+        if self.selection_column && column == 0 {
             let Some(key) = self.key_at(row).cloned() else {
                 return h_flex().into_any_element();
             };
@@ -939,7 +948,8 @@ impl TableDelegate for ResourceTable {
                 )
                 .into_any_element();
         }
-        let Some((definition, value)) = self.cell(row, column - 1) else {
+        let Some((definition, value)) = self.cell(row, column - usize::from(self.selection_column))
+        else {
             return h_flex().into_any_element();
         };
 
@@ -1055,10 +1065,10 @@ impl TableDelegate for ResourceTable {
     /// The table's own keyboard navigation and copy support read cells through
     /// this, so it has to produce the same text the row shows.
     fn cell_text(&self, row: usize, column: usize, _: &App) -> String {
-        if column == 0 {
+        if self.selection_column && column == 0 {
             return String::new();
         }
-        self.cell(row, column - 1)
+        self.cell(row, column - usize::from(self.selection_column))
             .map(|(_, value)| value.display().to_string())
             .unwrap_or_default()
     }

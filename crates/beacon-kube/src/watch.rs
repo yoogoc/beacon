@@ -25,7 +25,7 @@ use std::{
 use futures::{Stream, StreamExt as _, channel::mpsc};
 use kube::{
     Api,
-    api::{ApiResource, DynamicObject},
+    api::{ApiResource, DynamicObject, ListParams},
     runtime::watcher::{self, Event},
 };
 
@@ -128,8 +128,20 @@ impl WatchKey {
         .with_fields(format!("involvedObject.uid={uid}"))
     }
 
+    /// Scheduled Pods on one node, across every namespace.
+    pub fn pods_on_node(node: &str) -> Self {
+        Self::all(crate::resources::pod()).with_fields(format!("spec.nodeName={node}"))
+    }
+
     /// What a log line says about this watch: `Pod`, or `Pod in kube-system`.
     pub fn describe(&self) -> String {
+        if let Some(node) = self
+            .fields
+            .as_deref()
+            .and_then(|fields| fields.strip_prefix("spec.nodeName="))
+        {
+            return format!("{} on node {node}", self.resource.kind);
+        }
         match &self.namespace {
             Some(namespace) => format!("{} in {namespace}", self.resource.kind),
             None => self.resource.kind.clone(),
@@ -156,6 +168,31 @@ impl WatchKey {
         // outright rather than degrading, so turning it on wants a capability
         // probe first. See docs/DESIGN.md §4.3.
         config
+    }
+}
+
+/// Read a complete snapshot using the same scope and selectors as its watch.
+/// Used before subscribing so a related-resource pane can show list errors.
+pub(crate) async fn snapshot(
+    client: kube::Client,
+    key: WatchKey,
+) -> crate::Result<Vec<Arc<DynamicObject>>> {
+    let api = key.api(client);
+    let mut params = ListParams::default().limit(PAGE_SIZE);
+    if let Some(labels) = &key.labels {
+        params = params.labels(labels);
+    }
+    if let Some(fields) = &key.fields {
+        params = params.fields(fields);
+    }
+    let mut objects = Vec::new();
+    loop {
+        let page = api.list(&params).await?;
+        objects.extend(page.items.into_iter().map(|object| Arc::new(slim(object))));
+        match page.metadata.continue_.filter(|token| !token.is_empty()) {
+            Some(token) => params = params.continue_token(&token),
+            None => return Ok(objects),
+        }
     }
 }
 
@@ -532,6 +569,113 @@ fn flush(store: &Arc<Mutex<ResourceStore>>, subscribers: &Subscribers, batch: De
 mod tests {
     use super::*;
     use crate::resources;
+
+    async fn snapshot_server(
+        responses: Vec<(&'static str, serde_json::Value)>,
+    ) -> (kube::Client, tokio::task::JoinHandle<Vec<String>>) {
+        use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let mut requests = Vec::new();
+            for (status, body) in responses {
+                let (mut socket, _) = listener.accept().await.unwrap();
+                let mut header = Vec::new();
+                while !header.ends_with(b"\r\n\r\n") {
+                    header.push(socket.read_u8().await.unwrap());
+                    assert!(header.len() < 8192);
+                }
+                requests.push(String::from_utf8(header).unwrap());
+                let body = body.to_string();
+                socket.write_all(format!("HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", body.len()).as_bytes()).await.unwrap();
+                socket.write_all(body.as_bytes()).await.unwrap();
+            }
+            requests
+        });
+        let client = kube::Client::try_from(kube::Config::new(
+            format!("http://{address}").parse().unwrap(),
+        ))
+        .unwrap();
+        (client, server)
+    }
+
+    #[tokio::test]
+    async fn node_pod_snapshots_preserve_namespaces_and_selectors_across_pages() {
+        use serde_json::json;
+        let page = |namespace, token| {
+            json!({
+                "apiVersion": "v1", "kind": "PodList", "metadata": {"continue": token},
+                "items": [{"apiVersion":"v1", "kind":"Pod", "metadata": {
+                    "name":"same-name", "namespace":namespace,
+                    "managedFields": [{"manager":"controller"}]
+                }, "spec":{"nodeName":"worker-a"}}]
+            })
+        };
+        let (client, server) = snapshot_server(vec![
+            ("200 OK", page("default", "next/page")),
+            ("200 OK", page("kube-system", "")),
+        ])
+        .await;
+        let key = WatchKey::pods_on_node("worker-a").with_labels("app=web");
+        assert!(key.namespace.is_none());
+        assert_eq!(key.describe(), "Pod on node worker-a");
+        let objects = tokio::time::timeout(Duration::from_secs(10), snapshot(client, key))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(objects.len(), 2);
+        assert_eq!(objects[0].metadata.namespace.as_deref(), Some("default"));
+        assert_eq!(
+            objects[1].metadata.namespace.as_deref(),
+            Some("kube-system")
+        );
+        assert!(
+            objects
+                .iter()
+                .all(|object| object.metadata.managed_fields.is_none())
+        );
+        let requests = server.await.unwrap();
+        for (index, request) in requests.iter().enumerate() {
+            let uri = request.split_whitespace().nth(1).unwrap();
+            let url = url::Url::parse(&format!("http://mock{uri}")).unwrap();
+            assert_eq!(url.path(), "/api/v1/pods");
+            let query: std::collections::BTreeMap<_, _> = url.query_pairs().collect();
+            assert_eq!(
+                query.get("fieldSelector").map(|value| value.as_ref()),
+                Some("spec.nodeName=worker-a")
+            );
+            assert_eq!(
+                query.get("labelSelector").map(|value| value.as_ref()),
+                Some("app=web")
+            );
+            assert_eq!(query.get("limit").map(|value| value.as_ref()), Some("500"));
+            assert_eq!(
+                query.get("continue").map(|value| value.as_ref()),
+                if index == 0 { None } else { Some("next/page") }
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn a_denied_node_pod_list_returns_the_api_error_instead_of_an_empty_list() {
+        let (client, server) = snapshot_server(vec![(
+            "403 Forbidden",
+            serde_json::json!({
+                "apiVersion":"v1", "kind":"Status", "status":"Failure",
+                "message":"pods is forbidden", "reason":"Forbidden", "code":403
+            }),
+        )])
+        .await;
+        let error = tokio::time::timeout(
+            Duration::from_secs(10),
+            snapshot(client, WatchKey::pods_on_node("worker-a")),
+        )
+        .await
+        .unwrap()
+        .unwrap_err();
+        assert_eq!(error.user_message(), "pods is forbidden (HTTP 403)");
+        server.await.unwrap();
+    }
 
     #[tokio::test]
     async fn manual_disconnect_stops_watches_with_live_subscribers_immediately() {
