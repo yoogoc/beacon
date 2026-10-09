@@ -1,0 +1,2 @@
+# Signed payloads must keep their exact bytes, including on Windows checkouts.
+crates/beacon-updater/tests/fixtures/package -text
