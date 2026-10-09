@@ -1,12 +1,13 @@
 //! Pod logs, commands and interactive shells in the independent bottom panel.
 
-use std::{collections::VecDeque, path::PathBuf, sync::Arc};
+use std::{cell::RefCell, collections::VecDeque, path::PathBuf, rc::Rc, sync::Arc};
 
 use beacon_kube::{
     ClusterSession, DynamicObject, LogBuffer, LogEvent, LogOptions, ObjectRef, Rules,
 };
+use gpui_kit::base::TestSupportExt as _;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::input::{Input, InputState};
+use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::component::scroll::{Scrollbar, ScrollbarMode};
 use gpui_kit::component::select::{SearchableVec, Select, SelectEvent, SelectGroup, SelectState};
 use gpui_kit::component::spinner::Spinner;
@@ -51,6 +52,11 @@ pub(crate) struct PodToolsView {
     log_status: LogStatus,
     log_scroll: UniformListScrollHandle,
     log_widths: LogLineWidths,
+    log_search: Entity<InputState>,
+    log_display: Rc<RefCell<crate::pod_logs::Display>>,
+    log_wrap_scroll: ListState,
+    log_wrap: bool,
+    log_follow: bool,
     container_groups: Vec<ContainerGroup>,
     container_picker: Entity<SelectState<ContainerChoices>>,
     download: Download,
@@ -60,6 +66,7 @@ pub(crate) struct PodToolsView {
     _download_task: Option<Task<()>>,
     _exec_task: Option<Task<()>>,
     _container_subscription: Subscription,
+    _search_subscription: Subscription,
 }
 
 pub(crate) struct PodToolsClosed;
@@ -175,9 +182,140 @@ fn log_filename(
 /// lines need shaping; scrolling through history reuses their measurements.
 #[derive(Default)]
 struct LogLineWidths {
+    wrapped_font: Option<(Font, Pixels)>,
     font: Option<(Font, Pixels)>,
     dropped: usize,
     widths: VecDeque<Pixels>,
+}
+
+fn render_log_row(row: &crate::pod_logs::Row, wrap: bool, cx: &App) -> AnyElement {
+    let highlights = row
+        .matches
+        .iter()
+        .cloned()
+        .map(|range| {
+            (
+                range,
+                HighlightStyle {
+                    background_color: Some(cx.theme().warning.opacity(0.3)),
+                    ..Default::default()
+                },
+            )
+        })
+        .collect();
+    div()
+        .id(("pod-log-line", row.id))
+        .px_3()
+        .min_h(px(18.))
+        .font_family("monospace")
+        .text_xs()
+        .when(wrap, |row| row.w_full())
+        .when(!wrap, |row| row.whitespace_nowrap())
+        .child(crate::copyable_text::highlighted_text(
+            "line",
+            row.text.clone(),
+            highlights,
+        ))
+        .test_support()
+        .into_any_element()
+}
+
+struct LogCanvas<'a> {
+    logs: &'a LogBuffer,
+    display: Rc<RefCell<crate::pod_logs::Display>>,
+    wrap: bool,
+    wrapped: &'a ListState,
+    unwrapped: &'a UniformListScrollHandle,
+    widths: &'a mut LogLineWidths,
+}
+
+impl LogCanvas<'_> {
+    fn render(&mut self, window: &mut Window, cx: &App) -> AnyElement {
+        let count = self.display.borrow().rows.len();
+        let dropped = self.logs.dropped();
+        let wrapped_font = (window.text_style().font(), window.rem_size());
+        if self.widths.wrapped_font.as_ref() != Some(&wrapped_font) {
+            self.wrapped.remeasure();
+            self.widths.wrapped_font = Some(wrapped_font);
+        }
+        let display = self.display.clone();
+        if self.wrap {
+            div()
+                .relative()
+                .size_full()
+                .min_w_0()
+                .overflow_hidden()
+                .child(
+                    list(self.wrapped.clone(), move |index, _, cx| {
+                        display
+                            .borrow()
+                            .rows
+                            .get(index)
+                            .map(|row| render_log_row(row, true, cx))
+                            .unwrap_or_else(|| div().into_any_element())
+                    })
+                    .size_full()
+                    .pr_3(),
+                )
+                .child(Scrollbar::vertical(self.wrapped))
+                .into_any_element()
+        } else {
+            let font = Font {
+                family: "monospace".into(),
+                ..window.text_style().font()
+            };
+            let font_size = window.rem_size() * 0.75;
+            self.widths
+                .widest(self.logs, font.clone(), font_size, |line| {
+                    window
+                        .text_system()
+                        .shape_line(
+                            line.to_owned().into(),
+                            font_size,
+                            &[TextRun {
+                                len: line.len(),
+                                font: font.clone(),
+                                color: cx.theme().foreground,
+                                background_color: None,
+                                underline: None,
+                                strikethrough: None,
+                            }],
+                            None,
+                        )
+                        .width
+                });
+            let widest = self
+                .display
+                .borrow()
+                .rows
+                .iter()
+                .enumerate()
+                .map(|(index, row)| (index, self.widths.widths[row.id - dropped]))
+                .reduce(|a, b| if b.1 > a.1 { b } else { a })
+                .map(|(index, _)| index);
+            let list = uniform_list("log-lines", count, move |range, _, cx| {
+                let display = display.borrow();
+                range
+                    .filter_map(|index| display.rows.get(index))
+                    .map(|row| render_log_row(row, false, cx))
+                    .collect()
+            })
+            .with_width_from_item(widest)
+            .with_horizontal_sizing_behavior(ListHorizontalSizingBehavior::Unconstrained)
+            .track_scroll(self.unwrapped)
+            .size_full()
+            .pb_3();
+            div()
+                .relative()
+                .size_full()
+                .min_w_0()
+                .overflow_hidden()
+                .child(list)
+                .child(Scrollbar::horizontal(self.unwrapped).mode(ScrollbarMode::Always))
+                .child(Scrollbar::vertical(self.unwrapped))
+                .into_any_element()
+        }
+    }
 }
 
 impl LogLineWidths {
@@ -256,6 +394,18 @@ impl PodToolsView {
                 }
             },
         );
+        let log_search = cx.new(|cx| {
+            InputState::new(window, cx)
+                .placeholder("Search logs")
+                .clean_on_escape()
+        });
+        let search_subscription = cx.subscribe_in(&log_search, window, |view, _, event, _, cx| {
+            if matches!(event, InputEvent::Change) {
+                view.update_log_display(cx);
+                view.set_log_follow(false);
+                cx.notify();
+            }
+        });
         let mut this = Self {
             session,
             target: ObjectRef::of(&object),
@@ -273,6 +423,11 @@ impl PodToolsView {
             log_status: LogStatus::Unopened,
             log_scroll: UniformListScrollHandle::new(),
             log_widths: LogLineWidths::default(),
+            log_search,
+            log_display: Rc::default(),
+            log_wrap_scroll: ListState::new(0, ListAlignment::Top, px(300.)),
+            log_wrap: false,
+            log_follow: true,
             container_groups,
             container_picker,
             download: Download::Idle,
@@ -282,6 +437,7 @@ impl PodToolsView {
             _download_task: None,
             _exec_task: None,
             _container_subscription: subscription,
+            _search_subscription: search_subscription,
         };
         this.select(tab, window, cx);
         this
@@ -537,6 +693,10 @@ impl PodToolsView {
         self.logs.clear();
         self.log_widths = LogLineWidths::default();
         self.log_scroll = UniformListScrollHandle::new();
+        *self.log_display.borrow_mut() = Default::default();
+        self.log_wrap_scroll.reset(0);
+        self.log_follow = true;
+        self.log_wrap_scroll.set_follow_mode(FollowMode::Tail);
         self.log_status = LogStatus::Following;
 
         let stream = self.session.follow_logs(
@@ -555,11 +715,11 @@ impl PodToolsView {
                         // Yanking somebody back to the bottom because a line
                         // arrived while they were reading history is the worst
                         // thing a log pane can do.
-                        let follow = view.is_at_tail();
+                        let follow = view.log_follow && view.is_at_tail();
                         view.logs.extend(lines);
-                        if follow && !view.logs.is_empty() {
-                            view.log_scroll
-                                .scroll_to_item(view.logs.len() - 1, ScrollStrategy::Bottom);
+                        view.update_log_display(cx);
+                        if follow {
+                            view.scroll_logs_to_end();
                         }
                     }
                     LogEvent::Closed => view.log_status = LogStatus::Ended,
@@ -578,6 +738,11 @@ impl PodToolsView {
     /// yes: a pane that has not been scrolled is at the bottom of an empty
     /// list.
     fn is_at_tail(&self) -> bool {
+        if self.log_wrap {
+            // Most virtualized rows have unknown heights. Tail state records
+            // user scrolling without needing to measure the entire stream.
+            return self.log_wrap_scroll.is_following_tail();
+        }
         let state = self.log_scroll.0.borrow();
         let offset = state.base_handle.offset().y;
         let max = state.base_handle.max_offset().y;
@@ -589,6 +754,76 @@ impl PodToolsView {
         // slack keeps "near enough" from meaning "only exactly".
         let from_bottom = max + offset;
         from_bottom <= px(24.)
+    }
+
+    fn update_log_display(&mut self, cx: &App) {
+        let old_top = self.unwrapped_log_top();
+        let query = self.log_search.read(cx).value();
+        let change = self.log_display.borrow_mut().update(&self.logs, &query);
+        if change.reset {
+            self.log_scroll = UniformListScrollHandle::new();
+            self.log_wrap_scroll
+                .reset(self.log_display.borrow().rows.len());
+        } else {
+            if change.removed > 0 {
+                self.log_wrap_scroll.splice(0..change.removed, 0);
+                self.log_scroll
+                    .scroll_to_item(old_top.saturating_sub(change.removed), ScrollStrategy::Top);
+            }
+            if change.added > 0 {
+                let count = self.log_wrap_scroll.item_count();
+                self.log_wrap_scroll.splice(count..count, change.added);
+            }
+        }
+    }
+
+    fn scroll_logs_to_end(&self) {
+        let count = self.log_display.borrow().rows.len();
+        if count > 0 {
+            self.log_scroll
+                .scroll_to_item(count - 1, ScrollStrategy::Bottom);
+            self.log_wrap_scroll.scroll_to_end();
+        }
+    }
+
+    fn set_log_follow(&mut self, follow: bool) {
+        self.log_follow = follow;
+        self.log_wrap_scroll.set_follow_mode(if follow {
+            FollowMode::Tail
+        } else {
+            FollowMode::Normal
+        });
+        if follow {
+            self.scroll_logs_to_end();
+        }
+    }
+
+    fn unwrapped_log_top(&self) -> usize {
+        let scroll = self.log_scroll.0.borrow();
+        scroll
+            .deferred_scroll_to_item
+            .as_ref()
+            .map(|item| item.item_index)
+            .unwrap_or_else(|| scroll.base_handle.logical_scroll_top().0)
+    }
+
+    fn toggle_log_wrap(&mut self, cx: &mut Context<Self>) {
+        let at_tail = self.is_at_tail();
+        let index = if self.log_wrap {
+            self.log_wrap_scroll.logical_scroll_top().item_ix
+        } else {
+            self.unwrapped_log_top()
+        };
+        self.log_wrap = !self.log_wrap;
+        self.log_scroll.scroll_to_item(index, ScrollStrategy::Top);
+        self.log_wrap_scroll.scroll_to(ListOffset {
+            item_ix: index,
+            offset_in_item: px(0.),
+        });
+        if self.log_follow && at_tail {
+            self.set_log_follow(true);
+        }
+        cx.notify();
     }
 
     fn set_log_options(
@@ -622,79 +857,24 @@ impl PodToolsView {
             return self.notice("A pod outside a namespace has no logs.", Tone::Unknown, cx);
         }
 
-        let count = self.logs.len();
+        let total = self.logs.len();
+        let count = self.log_display.borrow().rows.len();
         let dropped = self.logs.dropped();
 
         let body: AnyElement = match &self.log_status {
             LogStatus::Failed(error) => self.notice(error.clone(), Tone::Critical, cx),
             LogStatus::Unopened => self.notice("Opening the stream…", Tone::Progressing, cx),
-            _ if count == 0 => self.notice("Nothing logged yet.", Tone::Unknown, cx),
-            _ => {
-                // One line per row, never wrapped: a wrapped line has no fixed
-                // height, and a fixed height is what lets fifty thousand of
-                // them scroll at all.
-                let lines: Vec<SharedString> = self
-                    .logs
-                    .lines()
-                    .map(|line| SharedString::from(line.to_string()))
-                    .collect();
-
-                let font = Font {
-                    family: "monospace".into(),
-                    ..window.text_style().font()
-                };
-                let font_size = window.rem_size() * 0.75;
-                let widest = self
-                    .log_widths
-                    .widest(&self.logs, font.clone(), font_size, |line| {
-                        window
-                            .text_system()
-                            .shape_line(
-                                line.to_string().into(),
-                                font_size,
-                                &[TextRun {
-                                    len: line.len(),
-                                    font: font.clone(),
-                                    color: cx.theme().foreground,
-                                    background_color: None,
-                                    underline: None,
-                                    strikethrough: None,
-                                }],
-                                None,
-                            )
-                            .width
-                    });
-
-                let list = uniform_list("log-lines", lines.len(), move |range, _, _| {
-                    range
-                        .filter_map(|index| lines.get(index).cloned().map(|line| (index, line)))
-                        .map(|(index, line)| {
-                            div()
-                                .id(("pod-log-line", index))
-                                .px_3()
-                                .font_family("monospace")
-                                .text_xs()
-                                .whitespace_nowrap()
-                                .child(crate::copyable_text::copyable_text("line", line))
-                        })
-                        .collect()
-                })
-                .with_width_from_item(widest)
-                .with_horizontal_sizing_behavior(ListHorizontalSizingBehavior::Unconstrained)
-                .track_scroll(&self.log_scroll)
-                .size_full()
-                // Leave the last line above the persistent horizontal thumb.
-                .pb_3();
-
-                div()
-                    .relative()
-                    .size_full()
-                    .min_w_0()
-                    .overflow_hidden()
-                    .child(list)
-                    .child(Scrollbar::horizontal(&self.log_scroll).mode(ScrollbarMode::Always))
-                    .into_any_element()
+            _ if total == 0 => self.notice("Nothing logged yet.", Tone::Unknown, cx),
+            _ if count == 0 => self.notice("No log lines match this search.", Tone::Unknown, cx),
+            _ => LogCanvas {
+                logs: &self.logs,
+                display: self.log_display.clone(),
+                wrap: self.log_wrap,
+                wrapped: &self.log_wrap_scroll,
+                unwrapped: &self.log_scroll,
+                widths: &mut self.log_widths,
             }
+            .render(window, cx),
         };
 
         v_flex()
@@ -726,7 +906,26 @@ impl PodToolsView {
                             .search_placeholder("Search containers")
                             .disabled(self.container_groups.is_empty())
                     ))
+                    .child(div().w(px(180.)).flex_shrink_0().child(Input::new(&self.log_search).id("pod-log-search").xsmall()))
                     .child(div().flex_1())
+                    .child(Button::new("pause-log-follow").xsmall()
+                        .when(!self.log_follow, |button| button.primary())
+                        .when(self.log_follow, |button| button.ghost())
+                        .label(if self.log_follow { "Pause follow" } else { "Resume follow" })
+                        .tooltip("Pause automatic scrolling; logs continue to arrive")
+                        .on_click(cx.listener(|view, _, _, cx| {
+                            view.set_log_follow(!view.log_follow);
+                            cx.notify();
+                        })))
+                    .child(Button::new("latest-log-line").xsmall().ghost().label("Latest")
+                        .on_click(cx.listener(|view, _, _, cx| {
+                            view.set_log_follow(true);
+                            cx.notify();
+                        })))
+                    .child(Button::new("wrap-log-lines").xsmall()
+                        .when(self.log_wrap, |button| button.primary())
+                        .when(!self.log_wrap, |button| button.ghost()).label("Wrap")
+                        .on_click(cx.listener(|view, _, _, cx| view.toggle_log_wrap(cx))))
                     .child(
                         Button::new("previous")
                             .xsmall()
@@ -779,9 +978,10 @@ impl PodToolsView {
                             .xsmall()
                             .ghost()
                             .label("Copy")
+                            .tooltip("Copy displayed log lines, including the current search filter")
                             .on_click(cx.listener(|view, _, _, cx| {
                                 cx.write_to_clipboard(ClipboardItem::new_string(
-                                    view.logs.to_text(),
+                                    view.log_display.borrow().text(),
                                 ));
                             })),
                     )
@@ -789,10 +989,10 @@ impl PodToolsView {
                         match (dropped, &self.log_status) {
                             // Saying so matters: what is shown starts
                             // mid-stream, and nothing else would say that.
-                            (0, LogStatus::Ended) => format!("{count} lines · ended"),
-                            (0, _) => format!("{count} lines"),
+                            (0, LogStatus::Ended) => format!("{count}/{total} lines · ended"),
+                            (0, _) => format!("{count}/{total} lines"),
                             (dropped, _) => {
-                                format!("{count} lines · {dropped} older dropped")
+                                format!("{count}/{total} lines · {dropped} older dropped")
                             }
                         },
                     )),
@@ -994,6 +1194,228 @@ impl Render for PodToolsView {
             .bg(cx.theme().background)
             .child(self.render_header(cx))
             .child(div().flex_1().min_h_0().overflow_hidden().child(body))
+    }
+}
+
+#[cfg(all(test, feature = "ui-tests"))]
+mod rendering_tests {
+    use super::*;
+    use gpui_kit::test::TestWindowExt as _;
+
+    struct Pane {
+        logs: LogBuffer,
+        display: Rc<RefCell<crate::pod_logs::Display>>,
+        wrap: bool,
+        width: Pixels,
+        wrapped: ListState,
+        unwrapped: UniformListScrollHandle,
+        widths: LogLineWidths,
+    }
+    impl Render for Pane {
+        fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            div().id("test-log-pane").w(self.width).h(px(350.)).child(
+                LogCanvas {
+                    logs: &self.logs,
+                    display: self.display.clone(),
+                    wrap: self.wrap,
+                    wrapped: &self.wrapped,
+                    unwrapped: &self.unwrapped,
+                    widths: &mut self.widths,
+                }
+                .render(window, cx),
+            )
+        }
+    }
+
+    #[::core::prelude::v1::test]
+    fn log_canvas_wraps_long_lines_reflows_and_keeps_horizontal_scroll_without_wrap() {
+        let cx = &mut TestAppContext::single();
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            cx.set_reduce_motion(true);
+        });
+        let (window, pane) = cx.update(|cx| {
+            gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
+                window.set_view_retention(false);
+                let mut logs = LogBuffer::new();
+                logs.extend([
+                    "ERROR ".repeat(30),
+                    "ERROR short".to_owned(),
+                    "f".repeat(180),
+                ]);
+                let mut display = crate::pod_logs::Display::default();
+                display.update(&logs, "");
+                cx.new(|_| Pane {
+                    logs,
+                    display: Rc::new(RefCell::new(display)),
+                    wrap: false,
+                    width: px(300.),
+                    wrapped: ListState::new(3, ListAlignment::Top, px(300.)),
+                    unwrapped: UniformListScrollHandle::new(),
+                    widths: LogLineWidths::default(),
+                })
+            })
+            .unwrap()
+        });
+        let draw = |cx: &mut TestAppContext| {
+            cx.update_window(window, |_, window, cx| window.render_frame(cx))
+                .unwrap()
+        };
+        draw(cx);
+        assert!(
+            pane.read_with(cx, |pane, _| pane
+                .unwrapped
+                .0
+                .borrow()
+                .base_handle
+                .max_offset()
+                .x)
+                > px(0.)
+        );
+        pane.update(cx, |pane, cx| {
+            pane.wrap = true;
+            cx.notify();
+        });
+        draw(cx);
+        let wide_height = cx
+            .update_window(window, |_, window, _| {
+                let first = window.find(("pod-log-line", 0usize)).bounds();
+                let second = window.find(("pod-log-line", 1usize)).bounds();
+                assert!(first.size.height > px(18.));
+                assert!(second.origin.y >= first.bottom());
+                first.size.height
+            })
+            .unwrap();
+        pane.update(cx, |pane, cx| {
+            pane.width = px(180.);
+            cx.notify();
+        });
+        draw(cx);
+        cx.update_window(window, |_, window, _| {
+            assert!(window.find(("pod-log-line", 0usize)).bounds().size.height > wide_height);
+        })
+        .unwrap();
+        pane.update(cx, |pane, cx| {
+            pane.display.borrow_mut().update(&pane.logs, "error");
+            pane.wrapped.reset(2);
+            cx.notify();
+        });
+        draw(cx);
+        assert_eq!(
+            pane.read_with(cx, |pane, _| pane.display.borrow().text()),
+            format!("{}\nERROR short", "ERROR ".repeat(30))
+        );
+        pane.update(cx, |pane, cx| {
+            pane.logs.push("ERROR new".into());
+            let change = pane.display.borrow_mut().update(&pane.logs, "error");
+            assert_eq!(change.added, 1);
+            let offset = pane.wrapped.logical_scroll_top();
+            pane.wrapped.splice(2..2, 1);
+            assert_eq!(
+                (
+                    pane.wrapped.logical_scroll_top().item_ix,
+                    pane.wrapped.logical_scroll_top().offset_in_item
+                ),
+                (offset.item_ix, offset.offset_in_item),
+                "arriving logs preserve a paused scroll position"
+            );
+            pane.wrapped.scroll_to_end();
+            cx.notify();
+        });
+        draw(cx);
+        cx.update_window(window, |_, window, _| {
+            assert!(
+                window.find(("pod-log-line", 3usize)).visible(),
+                "Latest reveals the newest matching line even when all lines fit"
+            );
+        })
+        .unwrap();
+    }
+
+    #[::core::prelude::v1::test]
+    fn wrapped_logs_follow_and_pause_without_measuring_all_rows() {
+        let cx = &mut TestAppContext::single();
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            cx.set_reduce_motion(true);
+        });
+        let (window, pane) = cx.update(|cx| {
+            gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
+                window.set_view_retention(false);
+                let mut logs = LogBuffer::new();
+                logs.extend((0..5000).map(|index| format!("line {index}")));
+                let mut display = crate::pod_logs::Display::default();
+                display.update(&logs, "");
+                let wrapped = ListState::new(5000, ListAlignment::Top, px(300.));
+                wrapped.set_follow_mode(FollowMode::Tail);
+                cx.new(|_| Pane {
+                    logs,
+                    display: Rc::new(RefCell::new(display)),
+                    wrap: true,
+                    width: px(300.),
+                    wrapped,
+                    unwrapped: UniformListScrollHandle::new(),
+                    widths: LogLineWidths::default(),
+                })
+            })
+            .unwrap()
+        });
+        let draw = |cx: &mut TestAppContext| {
+            cx.update_window(window, |_, window, cx| window.render_frame(cx))
+                .unwrap()
+        };
+        draw(cx);
+        pane.update(cx, |pane, cx| {
+            pane.wrapped.scroll_by(px(-200.));
+            cx.notify();
+        });
+        draw(cx);
+        let before = pane.read_with(cx, |pane, _| {
+            assert!(!pane.wrapped.is_following_tail());
+            assert!(
+                pane.wrapped.is_scrolled_to_end().is_none(),
+                "off-screen heights remain unmeasured"
+            );
+            pane.wrapped.logical_scroll_top().item_ix
+        });
+        pane.update(cx, |pane, cx| {
+            pane.logs.push("line 5000".into());
+            pane.display.borrow_mut().update(&pane.logs, "");
+            pane.wrapped.splice(5000..5000, 1);
+            cx.notify();
+        });
+        draw(cx);
+        assert_eq!(
+            pane.read_with(cx, |pane, _| pane.wrapped.logical_scroll_top().item_ix),
+            before
+        );
+        pane.update(cx, |pane, cx| {
+            pane.wrapped.set_follow_mode(FollowMode::Normal);
+            pane.wrapped.scroll_to_end();
+            cx.notify();
+        });
+        draw(cx);
+        let before = pane.read_with(cx, |pane, _| pane.wrapped.logical_scroll_top().item_ix);
+        pane.update(cx, |pane, cx| {
+            pane.logs.push("line 5001".into());
+            pane.display.borrow_mut().update(&pane.logs, "");
+            pane.wrapped.splice(5001..5001, 1);
+            cx.notify();
+        });
+        draw(cx);
+        assert_eq!(
+            pane.read_with(cx, |pane, _| pane.wrapped.logical_scroll_top().item_ix),
+            before
+        );
+        pane.update(cx, |pane, cx| {
+            pane.wrapped.set_follow_mode(FollowMode::Tail);
+            cx.notify();
+        });
+        draw(cx);
+        cx.update_window(window, |_, window, _| {
+            assert!(window.find(("pod-log-line", 5001usize)).visible())
+        })
+        .unwrap();
     }
 }
 

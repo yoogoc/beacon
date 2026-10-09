@@ -42,6 +42,8 @@ use crate::prompt::{Ask, Prompt, PromptEvent};
 use crate::table::ResourceTable;
 use crate::theme::{BeaconTheme as _, Tone};
 
+mod list_settings;
+
 /// The namespace picker's entry for "do not scope at all". A namespace cannot
 /// contain a space, so this can never collide with a real one.
 const ALL_NAMESPACES: &str = "All namespaces";
@@ -134,6 +136,7 @@ pub struct ClusterView {
     row_search: Entity<InputState>,
 
     table: Entity<TableState<ResourceTable>>,
+    list_settings: list_settings::ListSettings,
 
     /// The panel for the selected object. `None` means nothing is selected, or
     /// the user closed it.
@@ -301,6 +304,7 @@ impl ClusterView {
             sidebar_query: String::new(),
             row_search,
             table,
+            list_settings: list_settings::ListSettings::new(window, cx),
             detail: None,
             pending_reveal: None,
             split,
@@ -1079,6 +1083,7 @@ impl ClusterView {
         tracing::info!(kind = %kind.display_name(), "showing");
         self.mode = Mode::Objects;
         self.kind = Some(kind);
+        self.list_settings.close();
         self.filter_menu_open = None;
         self.label_menu_open = false;
         self.label_error = None;
@@ -1215,8 +1220,10 @@ impl ClusterView {
         };
 
         let columns = self.columns(&kind, None);
+        let layout = self.resource_preferences(cx).columns;
         self.table.update(cx, |state, cx| {
             state.delegate_mut().reset(columns);
+            state.delegate_mut().apply_layout(layout);
             // The table lays its columns out once and caches the result, so a
             // different set of them is not visible until it is told to look
             // again. Without this the header keeps the previous kind's shape
@@ -1451,12 +1458,24 @@ impl ClusterView {
         let table = cx.subscribe_in(
             &self.table.clone(),
             window,
-            |view, _, event: &TableEvent, window, cx| {
+            |view, table, event: &TableEvent, window, cx| {
                 // A single click is enough: in a list of pods, picking a row is
                 // always a request to look at it.
                 if let TableEvent::SelectRow(row) = event {
                     view.open_detail(*row, window, cx);
+                } else if let TableEvent::ColumnWidthsChanged(widths) = event {
+                    let layout = table.update(cx, |table, _| {
+                        table.delegate_mut().update_widths(widths);
+                        table.delegate().layout_snapshot()
+                    });
+                    view.persist_layout(layout, cx);
                 }
+            },
+        );
+        let layout = cx.subscribe(
+            &self.table.clone(),
+            |view, _, event: &crate::table::TableLayoutChanged, cx| {
+                view.persist_layout(event.0.clone(), cx);
             },
         );
 
@@ -1514,7 +1533,9 @@ impl ClusterView {
             label_input,
             picker_search,
             table,
+            layout,
         ];
+        self.listen_list_settings(window, cx);
     }
 
     /// Keeps the picker's list in step with the namespaces the cluster has.
@@ -1898,6 +1919,7 @@ impl ClusterView {
                     if open {
                         view.filter_menu_open = None;
                         view.label_menu_open = false;
+                        view.list_settings.close();
                         view.picker_search
                             .update(cx, |input, cx| input.set_value("", window, cx));
                     }
@@ -2108,6 +2130,7 @@ impl ClusterView {
                     if *open {
                         view.filter_menu_open = None;
                         view.namespace_menu_open = false;
+                        view.list_settings.close();
                         view.picker_search
                             .update(cx, |input, cx| input.set_value("", window, cx));
                         view.label_input.read(cx).focus_handle(cx).focus(window, cx);
@@ -2197,6 +2220,7 @@ impl ClusterView {
                         view.filter_menu_open = Some(field);
                         view.namespace_menu_open = false;
                         view.label_menu_open = false;
+                        view.list_settings.close();
                         view.picker_search
                             .update(cx, |input, cx| input.set_value("", window, cx));
                     } else if view.filter_menu_open == Some(field) {
@@ -2404,6 +2428,18 @@ impl ClusterView {
                         self.kind
                             .as_ref()
                             .filter(|_| self.mode == Mode::Objects)
+                            .map(|_| self.render_column_picker(cx).into_any_element()),
+                    )
+                    .children(
+                        self.kind
+                            .as_ref()
+                            .filter(|_| self.mode == Mode::Objects)
+                            .map(|_| self.render_saved_filters(cx).into_any_element()),
+                    )
+                    .children(
+                        self.kind
+                            .as_ref()
+                            .filter(|_| self.mode == Mode::Objects)
                             .map(|kind| {
                                 Button::new("create-resource")
                                     .small()
@@ -2442,6 +2478,7 @@ impl ClusterView {
                             .map(|_| self.render_namespace_picker(cx)),
                     ),
             )
+            .children(self.render_list_preferences_error(cx))
     }
 }
 

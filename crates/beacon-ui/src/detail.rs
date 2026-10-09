@@ -38,6 +38,7 @@ use crate::tls::{self, CertificateInfo};
 pub enum DetailTab {
     Overview,
     Pods,
+    Related,
     /// A ConfigMap's or Secret's keys, one editor each.
     Data,
     Yaml,
@@ -51,6 +52,14 @@ impl DetailTab {
         if kind.resource.group.is_empty() && kind.resource.kind == "Node" {
             tabs.push(Self::Pods);
         }
+        if beacon_kube::relationships::Relationship::for_kind(
+            &kind.resource.group,
+            &kind.resource.kind,
+        )
+        .is_some()
+        {
+            tabs.push(Self::Related);
+        }
         if data::is_keyed(&kind.resource.group, &kind.resource.kind) {
             tabs.push(Self::Data);
         }
@@ -62,6 +71,7 @@ impl DetailTab {
         match self {
             Self::Overview => "Overview",
             Self::Pods => "Pods",
+            Self::Related => "Related",
             Self::Data => "Data",
             Self::Yaml => "YAML",
             Self::Events => "Events",
@@ -136,6 +146,7 @@ pub struct DetailView {
     expanded_sections: BTreeSet<String>,
     overview: crate::overview::Projection,
     node_pods: Option<Entity<crate::node_pods::NodePodsView>>,
+    related: Option<Entity<crate::related::RelatedView>>,
     argo_nodes: Arc<beacon_kube::argo::Nodes>,
     argo_graph: crate::argo::Graph,
     argo_graph_error: Option<String>,
@@ -217,6 +228,7 @@ impl DetailView {
             expanded_sections: BTreeSet::new(),
             overview,
             node_pods: None,
+            related: None,
             argo_nodes: Arc::new(beacon_kube::argo::Nodes::new()),
             argo_graph: crate::argo::Graph::default(),
             argo_graph_error: None,
@@ -306,6 +318,9 @@ impl DetailView {
             crate::overview::project(&self.kind.resource.group, &self.kind.resource.kind, &object);
         let changed = !Arc::ptr_eq(&self.object, &object);
         self.object = object;
+        if let Some(related) = &self.related {
+            related.update(cx, |view, cx| view.refresh(self.object.clone(), cx));
+        }
         if changed {
             self.load_argo(cx);
         }
@@ -324,6 +339,7 @@ impl DetailView {
         self.tab = tab;
         match tab {
             DetailTab::Pods if self.node_pods.is_none() => self.load_node_pods(window, cx),
+            DetailTab::Related if self.related.is_none() => self.load_related(window, cx),
             DetailTab::Data if matches!(self.data, Data::Unopened) => self.load_data(window, cx),
             DetailTab::Yaml if matches!(self.yaml, Yaml::Unopened) => self.load_yaml(window, cx),
             _ => {}
@@ -333,6 +349,45 @@ impl DetailView {
 
     fn busy(&self) -> bool {
         self.reviewing || matches!(self.apply, Apply::Running)
+    }
+
+    fn load_related(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(relationship) = beacon_kube::relationships::Relationship::for_kind(
+            &self.kind.resource.group,
+            &self.kind.resource.kind,
+        ) else {
+            return;
+        };
+        let session = self.session.clone();
+        let object = self.object.clone();
+        let related = cx
+            .new(|cx| crate::related::RelatedView::new(session, object, relationship, window, cx));
+        cx.subscribe(&related, |_, _, event: &OwnerRequested, cx| {
+            cx.emit(OwnerRequested {
+                kind: event.kind.clone(),
+                target: event.target.clone(),
+            });
+        })
+        .detach();
+        self.related = Some(related);
+    }
+
+    fn render_related(&self) -> AnyElement {
+        self.related
+            .as_ref()
+            .map(|view| {
+                div()
+                    .size_full()
+                    .min_size_0()
+                    .child(view.clone())
+                    .into_any_element()
+            })
+            .unwrap_or_else(|| {
+                div()
+                    .p_4()
+                    .child("Related resources are not available.")
+                    .into_any_element()
+            })
     }
 
     fn load_node_pods(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -2799,6 +2854,7 @@ impl Render for DetailView {
         let body = match self.tab {
             DetailTab::Overview => self.render_overview(cx),
             DetailTab::Pods => self.render_node_pods(cx),
+            DetailTab::Related => self.render_related(),
             DetailTab::Data => self.render_data(cx),
             DetailTab::Yaml => self.render_yaml(cx),
             DetailTab::Events => self.render_events(cx),

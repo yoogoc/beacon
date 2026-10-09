@@ -50,9 +50,11 @@ It uses your existing kubeconfig and cluster permissions, discovering both built
 | **Resources and CRDs** | Follow live Watch updates, use kubectl-style columns for built-in resources, and read CRD `additionalPrinterColumns` dynamically. |
 | **Nodes** | See taint counts, hover to inspect each taint, and view EKS node group membership. |
 | **Search and filters** | Fuzzy search, sorting, and namespace multi-select. Filter Pod / Deployment status, Service type, Ingress class, PVC attributes, Secret type, and CRD scope. |
+| **Personalized lists** | Choose visible columns, drag headers to reorder, and resize columns. Layout and sorting save per cluster and resource type; name and reuse filter combinations. |
+| **Related resources** | Navigate from Deployments to ReplicaSets and Pods, Services to EndpointSlices and Pods, and PVCs to their consuming Pods in a live Related detail tab. |
 | **Resource details** | Overview, YAML, and Events; selectable values; collapsible labels and annotations; container ports, requests and limits, probes, environment, and mounts; clickable owner links. |
 | **Argo Workflows** | Dedicated resource group, Workflow and template graphs, CronWorkflow run history, and separate node details with Pod containers, inputs, outputs, artifacts, and YAML. Controller resources stay collapsed in the sidebar. |
-| **Pod tools** | Stream logs, run a command, open an interactive shell, and forward ports. Use a separate bottom panel and filled / hollow markers for regular / init container states. |
+| **Pod tools** | Logs with keyword search and highlighting, pause / resume follow, jump to latest, word wrap, container selection, and download. Run commands, open Shell, and forward ports in a separate bottom panel. Filled / hollow markers show regular / init container states. |
 | **Resource operations** | Create YAML resources with server validation, review a YAML diff before creating or applying changes, restart, scale, and delete individually or in bulk. Context menus reflect resource types and permission checks. |
 | **ConfigMaps and Secrets** | View and edit data by key. Secret values start concealed. Inspect TLS certificate subjects, issuers, validity, algorithms, key strength, extensions, and public keys. |
 | **Metrics and Helm** | Read Pod / Node CPU and memory from the Kubernetes Metrics API or Prometheus, and inspect Helm releases stored in the cluster. |

@@ -20,6 +20,7 @@ pub mod labels;
 pub mod logs;
 pub mod metrics;
 pub mod ops;
+pub mod relationships;
 pub mod resources;
 pub mod session;
 pub mod shell_env;

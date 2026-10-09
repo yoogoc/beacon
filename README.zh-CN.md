@@ -50,9 +50,11 @@ Beacon 使用 Rust 和 GPUI 构建，将集群、资源列表、详情和容器�
 | **资源与 CRD** | 实时 Watch 更新；内置资源使用 kubectl 风格列；动态读取 CRD 的 `additionalPrinterColumns`。 |
 | **节点** | 列表显示污点数量，悬停查看每条污点；EKS 节点显示所属节点组。 |
 | **搜索与筛选** | 模糊搜索、排序、命名空间多选；按 Pod / Deployment 状态、Service 类型、Ingress Class、PVC 属性、Secret 类型和 CRD Scope 筛选。 |
+| **列表个性化** | 选择显示列、拖动表头排序、调整列宽；按集群和资源类型保存布局与排序，命名并复用常用筛选组合。 |
+| **关联资源** | 在独立的 Related 详情页实时查看并跳转 Deployment 的 ReplicaSet / Pod、Service 的 EndpointSlice / Pod，以及使用 PVC 的 Pod。 |
 | **资源详情** | Overview、YAML、Events；可复制的字段、折叠的标签和注解；容器端口、资源请求与限制、探针、环境变量与挂载；点击 Owner 跳转。 |
 | **Argo Workflows** | 独立资源分组、Workflow 与模板执行图、CronWorkflow 运行历史；节点详情通过独立浮层显示 Pod 容器、输入输出、产物与 YAML；控制器资源在侧栏默认折叠。 |
-| **Pod 工具** | 流式日志、单次 Exec、交互式 Shell 和端口转发；独立的底部工具面板；用实心 / 空心圆显示普通 / Init 容器状态。 |
+| **Pod 工具** | 日志关键字搜索与高亮、暂停 / 继续跟随、跳到最新、自动换行、容器选择和日志下载；独立底部面板提供 Exec、Shell 和端口转发，用实心 / 空心圆显示普通 / Init 容器状态。 |
 | **资源写操作** | YAML 创建与服务端预校验，创建或 Apply 前预览 YAML diff 并确认；重启、扩缩容、单个及批量删除；按资源类型显示右键菜单和权限预检结果。 |
 | **ConfigMap 与 Secret** | 按键查看和编辑 Data；Secret 值默认遮盖；TLS 证书展示主题、签发者、有效期、算法、强度、扩展和公钥。 |
 | **指标与 Helm** | Pod / Node 的 CPU、内存指标可来自 Kubernetes Metrics API 或 Prometheus；从集群读取 Helm Release。 |

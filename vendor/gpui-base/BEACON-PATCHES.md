@@ -36,3 +36,14 @@ cargo test --manifest-path vendor/gpui-base/Cargo.toml --target-dir target --fea
 
 The vendored library is excluded from workspace membership; this command creates
 its own ignored lockfile without changing Beacon's pinned dependency resolution.
+
+`SelectableText::highlights` passes UTF-8 ranges to GPUI's styled text while
+retaining the original selection and clipboard contents. Beacon uses it for
+literal keyword highlighting in Pod logs.
+
+The selection regression test paints highlighted text, selects it through native
+mouse events, and verifies that selection returns the original text:
+
+```sh
+cargo test --manifest-path vendor/gpui-base/Cargo.toml --target-dir target --features gpui-fast --lib selectable_text
+```

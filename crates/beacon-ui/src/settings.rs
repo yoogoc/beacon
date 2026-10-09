@@ -155,6 +155,7 @@ pub(crate) struct Preferences {
     pub proxy: Proxy,
     pub clusters: BTreeMap<String, ClusterSettings>,
     pub updates: beacon_updater::Preferences,
+    pub resources: BTreeMap<String, crate::table_preferences::ResourcePreferences>,
 }
 impl Preferences {
     pub fn yaml_folding(&self, id: &ClusterId) -> crate::yaml_folding::YamlFolding {
@@ -174,6 +175,9 @@ impl Preferences {
     }
     fn validate(&self) -> Result<(), String> {
         self.proxy.validate()?;
+        for resource in self.resources.values() {
+            resource.validate()?;
+        }
         for theme in self.themes.values() {
             theme.validate()?;
         }
@@ -287,6 +291,30 @@ fn atomic_write(path: &Path, data: &[u8]) -> Result<(), String> {
         .and_then(|_| temp.as_file().sync_all())
         .map_err(|e| e.to_string())?;
     temp.persist(path).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// List customizations save independently, without reapplying the theme or
+/// reconnecting clusters on every column resize or preset edit.
+pub(crate) fn save_resource(
+    key: String,
+    resource: crate::table_preferences::ResourcePreferences,
+    cx: &mut App,
+) -> Result<(), String> {
+    resource.validate()?;
+    let store = store(cx);
+    let mut preferences = store.read(cx).preferences.clone();
+    preferences.resources.insert(key, resource);
+    let directory = store.read(cx).directory.clone();
+    std::fs::create_dir_all(&directory).map_err(|error| error.to_string())?;
+    atomic_write(
+        &directory.join("settings.json"),
+        &serde_json::to_vec_pretty(&preferences).map_err(|error| error.to_string())?,
+    )?;
+    store.update(cx, |state, cx| {
+        state.preferences = preferences;
+        cx.notify();
+    });
     Ok(())
 }
 pub(crate) fn apply(window: Option<&mut Window>, cx: &mut App) {
@@ -437,6 +465,49 @@ mod tests {
                 .count(),
             1
         );
+    }
+
+    #[test]
+    fn resource_layouts_and_named_filters_round_trip_without_changing_old_settings() {
+        use crate::table_preferences::{
+            ColumnLayout, ColumnSort, FilterPreset, ResourcePreferences,
+        };
+        let old: Preferences = serde_json::from_str(
+            r#"{"appearance":{"mode":"dark"},"clusters":{"production":{"alias":"Prod"}}}"#,
+        )
+        .unwrap();
+        assert!(old.resources.is_empty());
+        let mut preferences = old;
+        let saved = ResourcePreferences {
+            columns: ColumnLayout {
+                order: vec!["name".into(), "status".into()],
+                hidden: ["age".into()].into_iter().collect(),
+                widths: [("name".into(), 300.)].into_iter().collect(),
+                sort: Some(ColumnSort {
+                    column: "status".into(),
+                    descending: true,
+                }),
+            },
+            filters: [(
+                "Production".into(),
+                FilterPreset {
+                    namespaces: ["production".into()].into_iter().collect(),
+                    labels: "app=web".into(),
+                    ..Default::default()
+                },
+            )]
+            .into_iter()
+            .collect(),
+        };
+        preferences
+            .resources
+            .insert("production/pods".into(), saved.clone());
+        let directory = tempfile::tempdir().unwrap();
+        write(directory.path(), &preferences).unwrap();
+        let restored = read(directory.path()).unwrap();
+        assert_eq!(restored.resources["production/pods"], saved);
+        assert_eq!(restored.appearance, Appearance::Dark);
+        assert_eq!(restored.clusters["production"].alias, "Prod");
     }
 
     #[test]

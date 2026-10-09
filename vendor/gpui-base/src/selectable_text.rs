@@ -3,7 +3,7 @@ use std::ops::Range;
 use gpui::{
     App, BorderStyle, Bounds, Corners, Edges, Element, ElementId, GlobalElementId, Hitbox,
     HitboxBehavior, Hsla, InspectorElementId, IntoElement, LayoutId, PaintQuad, Pixels, Point,
-    SharedString, StyledText, TextStyleRefinement, Window, transparent_black,
+    HighlightStyle, SharedString, StyledText, TextStyleRefinement, Window, transparent_black,
 };
 
 use crate::{TextSelection, TextSelectionHandle, TextSelectionRegistration, TextSelectionRun};
@@ -69,6 +69,15 @@ impl SelectableText {
     /// `colors.selection` token.
     pub fn selection_color(mut self, color: Hsla) -> Self {
         self.selection_color = Some(color);
+        self
+    }
+
+    /// Highlights UTF-8 byte ranges while preserving the original selectable text.
+    pub fn highlights(
+        mut self,
+        highlights: impl IntoIterator<Item = (Range<usize>, HighlightStyle)>,
+    ) -> Self {
+        self.styled_text = StyledText::new(self.text.clone()).with_highlights(highlights);
         self
     }
 
@@ -239,7 +248,7 @@ impl Element for SelectableText {
 #[cfg(test)]
 mod tests {
     use gpui::{
-        Bounds, Context, IntoElement, Modifiers, MouseButton, ParentElement as _, Render,
+        Bounds, Context, HighlightStyle, IntoElement, Modifiers, MouseButton, ParentElement as _, Render,
         Styled as _, TestAppContext, Window, div, point, px, size,
     };
 
@@ -254,7 +263,10 @@ mod tests {
                 div()
                     .w(px(240.))
                     .h(px(32.))
-                    .child(SelectableText::new("local", "alpha beta")),
+                    .child(SelectableText::new("local", "alpha beta").highlights([
+                        (0..5, HighlightStyle { background_color: Some(gpui::rgb(0xffff00).into()), ..Default::default() }),
+                        (6..10, HighlightStyle { background_color: Some(gpui::rgb(0xffff00).into()), ..Default::default() }),
+                    ])),
             )
         }
     }
@@ -268,7 +280,7 @@ mod tests {
     }
 
     #[gpui::test]
-    fn local_handle_participates_in_window_selection(cx: &mut TestAppContext) {
+    fn highlighted_text_preserves_original_window_selection(cx: &mut TestAppContext) {
         let (_, cx) = cx.add_window_view(|_, _| SelectableTextTestView);
         cx.update(|window, cx| {
             let _ = window.draw(cx);

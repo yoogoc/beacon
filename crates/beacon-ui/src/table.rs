@@ -39,6 +39,7 @@ use crate::detail::DetailTab;
 use crate::filters::Field;
 use crate::pod_tools::PodToolTab;
 use crate::status;
+use crate::table_preferences::{ColumnLayout, ColumnSort as SavedSort, FilterPreset};
 use crate::theme::{BeaconTheme as _, Tone};
 
 /// A `Flex` column's share, converted to the starting pixel width the table
@@ -50,6 +51,9 @@ pub struct ResourceTable {
     context_view: Option<WeakEntity<ClusterView>>,
     selection_column: bool,
     columns: ColumnSet,
+    column_ids: Vec<String>,
+    display_columns: Vec<usize>,
+    layout: ColumnLayout,
     store: ResourceStore,
     /// The store in display order. Rebuilt whenever the store or the sort
     /// changes; everything else reads it.
@@ -98,6 +102,25 @@ pub(crate) struct ViewFilters {
     filter: String,
     fields: BTreeMap<Field, String>,
     labels: LabelSelector,
+    layout: ColumnLayout,
+}
+
+pub(crate) struct TableLayoutChanged(pub ColumnLayout);
+impl EventEmitter<TableLayoutChanged> for TableState<ResourceTable> {}
+
+fn column_ids(columns: &ColumnSet) -> Vec<String> {
+    let mut occurrences = BTreeMap::<String, usize>::new();
+    columns
+        .columns
+        .iter()
+        .map(|column| {
+            let key = format!("{}:{:?}", column.header, column.source);
+            let occurrence = occurrences.entry(key.clone()).or_default();
+            let id = format!("{key}:{occurrence}");
+            *occurrence += 1;
+            id
+        })
+        .collect()
 }
 
 impl ResourceTable {
@@ -107,6 +130,7 @@ impl ResourceTable {
             filter: self.filter.clone(),
             fields: self.field_filters.clone(),
             labels: self.label_selector.clone(),
+            layout: self.layout_snapshot(),
         }
     }
 
@@ -116,13 +140,19 @@ impl ResourceTable {
         self.field_filters = filters.fields;
         self.label_selector = filters.labels;
         self.label_filter = self.label_selector.to_string();
+        self.apply_layout(filters.layout);
         self.reindex();
     }
     pub fn new(columns: ColumnSet) -> Self {
+        let column_ids = column_ids(&columns);
+        let display_columns = (0..columns.len()).collect();
         Self {
             context_view: None,
             selection_column: true,
             columns,
+            column_ids,
+            display_columns,
+            layout: ColumnLayout::default(),
             store: ResourceStore::new(),
             rows: Vec::new(),
             checked: BTreeMap::new(),
@@ -136,6 +166,165 @@ impl ResourceTable {
             metrics: Metrics::default(),
             loading: false,
         }
+    }
+
+    fn ordered_columns(&self) -> Vec<usize> {
+        let mut columns: Vec<_> = (0..self.columns.len()).collect();
+        columns.sort_by_key(|index| {
+            self.layout
+                .order
+                .iter()
+                .position(|id| id == &self.column_ids[*index])
+                .unwrap_or(self.layout.order.len() + *index)
+        });
+        columns
+    }
+
+    fn rebuild_display_columns(&mut self) {
+        self.display_columns = self
+            .ordered_columns()
+            .into_iter()
+            .filter(|index| {
+                matches!(self.columns.columns[*index].source, ColumnSource::Name)
+                    || !self.layout.hidden.contains(&self.column_ids[*index])
+            })
+            .collect();
+        self.sort = self
+            .layout
+            .sort
+            .as_ref()
+            .and_then(|sort| {
+                self.column_ids
+                    .iter()
+                    .position(|id| id == &sort.column)
+                    .map(|index| Sort::ByColumn {
+                        index,
+                        descending: sort.descending,
+                    })
+            })
+            .unwrap_or(Sort::Natural);
+    }
+
+    pub(crate) fn apply_layout(&mut self, layout: ColumnLayout) {
+        self.layout = layout;
+        self.rebuild_display_columns();
+        self.reindex();
+    }
+
+    pub(crate) fn layout_snapshot(&self) -> ColumnLayout {
+        let mut layout = self.layout.clone();
+        for id in &self.column_ids {
+            if !layout.order.contains(id) {
+                layout.order.push(id.clone());
+            }
+        }
+        layout.sort = match self.sort {
+            Sort::Natural => None,
+            Sort::ByColumn { index, descending } => {
+                self.column_ids.get(index).map(|column| SavedSort {
+                    column: column.clone(),
+                    descending,
+                })
+            }
+        };
+        layout
+    }
+
+    pub(crate) fn column_choices(&self) -> Vec<(String, String, bool, bool)> {
+        self.ordered_columns()
+            .into_iter()
+            .map(|index| {
+                (
+                    self.column_ids[index].clone(),
+                    self.columns.columns[index].header.clone(),
+                    self.display_columns.contains(&index),
+                    matches!(self.columns.columns[index].source, ColumnSource::Name),
+                )
+            })
+            .collect()
+    }
+
+    pub(crate) fn toggle_column(&mut self, id: &str) {
+        let Some(index) = self.column_ids.iter().position(|column| column == id) else {
+            return;
+        };
+        if matches!(self.columns.columns[index].source, ColumnSource::Name) {
+            return;
+        }
+        self.layout = self.layout_snapshot();
+        if !self.layout.hidden.remove(id) {
+            self.layout.hidden.insert(id.to_owned());
+        }
+        self.rebuild_display_columns();
+    }
+
+    pub(crate) fn update_widths(&mut self, widths: &[Pixels]) {
+        for (index, width) in self
+            .display_columns
+            .iter()
+            .zip(widths.iter().skip(usize::from(self.selection_column)))
+        {
+            self.layout.widths.insert(
+                self.column_ids[*index].clone(),
+                f32::from(*width).clamp(56., 4000.),
+            );
+        }
+    }
+
+    pub(crate) fn filter_preset(&self, namespaces: BTreeSet<String>) -> FilterPreset {
+        FilterPreset {
+            namespaces,
+            search: self.filter.clone(),
+            labels: self.label_filter.clone(),
+            fields: self.field_filters.clone(),
+            sort: self.layout_snapshot().sort,
+        }
+    }
+
+    pub(crate) fn apply_preset(&mut self, preset: &FilterPreset) -> Result<(), String> {
+        let labels = LabelSelector::parse(&preset.labels).map_err(|error| error.to_string())?;
+        self.filter = preset.search.clone();
+        self.field_filters = preset.fields.clone();
+        self.label_selector = labels;
+        self.label_filter = preset.labels.clone();
+        self.checked.clear();
+        self.layout.sort = preset.sort.clone();
+        self.rebuild_display_columns();
+        self.reindex();
+        Ok(())
+    }
+
+    fn data_column(&self, index: usize) -> Option<usize> {
+        self.display_columns
+            .get(index.checked_sub(usize::from(self.selection_column))?)
+            .copied()
+    }
+
+    fn display_cell_text(&self, row: usize, column: usize) -> String {
+        self.data_column(column)
+            .and_then(|column| self.cell(row, column))
+            .map(|(_, value)| value.display().to_string())
+            .unwrap_or_default()
+    }
+
+    fn reorder_column(&mut self, from: usize, to: usize) {
+        let (Some(from_index), Some(to_index)) = (self.data_column(from), self.data_column(to))
+        else {
+            return;
+        };
+        let mut layout = self.layout_snapshot();
+        let id = self.column_ids[from_index].clone();
+        let destination = self.column_ids[to_index].clone();
+        layout.order.retain(|column| column != &id);
+        if let Some(position) = layout
+            .order
+            .iter()
+            .position(|column| column == &destination)
+        {
+            layout.order.insert(position + usize::from(from < to), id);
+        }
+        self.layout = layout;
+        self.rebuild_display_columns();
     }
 
     /// Related-resource lists use row navigation without batch selection.
@@ -415,6 +604,9 @@ impl ResourceTable {
     /// Keeping the old rows visible while the new watch lists would show one
     /// namespace's pods under another namespace's heading.
     pub fn reset(&mut self, columns: ColumnSet) {
+        self.column_ids = column_ids(&columns);
+        self.display_columns = (0..columns.len()).collect();
+        self.layout = Default::default();
         self.columns = columns;
         self.store = ResourceStore::new();
         self.rows.clear();
@@ -431,9 +623,10 @@ impl ResourceTable {
     /// list does. Re-listing to show them would throw away rows that are
     /// already on screen and correct.
     pub fn set_columns(&mut self, columns: ColumnSet) {
+        self.layout = self.layout_snapshot();
+        self.column_ids = column_ids(&columns);
         self.columns = columns;
-        // A sort by column index means nothing against a different set.
-        self.sort = Sort::Natural;
+        self.rebuild_display_columns();
         self.reindex();
     }
 
@@ -666,7 +859,7 @@ impl SortKey {
 
 impl TableDelegate for ResourceTable {
     fn columns_count(&self, _: &App) -> usize {
-        self.columns.len() + usize::from(self.selection_column)
+        self.display_columns.len() + usize::from(self.selection_column)
     }
 
     /// Draws the component's skeleton rows instead of an empty table. The
@@ -690,15 +883,22 @@ impl TableDelegate for ResourceTable {
                 .movable(false)
                 .selectable(false);
         }
-        let data_index = index - usize::from(self.selection_column);
+        let Some(data_index) = self.data_column(index) else {
+            return Column::new("", "");
+        };
         let Some(definition) = self.columns.columns.get(data_index) else {
             return Column::new("", "");
         };
 
-        let width = match definition.width {
-            ColumnWidth::Fixed(pixels) => pixels,
-            ColumnWidth::Flex(share) => share * FLEX_UNIT,
-        };
+        let width = self
+            .layout
+            .widths
+            .get(&self.column_ids[data_index])
+            .copied()
+            .unwrap_or(match definition.width {
+                ColumnWidth::Fixed(pixels) => pixels,
+                ColumnWidth::Flex(share) => share * FLEX_UNIT,
+            });
 
         let sort = match self.sort {
             Sort::ByColumn {
@@ -714,10 +914,13 @@ impl TableDelegate for ResourceTable {
             _ => ColumnSort::Default,
         };
 
-        Column::new(definition.header.to_lowercase(), definition.header.clone())
-            .width(px(width))
-            .min_width(px(56.))
-            .sort(sort)
+        Column::new(
+            self.column_ids[data_index].clone(),
+            definition.header.clone(),
+        )
+        .width(px(width))
+        .min_width(px(56.))
+        .sort(sort)
     }
 
     fn perform_sort(
@@ -730,7 +933,23 @@ impl TableDelegate for ResourceTable {
         if self.selection_column && index == 0 {
             return;
         }
-        self.sort_by(index - usize::from(self.selection_column), sort);
+        let Some(index) = self.data_column(index) else {
+            return;
+        };
+        self.sort_by(index, sort);
+        cx.emit(TableLayoutChanged(self.layout_snapshot()));
+        cx.notify();
+    }
+
+    fn move_column(
+        &mut self,
+        from: usize,
+        to: usize,
+        _: &mut Window,
+        cx: &mut Context<TableState<Self>>,
+    ) {
+        self.reorder_column(from, to);
+        cx.emit(TableLayoutChanged(self.layout_snapshot()));
         cx.notify();
     }
 
@@ -948,7 +1167,9 @@ impl TableDelegate for ResourceTable {
                 )
                 .into_any_element();
         }
-        let Some((definition, value)) = self.cell(row, column - usize::from(self.selection_column))
+        let Some((definition, value)) = self
+            .data_column(column)
+            .and_then(|column| self.cell(row, column))
         else {
             return h_flex().into_any_element();
         };
@@ -1065,12 +1286,7 @@ impl TableDelegate for ResourceTable {
     /// The table's own keyboard navigation and copy support read cells through
     /// this, so it has to produce the same text the row shows.
     fn cell_text(&self, row: usize, column: usize, _: &App) -> String {
-        if self.selection_column && column == 0 {
-            return String::new();
-        }
-        self.cell(row, column - usize::from(self.selection_column))
-            .map(|(_, value)| value.display().to_string())
-            .unwrap_or_default()
+        self.display_cell_text(row, column)
     }
 }
 
@@ -1205,6 +1421,97 @@ mod tests {
         let mut table = ResourceTable::new(ColumnSet::for_kind("", "Pod", true));
         table.apply(vec![Delta::Reset((0..count).map(pod).collect())]);
         table
+    }
+
+    #[test]
+    fn layout_keeps_sort_widths_and_copy_values_after_hiding_reordering_and_rescoping() {
+        let mut table = filled(3);
+        let name = table.column_ids[0].clone();
+        let namespace = table.column_ids[1].clone();
+        let restarts_index = table
+            .columns
+            .columns
+            .iter()
+            .position(|column| column.header == "Restarts")
+            .unwrap();
+        let restarts = table.column_ids[restarts_index].clone();
+        table.sort_by(restarts_index, ColumnSort::Ascending);
+        table.toggle_column(&namespace);
+        let restarts_display = table
+            .display_columns
+            .iter()
+            .position(|index| *index == restarts_index)
+            .unwrap()
+            + 1;
+        table.reorder_column(restarts_display, 1);
+        assert_eq!(table.display_cell_text(0, 1), "4998");
+        assert_eq!(table.display_cell_text(0, 2), "pod-00002");
+        table.update_widths(&[gpui_kit::px(44.), gpui_kit::px(230.), gpui_kit::px(320.)]);
+        let layout = table.layout_snapshot();
+        assert_eq!(layout.widths[&restarts], 230.);
+        assert_eq!(layout.widths[&name], 320.);
+        assert!(layout.hidden.contains(&namespace));
+
+        let encoded = serde_json::to_string(&layout).unwrap();
+        let mut restored = filled(3);
+        restored.apply_layout(serde_json::from_str(&encoded).unwrap());
+        assert_eq!(restored.key_at(0).unwrap().name, "pod-00002");
+        assert_eq!(restored.display_cell_text(0, 1), "4998");
+        restored.set_columns(ColumnSet::for_kind("", "Pod", false));
+        assert_eq!(restored.display_cell_text(0, 1), "4998");
+        restored.set_columns(ColumnSet::for_kind("", "Pod", true));
+        assert!(!restored.display_columns.contains(&1));
+        assert_eq!(restored.layout_snapshot(), layout);
+        restored.toggle_column(&name);
+        assert!(
+            restored.display_columns.contains(&0),
+            "the identifying Name column remains visible"
+        );
+        restored.reorder_column(0, 1);
+        assert_eq!(
+            restored.display_cell_text(0, 1),
+            "4998",
+            "the fixed selection column cannot move"
+        );
+    }
+
+    #[test]
+    fn named_filters_restore_search_labels_facets_and_sort_without_bulk_selection() {
+        let mut table = ResourceTable::new(ColumnSet::for_kind("", "Pod", false));
+        table.apply(vec![Delta::Reset(vec![
+            labeled("web-one", "web", "prod"),
+            labeled("web-two", "web", "prod"),
+            labeled("database", "db", "prod"),
+        ])]);
+        table.set_filter("web");
+        table.set_label_filter("app=web,env in (prod,qa)").unwrap();
+        let phase = Field::PodStatus
+            .values(table.store.iter().next().unwrap().1, table.now)
+            .into_iter()
+            .next()
+            .unwrap();
+        table.set_field_filter(Field::PodStatus, Some(phase));
+        table.sort_by(0, ColumnSort::Descending);
+        let preset = table.filter_preset(
+            ["default".to_owned(), "staging".to_owned()]
+                .into_iter()
+                .collect(),
+        );
+        let preset = serde_json::from_str(&serde_json::to_string(&preset).unwrap()).unwrap();
+        table.set_filter("");
+        table.clear_field_filters();
+        table.set_label_filter("").unwrap();
+        table.sort_by(0, ColumnSort::Ascending);
+        table.toggle_all_visible();
+        table.apply_preset(&preset).unwrap();
+        assert_eq!(table.len(), 2);
+        assert_eq!(table.key_at(0).unwrap().name, "web-two");
+        assert_eq!(table.selected_count(), 0);
+        assert_eq!(table.filter_preset(preset.namespaces.clone()), preset);
+        let mut invalid = preset.clone();
+        invalid.labels = "app in (".into();
+        assert!(table.apply_preset(&invalid).is_err());
+        assert_eq!(table.filter_preset(preset.namespaces.clone()), preset);
     }
 
     fn named(namespace: &str, name: &str) -> Arc<DynamicObject> {

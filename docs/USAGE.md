@@ -92,6 +92,14 @@ Pod 列表以实心圆表示普通容器、空心圆表示 Init 容器，颜色�
 悬停标记可查看容器名称、当前状态与就绪情况。
 列表首次加载时显示骨架行；Watch 返回首批数据或连接出现故障后结束等待。
 
+**Columns** 菜单选择显示列，Name 始终保留。拖动表头可调整列顺序，拖动列边缘可调整列宽；
+列显示、顺序、宽度和排序自动保存到本地，分别作用于各集群的每种资源类型。
+切换命名空间、重新打开标签页或重启应用后继续使用保存的布局；**Restore defaults** 恢复默认列与排序。
+
+**Saved filters** 将当前命名空间范围、名称搜索、Label、资源属性筛选和排序保存为有名称的组合。
+输入名称并点击 **Save**，同名组合使用 **Replace** 更新；点击保存的名称立即应用，**Remove** 删除本地组合。
+菜单支持搜索。组合按集群和资源类型隔离，应用时清空列表多选，避免沿用之前的批量删除目标。
+
 ## 详情与 Owner 导航
 
 资源详情提供 **Overview / YAML / Events**。Overview 垂直展示元数据及资源的 Spec / Status；
@@ -109,10 +117,33 @@ YAML 打开时按当前集群的设置折叠字段，初始默认折叠 `metadat
 点击有颜色的 Owner 值可跳转并定位到对应资源。Pod 的 Owner 为 ReplicaSet 时，
 先显示 ReplicaSet，再异步读取并显示它的 Owner；读取失败或无权限时保留原链接。
 
+支持的资源还提供独立的 **Related** 标签页，不占用 Overview 的空间：
+
+| 资源 | 关联列表 |
+| --- | --- |
+| Deployment | ReplicaSets 及其 Pods |
+| ReplicaSet、StatefulSet、DaemonSet、Job、ReplicationController | 直接控制的 Pods |
+| CronJob | Jobs 及其 Pods |
+| Service | EndpointSlices 及其引用的 Pods |
+| EndpointSlice | 端点引用的 Pods |
+| PersistentVolumeClaim | 在卷配置中引用该 PVC 的 Pods |
+
+关联列表首次打开时加载并订阅实时更新，支持名称搜索和 **Refresh**；点击资源行可跳转并定位对应资源。
+工作负载按控制者 UID 解析，Service 的 Pod 按 EndpointSlice 的 targetRef 解析并去重，PVC 按同命名空间内的卷引用解析。
+外部 IP 端点没有 Pod 引用时不会生成 Pod 链接。无列表权限时显示可复制的错误信息。
+
 ## Pod 日志、Exec、Shell 与端口转发
 
 从 Pod 行的右键菜单打开 **Logs / Exec / Shell**。它们在独立的底部面板显示，
 可切换面板标签页、调整高度或关闭。关闭右侧资源详情不会关闭底部工具面板。
+
+日志工具栏支持搜索容器、选择普通 / Init / 临时容器、切换 **Previous** 与 **Timestamps**。
+**Search logs** 对当前保留的日志逐行进行不区分大小写的关键字搜索，仅显示匹配行并高亮匹配位置。
+**Copy** 复制当前搜索结果；**Download** 下载所选容器完整的可用日志，可选择文件夹和文件名，下载不受搜索过滤影响。
+
+**Pause follow** 暂停自动滚动，日志仍持续接收；**Resume follow** 和 **Latest** 滚动到最新匹配行并恢复跟随。
+手动向上滚动时保留阅读位置。**Wrap** 开启自动换行，关闭时可使用横向滚动条查看长行。
+日志缓存保留最近 50,000 行，搜索和复制作用于当前缓存。
 
 Shell 支持交互输入、终端颜色和窗口尺寸变化。默认命令尝试 bash，再回退到 sh；
 也可以填写自定义命令。终端聚焦时，Escape 等按键交给容器里的程序处理。

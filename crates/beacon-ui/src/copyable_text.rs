@@ -9,6 +9,14 @@ pub(crate) fn copyable_text(
     id: impl Into<ElementId>,
     text: impl Into<SharedString>,
 ) -> ContextMenu<Stateful<Div>> {
+    highlighted_text(id, text, Vec::new())
+}
+
+pub(crate) fn highlighted_text(
+    id: impl Into<ElementId>,
+    text: impl Into<SharedString>,
+    highlights: Vec<(std::ops::Range<usize>, HighlightStyle)>,
+) -> ContextMenu<Stateful<Div>> {
     let text = text.into();
     div()
         .id(id)
@@ -26,7 +34,7 @@ pub(crate) fn copyable_text(
                 cx.write_to_clipboard(ClipboardItem::new_string(selected));
             }
         })
-        .child(SelectableText::new("text", text.clone()))
+        .child(SelectableText::new("text", text.clone()).highlights(highlights))
         .context_menu(move |menu, _, _| menu.item(copy_item("Copy", text.clone())))
 }
 
