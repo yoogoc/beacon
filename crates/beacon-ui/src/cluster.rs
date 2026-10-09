@@ -27,6 +27,7 @@ use gpui_kit::component::table::{TableEvent, TableState};
 use gpui_kit::component::{
     ActiveTheme as _, Disableable as _, Icon, IconName, Sizable as _, h_flex, v_flex,
 };
+use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use nucleo_matcher::Matcher;
 
@@ -34,7 +35,7 @@ use crate::bridge::{Bridge, drain_into};
 use crate::catalog::{Catalog, Entry};
 use crate::create::{CreateEvent, CreateView};
 use crate::detail::{DetailClosed, DetailTab, DetailView, OwnerRequested};
-use crate::filters::Field;
+use crate::filters::{Field, OptionSearch};
 use crate::palette::Sources;
 use crate::pod_tools::{PodToolTab, PodToolsClosed, PodToolsView};
 use crate::prompt::{Ask, Prompt, PromptEvent};
@@ -120,8 +121,10 @@ pub struct ClusterView {
     /// when it actually changed, so a label edit on some namespace does not
     /// rebuild the menu under the user's cursor.
     namespace_names: Vec<SharedString>,
-    /// Whether the Secret type picker is open.
+    /// Whether a resource field picker is open.
     filter_menu_open: Option<Field>,
+    /// The open picker searches its choices, independently of resource filters.
+    picker_search: Entity<InputState>,
     label_menu_open: bool,
     label_input: Entity<InputState>,
     label_error: Option<String>,
@@ -222,6 +225,11 @@ impl ClusterView {
         });
         let label_input =
             cx.new(|cx| InputState::new(window, cx).placeholder("app=web,env in (dev,prod)"));
+        let picker_search = cx.new(|cx| {
+            InputState::new(window, cx)
+                .placeholder("Search options")
+                .clean_on_escape()
+        });
 
         let table = cx.new(|cx| {
             TableState::new(ResourceTable::new(ColumnSet::fallback(true)), window, cx)
@@ -245,6 +253,7 @@ impl ClusterView {
             namespace_menu_open: false,
             namespace_names: Vec::new(),
             filter_menu_open: None,
+            picker_search,
             label_menu_open: false,
             label_input,
             label_error: None,
@@ -1451,7 +1460,21 @@ impl ClusterView {
                 cx.notify();
             },
         );
-        self._subscriptions = vec![sidebar_search, row_search, label_input, table];
+        let picker_search = cx.subscribe(
+            &self.picker_search.clone(),
+            |_, _, event: &InputEvent, cx| {
+                if matches!(event, InputEvent::Change) {
+                    cx.notify();
+                }
+            },
+        );
+        self._subscriptions = vec![
+            sidebar_search,
+            row_search,
+            label_input,
+            picker_search,
+            table,
+        ];
     }
 
     /// Keeps the picker's list in step with the namespaces the cluster has.
@@ -1802,18 +1825,7 @@ impl ClusterView {
         }
     }
 
-    /// The namespace picker: a checkbox per namespace, and one for "all".
-    ///
-    /// Not a `Select`: that component picks one of a list, and the point here
-    /// is several. The popover builds its contents on every render with an
-    /// `App` rather than this view's `Context`, so the handlers go back
-    /// through a weak handle -- which also stops an open popover from keeping
-    /// a closed tab's view alive.
-    ///
-    /// There is no search box in here. The list scrolls, and `#` in the
-    /// palette is the fuzzy way to jump to one namespace; this is the way to
-    /// tick several.
-    /// The namespace picker.
+    /// A searchable namespace picker with separate single- and multi-select targets.
     ///
     /// Two click targets per row, and the difference between them is the whole
     /// design: **the tick box adds and removes, the name picks that one and
@@ -1826,23 +1838,29 @@ impl ClusterView {
     /// both. The contents are built with an `App` rather than this view's
     /// `Context`, so the handlers go back through a weak handle -- which also
     /// stops an open menu from keeping a closed tab's view alive.
-    ///
-    /// There is no search box. The list scrolls, and `#` in the palette is the
-    /// fuzzy way to find one by name.
     fn render_namespace_picker(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let view = cx.entity().downgrade();
         let selected = self.scoped_to.clone();
         let names = self.namespace_names.clone();
+        let input = self.picker_search.clone();
+        let search = OptionSearch::new(input.read(cx).value().as_ref());
 
         let toggling = view.clone();
         let opening = view.clone();
 
         Popover::new("namespace-picker")
             .open(self.namespace_menu_open)
-            .on_open_change(move |open, _, cx| {
+            .track_focus(&input.read(cx).focus_handle(cx))
+            .on_open_change(move |open, window, cx| {
                 let open = *open;
                 let _ = opening.update(cx, |view, cx| {
                     view.namespace_menu_open = open;
+                    if open {
+                        view.filter_menu_open = None;
+                        view.label_menu_open = false;
+                        view.picker_search
+                            .update(cx, |input, cx| input.set_value("", window, cx));
+                    }
                     cx.notify();
                 });
             })
@@ -1856,6 +1874,11 @@ impl ClusterView {
             .content(move |_, _, cx| {
                 let everything = selected.is_empty();
                 let muted = cx.theme().muted_foreground;
+                let names: Vec<_> = names
+                    .iter()
+                    .filter(|name| search.matches(name))
+                    .cloned()
+                    .collect();
 
                 let rows = names.iter().map(|name| {
                     let ticked = selected.contains(name.as_ref());
@@ -1926,6 +1949,13 @@ impl ClusterView {
                     .min_h_0()
                     .max_h(px(420.))
                     .gap_1()
+                    .child(
+                        Input::new(&input)
+                            .id("namespace-search")
+                            .small()
+                            .cleanable(true)
+                            .prefix(Icon::new(IconName::Search).small()),
+                    )
                     .child(all)
                     .child(
                         div()
@@ -1941,6 +1971,15 @@ impl ClusterView {
                             .overflow_y_scroll()
                             .child(v_flex().gap_1p5().children(rows)),
                     )
+                    .when(names.is_empty(), |this| {
+                        this.child(
+                            div()
+                                .py_2()
+                                .text_sm()
+                                .text_color(muted)
+                                .child("No matching namespaces"),
+                        )
+                    })
             })
     }
 
@@ -2016,6 +2055,8 @@ impl ClusterView {
             Vec::new()
         };
         let input = self.label_input.clone();
+        let search_input = self.picker_search.clone();
+        let search = OptionSearch::new(search_input.read(cx).value().as_ref());
         let error = self.label_error.clone();
         let opening = cx.entity().downgrade();
         let choosing = opening.clone();
@@ -2027,6 +2068,8 @@ impl ClusterView {
                     if *open {
                         view.filter_menu_open = None;
                         view.namespace_menu_open = false;
+                        view.picker_search
+                            .update(cx, |input, cx| input.set_value("", window, cx));
                         view.label_input.read(cx).focus_handle(cx).focus(window, cx);
                     } else {
                         view.row_search.read(cx).focus_handle(cx).focus(window, cx);
@@ -2043,7 +2086,10 @@ impl ClusterView {
             .content(move |_, _, cx| {
                 let applying = choosing.clone();
                 let clearing = choosing.clone();
-                let rows = values.iter().take(200).map(|(key, value)| {
+                let matching: Vec<_> = values.iter()
+                    .filter(|(key, value)| search.matches(&format!("{key}={value}")))
+                    .collect();
+                let rows = matching.iter().take(200).map(|(key, value)| {
                     let view = choosing.clone();
                     let key = key.clone();
                     let value = value.clone();
@@ -2073,11 +2119,14 @@ impl ClusterView {
                         .child("Use =, ==, !=, in, notin, key or !key. Commas require all conditions. Press Enter to apply."))
                     .children(error.clone().map(|error| div().text_xs().text_color(cx.theme().tone(Tone::Critical))
                         .child(crate::copyable_text::copyable_text("label-filter-error", error))))
+                    .child(Input::new(&search_input).id("label-options-search").small().cleanable(true)
+                        .prefix(Icon::new(IconName::Search).small()))
                     .child(div().text_xs().text_color(cx.theme().muted_foreground)
                         .child(if values.is_empty() { "No labels in this scope. You can still enter a selector.".to_string() }
-                            else if values.len() > 200 { format!("Showing 200 of {} labels. Enter other labels above.", values.len()) }
+                            else if matching.is_empty() { "No matching labels.".to_string() }
+                            else if matching.len() > 200 { format!("Showing 200 of {} matching labels. Refine your search to find more.", matching.len()) }
                             else { "Select labels below to apply them together.".to_string() }))
-                    .child(div().id("label-filter-values").min_h_0().overflow_y_scroll()
+                    .child(div().id("label-filter-values").min_h_0().flex_1().overflow_y_scroll()
                         .child(v_flex().gap_1p5().children(rows)))
             })
     }
@@ -2094,14 +2143,25 @@ impl ClusterView {
             types.sort();
         }
         let label = selected.clone().unwrap_or_else(|| "All".to_string());
+        let input = self.picker_search.clone();
+        let search = OptionSearch::new(input.read(cx).value().as_ref());
         let opening = cx.entity().downgrade();
         let choosing = opening.clone();
 
         Popover::new(SharedString::from(format!("filter-{field:?}")))
             .open(self.filter_menu_open == Some(field))
-            .on_open_change(move |open, _, cx| {
+            .track_focus(&input.read(cx).focus_handle(cx))
+            .on_open_change(move |open, window, cx| {
                 let _ = opening.update(cx, |view, cx| {
-                    view.filter_menu_open = if *open { Some(field) } else { None };
+                    if *open {
+                        view.filter_menu_open = Some(field);
+                        view.namespace_menu_open = false;
+                        view.label_menu_open = false;
+                        view.picker_search
+                            .update(cx, |input, cx| input.set_value("", window, cx));
+                    } else if view.filter_menu_open == Some(field) {
+                        view.filter_menu_open = None;
+                    }
                     cx.notify();
                 });
             })
@@ -2113,8 +2173,13 @@ impl ClusterView {
                     .tooltip(format!("Filter by {}", field.label().to_lowercase())),
             )
             .content(move |_, _, cx| {
+                let matching: Vec<_> = types
+                    .iter()
+                    .filter(|value| search.matches(value))
+                    .cloned()
+                    .collect();
                 let choices = std::iter::once(None)
-                    .chain(types.iter().cloned().map(Some))
+                    .chain(matching.iter().cloned().map(Some))
                     .map(|value| {
                         let name = value.as_deref().unwrap_or("All");
                         let is_selected = selected == value;
@@ -2149,14 +2214,37 @@ impl ClusterView {
                             })
                     });
 
-                div()
-                    .id(SharedString::from(format!("filter-list-{field:?}")))
+                v_flex()
                     .w(px(300.))
+                    .min_h_0()
                     .max_h(px(360.))
-                    .overflow_y_scroll()
+                    .gap_1()
                     .text_sm()
                     .text_color(cx.theme().foreground)
-                    .child(v_flex().children(choices))
+                    .child(
+                        Input::new(&input)
+                            .id(SharedString::from(format!("filter-search-{field:?}")))
+                            .small()
+                            .cleanable(true)
+                            .prefix(Icon::new(IconName::Search).small()),
+                    )
+                    .child(
+                        div()
+                            .id(SharedString::from(format!("filter-list-{field:?}")))
+                            .min_h_0()
+                            .flex_1()
+                            .overflow_y_scroll()
+                            .child(v_flex().children(choices)),
+                    )
+                    .when(matching.is_empty(), |this| {
+                        this.child(
+                            div()
+                                .px_2()
+                                .py_1()
+                                .text_color(cx.theme().muted_foreground)
+                                .child("No matching options"),
+                        )
+                    })
             })
     }
 

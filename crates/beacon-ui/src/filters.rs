@@ -3,6 +3,19 @@ use beacon_columns::{Timestamp, builtin, pod};
 use beacon_kube::{DynamicObject, Kind};
 use serde_json::Value;
 
+/// Search the choices inside a picker without changing its selected values.
+pub(crate) struct OptionSearch(String);
+
+impl OptionSearch {
+    pub(crate) fn new(query: &str) -> Self {
+        Self(query.trim().to_lowercase())
+    }
+
+    pub(crate) fn matches(&self, value: &str) -> bool {
+        self.0.is_empty() || value.to_lowercase().contains(&self.0)
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum Field {
     SecretType,
