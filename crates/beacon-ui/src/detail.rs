@@ -290,12 +290,6 @@ impl DetailView {
         if self.tab == tab {
             return;
         }
-        // Replacing the Overview with a nested table changes the retained
-        // paint tree. GPUI Fast 0.1.x can replay obsolete child ranges at
-        // this boundary; draw a fresh frame when entering or leaving Pods.
-        if self.tab == DetailTab::Pods || tab == DetailTab::Pods {
-            window.refresh();
-        }
         self.tab = tab;
         match tab {
             DetailTab::Pods if self.node_pods.is_none() => self.load_node_pods(window, cx),

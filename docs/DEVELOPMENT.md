@@ -127,13 +127,32 @@ GPUI 视图在前台线程更新。`beacon-ui/src/bridge.rs` 桥接两个执行�
 `vendor/gpui-base` 基于该提交，保留 YAML 初始折叠补丁，并修正折叠后的滚动高度；来源与测试命令见
 [BEACON-PATCHES.md](../vendor/gpui-base/BEACON-PATCHES.md)。
 
+目前锁定的 GPUI Fast 版本为 0.1.5。该版本在重定位 retained paint range 时仍会
+出现 `attempt to subtract with overflow`，仅在标签页切换时刷新窗口不足以规避。
+Beacon 因此在启动日志线程和 GPUI 之前，默认设置 `GPUI_VIEW_RETENTION=0`，
+覆盖主窗口、拆分窗口和应用日志等独立窗口。布局与文本优化仍然启用；
+视图及滚动层的缓存复用暂停，重绘开销可能增加。启动日志记录 `retained_views`。
+
 GPUI Fast 的 Retained Mode 会复用未变化的视图。改变未被实体或全局状态追踪的
 渲染数据时，应调用 `cx.notify()`；不要在每次渲染或 prepaint 时无条件修改全局状态。
 窗口拖拽的命中区域属于测量缓存，使用内部可变性更新，不触发下一帧的全局失效。
-排查视图未更新时，可临时禁用视图复用进行对比：
+应用保留显式的 `GPUI_VIEW_RETENTION` 环境变量。默认关闭，也可显式关闭：
 
 ```sh
 GPUI_VIEW_RETENTION=0 cargo run --locked -p beacon
+```
+
+仅排查上游渲染问题时重新启用，可能复现上述崩溃：
+
+```sh
+RUST_BACKTRACE=full GPUI_VIEW_RETENTION=1 cargo run --locked -p beacon
+```
+
+Node Pods 的无界面绘制测试覆盖视图复用开启、关闭两个模式，以及加载、数据更新、
+搜索为空与标签页切换。关闭模式还断言没有复用任何视图：
+
+```sh
+cargo test --locked -p beacon-ui --features ui-tests --lib node_pods::rendering_tests
 ```
 
 `k8s-openapi` 0.28 的时间类型使用 jiff。

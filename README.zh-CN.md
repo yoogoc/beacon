@@ -143,8 +143,9 @@ Prometheus 支持 Bearer Token 和四组可编辑查询，保存前可测试指�
 
 ## 开发
 
-Beacon 通过固定的 GPUI Kit 上游提交（0.7.1 之后）启用实验性的 GPUI Fast
-Retained Mode 渲染后端，并保留 YAML 高亮和默认字段折叠。
+Beacon 通过固定的 GPUI Kit 上游提交（0.7.1 之后）使用 GPUI Fast。
+为避开 GPUI Fast 0.1.5 的绘制缓存溢出，默认关闭自动视图复用；
+布局和文本优化、YAML 高亮与默认字段折叠仍然启用。
 依赖版本、补丁测试及渲染排查见 [开发指南](docs/DEVELOPMENT.md#依赖与打包)。
 
 ```sh

@@ -68,27 +68,18 @@ impl NodePodsView {
         });
         let search = cx
             .new(|cx| InputState::new(window, cx).placeholder("Search Pods by name or namespace"));
-        let search_subscription = cx.subscribe_in(
-            &search,
-            window,
-            |view, state, event: &InputEvent, window, cx| {
-                if matches!(event, InputEvent::Change) {
-                    let query = state.read(cx).value().to_string();
-                    let tree_changed = view.table.update(cx, |table, cx| {
-                        let was_empty = table.delegate().is_empty();
-                        if table.delegate_mut().set_filter(&query) {
-                            table.refresh(cx);
-                            cx.notify();
-                        }
-                        was_empty != table.delegate().is_empty()
-                    });
-                    if tree_changed {
-                        window.refresh();
+        let search_subscription = cx.subscribe(&search, |view, state, event: &InputEvent, cx| {
+            if matches!(event, InputEvent::Change) {
+                let query = state.read(cx).value().to_string();
+                view.table.update(cx, |table, cx| {
+                    if table.delegate_mut().set_filter(&query) {
+                        table.refresh(cx);
+                        cx.notify();
                     }
-                    cx.notify();
-                }
-            },
-        );
+                });
+                cx.notify();
+            }
+        });
         let table_subscription = cx.subscribe(&table, |view, table, event: &TableEvent, cx| {
             if let TableEvent::SelectRow(row) = event
                 && let Some(target) = table.read(cx).delegate().key_at(*row).cloned()
@@ -142,9 +133,6 @@ impl NodePodsView {
             table.refresh(cx);
             cx.notify();
         });
-        // Loading, empty and populated tables have different paint trees.
-        // Invalidate retained ranges when changing between them.
-        window.refresh();
         let key = WatchKey::pods_on_node(&self.node);
         let fetching = {
             let session = self.session.clone();
@@ -169,23 +157,17 @@ impl NodePodsView {
                     table.refresh(cx);
                     cx.notify();
                 });
-                window.refresh();
                 match result {
                     Ok(Ok(_)) => {
                         view._watch_task = Some(drain_into(
                             cx,
                             view.session.subscribe(key),
-                            |view, batch, window, cx| {
-                                let tree_changed = view.table.update(cx, |table, cx| {
-                                    let was_empty = table.delegate().is_empty();
+                            |view, batch, _, cx| {
+                                view.table.update(cx, |table, cx| {
                                     table.delegate_mut().apply(batch);
                                     table.refresh(cx);
                                     cx.notify();
-                                    was_empty != table.delegate().is_empty()
                                 });
-                                if tree_changed {
-                                    window.refresh();
-                                }
                                 cx.notify();
                             },
                             window,
@@ -251,9 +233,7 @@ fn render_pods_content(
             .test_support()
             .into_any_element()
     } else if loading {
-        // Mount the nested table only once its snapshot is ready. Replaying
-        // a loading table while it replaces its skeleton adds another
-        // retained-tree transition inside the detail panel.
+        // Keep the loading state lightweight until the snapshot is ready.
         div()
             .id("node-pods-loading")
             .size_full()
@@ -355,6 +335,15 @@ mod rendering_tests {
 
     #[::core::prelude::v1::test]
     fn nested_pod_table_survives_tab_switches_and_live_updates() {
+        exercise_pod_table(true);
+    }
+
+    #[::core::prelude::v1::test]
+    fn nested_pod_table_renders_without_retained_view_replays() {
+        exercise_pod_table(false);
+    }
+
+    fn exercise_pod_table(retained_views: bool) {
         let cx = &mut TestAppContext::single();
         cx.update(|cx| {
             gpui_kit::init(cx);
@@ -362,6 +351,7 @@ mod rendering_tests {
         });
         let (window, tabs) = cx.update(|cx| {
             gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
+                window.set_view_retention(retained_views);
                 let table = cx.new(|cx| {
                     TableState::new(
                         ResourceTable::new(columns()).without_selection(),
@@ -392,8 +382,15 @@ mod rendering_tests {
         });
         let table = tabs.read_with(cx, |tabs, cx| tabs.pane.read(cx).table.clone());
         let draw = |cx: &mut TestAppContext| {
-            cx.update_window(window, |_, window, cx| window.draw(cx).clear(cx))
-                .unwrap();
+            cx.update_window(window, |_, window, cx| {
+                assert_eq!(window.view_retention(), retained_views);
+                window.reset_layout_stats();
+                window.draw(cx).clear(cx);
+                if !retained_views {
+                    assert_eq!(window.layout_stats().views_reused, 0);
+                }
+            })
+            .unwrap();
         };
         draw(cx);
         for _ in 0..4 {

@@ -8,19 +8,24 @@ use gpui_kit::component::{Root, TitleBar};
 use gpui_kit::*;
 
 fn main() -> anyhow::Result<()> {
-    // Order matters here, and both of these run before any thread is started:
-    //
-    // 1. `merge_login_shell_path` mutates the process environment, which is
-    //    only sound while we are still single-threaded.
-    // 2. It has to happen before any cluster connection, because kubeconfig
-    //    `exec` credential plugins are looked up on PATH.
+    // GPUI Fast 0.1.5 can underflow while rebasing retained paint ranges.
+    // Use its supported fallback for every window until that path is fixed.
+    // An explicit value remains available for renderer diagnostics.
+    if std::env::var_os("GPUI_VIEW_RETENTION").is_none() {
+        // SAFETY: main has not started the logging worker, GPUI or Tokio yet.
+        unsafe { std::env::set_var("GPUI_VIEW_RETENTION", "0") };
+    }
+
+    // PATH also has to be updated before the logging worker starts, and
+    // before kubeconfig exec credential plugins are looked up on PATH.
+    beacon_kube::shell_env::merge_login_shell_path();
     let logging = logging::init()?;
     let log_directory = logging.directory.clone();
-    beacon_kube::shell_env::merge_login_shell_path();
 
     tracing::info!(
         version = env!("CARGO_PKG_VERSION"),
         target = std::env::consts::OS,
+        retained_views = std::env::var("GPUI_VIEW_RETENTION").map_or(true, |value| value != "0"),
         "starting beacon"
     );
 
