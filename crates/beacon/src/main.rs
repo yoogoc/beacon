@@ -8,6 +8,9 @@ use gpui_kit::component::{Root, TitleBar};
 use gpui_kit::*;
 
 fn main() -> anyhow::Result<()> {
+    if let Some(result) = beacon_updater::helper_main() {
+        return result;
+    }
     // GPUI Fast 0.1.5 can underflow while rebasing retained paint ranges.
     // Use its supported fallback for every window until that path is fixed.
     // An explicit value remains available for renderer diagnostics.
@@ -42,6 +45,7 @@ fn main() -> anyhow::Result<()> {
                 cx.quit();
                 return;
             }
+            beacon_ui::updates::init(cx);
 
             let options = WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(Bounds::centered(

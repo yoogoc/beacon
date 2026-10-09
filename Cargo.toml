@@ -4,7 +4,7 @@ members = ["crates/*"]
 exclude = ["vendor/gpui-base"]
 
 [workspace.package]
-version = "0.2.7"
+version = "1.0.0"
 edition = "2024"
 rust-version = "1.90"
 license = "Apache-2.0"
@@ -14,6 +14,7 @@ repository = "https://github.com/yoogo/beacon"
 beacon-columns = { path = "crates/beacon-columns" }
 beacon-kube = { path = "crates/beacon-kube" }
 beacon-ui = { path = "crates/beacon-ui" }
+beacon-updater = { path = "crates/beacon-updater" }
 
 # UI. gpui-kit pins the matching GPUI release and re-exports gpui, gpui-base,
 # gpui-component and the default icon assets, so the UI lists one dependency.

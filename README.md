@@ -56,6 +56,7 @@ It uses your existing kubeconfig and cluster permissions, discovering both built
 | **Resource operations** | Create YAML resources with server validation, review a YAML diff before creating or applying changes, restart, scale, and delete individually or in bulk. Context menus reflect resource types and permission checks. |
 | **ConfigMaps and Secrets** | View and edit data by key. Secret values start concealed. Inspect TLS certificate subjects, issuers, validity, algorithms, key strength, extensions, and public keys. |
 | **Metrics and Helm** | Read Pod / Node CPU and memory from the Kubernetes Metrics API or Prometheus, and inspect Helm releases stored in the cluster. |
+| **Updates** | Automatic checks, optional automatic downloads, signed packages, Stable / Development channels, and restart confirmation that protects unapplied edits. |
 | **Appearance and connections** | Light, dark, and named custom themes; locally saved fonts and colors; global and per-cluster proxies. |
 | **Diagnostics and keyboard navigation** | Command palette, searchable shortcut guide, separate application log window, and connection / Watch inspection from the status bar. |
 
@@ -133,6 +134,8 @@ Open **Help → Keyboard shortcuts** for the full shortcut list and focus behavi
 
 **Application settings:** use **Beacon → Settings…** in the macOS menu bar, or **Menu → Settings…** on Windows / Linux.
 Choose a theme, adjust fonts and text / button colors, save multiple local themes, and configure a global HTTP, HTTPS, or SOCKS5 proxy.
+
+**Updates:** open **Settings → Updates** or **Check for updates…** in the application menu. Installation always asks before restarting. Linux `.deb` builds provide a package download for manual installation.
 
 **Cluster settings:** right-click a cluster and open **Cluster settings…**.
 Set an alias, choose a preset or imported SVG icon, configure a separate proxy, and select Kubernetes Metrics API / Prometheus / Disabled as the metrics source.

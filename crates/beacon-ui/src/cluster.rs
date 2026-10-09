@@ -201,6 +201,46 @@ pub(crate) struct ResourceRequested {
 impl EventEmitter<ResourceRequested> for ClusterView {}
 
 impl ClusterView {
+    pub(crate) fn pending_edits(&self, cx: &App) -> Vec<String> {
+        let mut edits = Vec::new();
+        if self
+            .creation
+            .as_ref()
+            .is_some_and(|view| view.read(cx).has_pending_edits(cx))
+        {
+            edits.push(format!(
+                "{}: new resource draft",
+                self.session.id().display_name()
+            ));
+        }
+        if let Some(detail) = &self.detail
+            && detail.read(cx).has_pending_edits(cx)
+        {
+            let target = detail.read(cx).target();
+            edits.push(format!(
+                "{}: {}/{}",
+                self.session.id().display_name(),
+                target.namespace.as_deref().unwrap_or("cluster"),
+                target.name
+            ));
+        }
+        edits
+    }
+    pub(crate) fn focus_pending_edits(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(view) = &self.creation
+            && view.read(cx).has_pending_edits(cx)
+        {
+            view.update(cx, |view, cx| view.focus_editor(window, cx));
+        } else if let Some(detail) = &self.detail {
+            detail.update(cx, |view, cx| view.focus_pending_edits(window, cx));
+        }
+    }
+    pub(crate) fn has_active_shell(&self, cx: &App) -> bool {
+        self.pod_tools
+            .as_ref()
+            .is_some_and(|view| view.read(cx).has_active_session(cx))
+    }
+
     pub fn new(
         session: Arc<ClusterSession>,
         namespace: Option<String>,

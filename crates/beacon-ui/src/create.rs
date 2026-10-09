@@ -29,6 +29,7 @@ pub(crate) struct CreateView {
     session: Arc<ClusterSession>,
     kind: Arc<Kind>,
     editor: Entity<EditorState>,
+    baseline: String,
     status: Status,
     _operation: Option<Task<()>>,
     _review: Option<Task<()>>,
@@ -57,7 +58,9 @@ impl CreateView {
                 cx.notify();
             }
         });
+        let baseline = editor.read(cx).value().to_string();
         Self {
+            baseline,
             session,
             kind,
             editor,
@@ -66,6 +69,13 @@ impl CreateView {
             _review: None,
             _changes: changes,
         }
+    }
+
+    pub(crate) fn has_pending_edits(&self, cx: &App) -> bool {
+        self.is_running() || self.editor.read(cx).value().as_ref() != self.baseline
+    }
+    pub(crate) fn focus_editor(&self, window: &mut Window, cx: &mut App) {
+        self.editor.read(cx).focus_handle(cx).focus(window, cx);
     }
 
     pub fn is_running(&self) -> bool {

@@ -230,6 +230,8 @@ struct PreferencesView {
     _test: Option<Task<()>>,
     fonts: Option<Entity<FontFamilies>>,
     _font_ready: Option<Subscription>,
+    updates: beacon_updater::Preferences,
+    _updates: Option<Subscription>,
 }
 impl PreferencesView {
     fn new(id: Option<ClusterId>, window: &mut Window, cx: &mut Context<Self>) -> Self {
@@ -327,7 +329,12 @@ impl PreferencesView {
         let font_ready = fonts
             .as_ref()
             .map(|fonts| cx.observe(fonts, |_, _, cx| cx.notify()));
+        let updates = settings::store(cx).read(cx).preferences.updates.clone();
+        let update_subscription =
+            crate::updates::maybe_store(cx).map(|store| cx.observe(&store, |_, _, cx| cx.notify()));
         Self {
+            updates,
+            _updates: update_subscription,
             focus,
             page,
             proxy,
@@ -420,6 +427,7 @@ impl PreferencesView {
             let mut target = None;
             match &self.page {
                 Page::Application(t) => {
+                    preferences.updates = self.updates.clone();
                     preferences.proxy = proxy.unwrap_or_default();
                     preferences.appearance = if let Some(theme) = theme {
                         let name = theme.name.clone();
@@ -703,6 +711,151 @@ impl PreferencesView {
             .child(hint("An explicit proxy overrides NO_PROXY. Direct bypasses both kubeconfig and environment proxies.", cx))
             .into_any_element()
     }
+    fn save_updates(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let mut preferences = settings::store(cx).read(cx).preferences.clone();
+        preferences.updates = self.updates.clone();
+        if let Err(error) = settings::save(preferences, window, cx) {
+            self.updates = settings::store(cx).read(cx).preferences.updates.clone();
+            self.message = Some((true, error));
+        }
+        cx.notify();
+    }
+    fn updates_form(&self, cx: &mut Context<Self>) -> AnyElement {
+        use crate::updates::Status;
+        use beacon_updater::Channel;
+        let Some(store) = crate::updates::maybe_store(cx) else {
+            return div().into_any_element();
+        };
+        let updater = store.read(cx);
+        let can_install = updater.installation.can_install();
+        let (message, release) = match &updater.status {
+            Status::Idle => ("Updates have not been checked yet.".into(), None),
+            Status::Checking => ("Checking for updates…".into(), None),
+            Status::Current => ("You are up to date.".into(), None),
+            Status::Available(r) => (
+                format!(
+                    "Beacon {} is available · {:.1} MB",
+                    r.version,
+                    r.asset.size as f64 / 1_000_000.
+                ),
+                Some(r),
+            ),
+            Status::Downloading {
+                release,
+                received,
+                total,
+            } => (
+                format!(
+                    "Downloading Beacon {} · {:.1} / {:.1} MB · {}%",
+                    release.version,
+                    *received as f64 / 1_000_000.,
+                    *total as f64 / 1_000_000.,
+                    received.saturating_mul(100) / (*total).max(1)
+                ),
+                Some(release),
+            ),
+            Status::Ready(download) => (
+                format!(
+                    "Beacon {} is ready to install. Signature verified.",
+                    download.release.version
+                ),
+                Some(&download.release),
+            ),
+            Status::Installing => ("Preparing update and restart…".into(), None),
+            Status::Failed { message, release } => (message.clone(), release.as_ref()),
+        };
+        let busy = matches!(
+            updater.status,
+            Status::Checking | Status::Downloading { .. } | Status::Installing
+        );
+        let ready = matches!(updater.status, Status::Ready(_));
+        let download = matches!(
+            updater.status,
+            Status::Available(_)
+                | Status::Failed {
+                    release: Some(_),
+                    ..
+                }
+        );
+        let mut form = v_flex().gap_3()
+            .child(heading("Updates"))
+            .child(hint(&format!("Current version: {}", env!("CARGO_PKG_VERSION")), cx))
+            .child(Checkbox::new("auto-check-updates").label("Automatically check for updates").checked(self.updates.auto_check)
+                .on_click(cx.listener(|view, checked, window, cx| { view.updates.auto_check = *checked; view.save_updates(window, cx); })))
+            .child(Checkbox::new("auto-download-updates").label("Automatically download updates").checked(self.updates.auto_download).disabled(!can_install)
+                .on_click(cx.listener(|view, checked, window, cx| { view.updates.auto_download = *checked; view.save_updates(window, cx); })))
+            .child(hint("Checks run shortly after startup and every 24 hours. Installation always requires restart confirmation. Downloads use the saved global proxy.", cx))
+            .child(h_flex().gap_2().children([(Channel::Stable, "Stable"), (Channel::Development, "Development")].into_iter().map(|(channel, label)| {
+                Button::new(label).outline().selected(self.updates.channel == channel).label(label).disabled(matches!(updater.status, Status::Installing))
+                    .on_click(cx.listener(move |view, _, window, cx| { view.updates.channel = channel; view.save_updates(window, cx); }))
+            })))
+            .when(self.updates.channel == Channel::Development, |form| form.child(hint("Development releases may contain unfinished changes. Beacon will never automatically downgrade to an older version.", cx)))
+            .child(div().text_sm().text_color(if matches!(updater.status, Status::Failed { .. }) { cx.theme().danger } else { cx.theme().foreground })
+                .child(crate::copyable_text::copyable_text("update-status", message)))
+            .when_some(updater.receipt.clone(), |form, receipt| form.child(crate::copyable_text::copyable_text("update-install-result", receipt)))
+            .child(h_flex().gap_2().flex_wrap()
+                .child(Button::new("check-updates").outline().label("Check for updates").disabled(busy || ready)
+                    .on_click(|_, _, cx| crate::updates::store(cx).update(cx, |view, cx| view.check(cx))))
+                .when(busy && !matches!(updater.status, Status::Installing), |bar| bar.child(Button::new("cancel-update").ghost().label("Cancel")
+                    .on_click(|_, _, cx| crate::updates::store(cx).update(cx, |view, cx| view.cancel(cx)))))
+                .when(download && can_install, |bar| bar.child(Button::new("download-update").primary().label(if matches!(updater.status, Status::Failed { .. }) { "Retry download" } else { "Download update" })
+                    .on_click(|_, _, cx| crate::updates::store(cx).update(cx, |view, cx| view.download(cx)))))
+                .when(ready, |bar| bar.child(Button::new("install-update").primary().label("Restart and install")
+                    .on_click(|_, window, cx| crate::updates::store(cx).update(cx, |view, cx| view.restart(window, cx)))))
+                .when_some(release.map(|r| r.page.to_string()), |bar, url| bar.child(Button::new("update-release-page").ghost().label("View release")
+                    .on_click(move |_, _, cx| cx.open_url(&url)))));
+        if let Status::Downloading {
+            received, total, ..
+        } = &updater.status
+        {
+            let fraction = (*received as f32 / (*total).max(1) as f32).clamp(0., 1.);
+            form = form.child(
+                div()
+                    .w_full()
+                    .h(px(4.))
+                    .rounded_full()
+                    .bg(cx.theme().muted)
+                    .child(
+                        div()
+                            .h_full()
+                            .w(relative(fraction))
+                            .rounded_full()
+                            .bg(cx.theme().primary),
+                    ),
+            );
+        }
+        if let Some(checked) = updater.last_checked {
+            let seconds = checked.elapsed().map_or(0, |elapsed| elapsed.as_secs());
+            form = form.child(hint(
+                &if seconds < 60 {
+                    "Last checked just now.".into()
+                } else {
+                    format!("Last checked {} minute(s) ago.", seconds / 60)
+                },
+                cx,
+            ));
+        }
+        if let Some(release) = release {
+            form = form.child(div().text_sm().child(crate::copyable_text::copyable_text(
+                "update-release-notes",
+                release.notes.chars().take(8192).collect::<String>(),
+            )));
+            if !can_install {
+                let url = release.asset.url.to_string();
+                form = form.child(
+                    Button::new("get-update-package")
+                        .primary()
+                        .label("Get update package")
+                        .on_click(move |_, _, cx| cx.open_url(&url)),
+                );
+            }
+        }
+        if !can_install {
+            form = form.child(hint("This installation is managed externally. Download the package and install it with your package manager; automatic replacement is available for installed macOS/Windows apps and Linux AppImage.", cx));
+        }
+        form.into_any_element()
+    }
+
     fn theme_form(&self, t: &ThemeEditor, cx: &mut Context<Self>) -> AnyElement {
         let names: Vec<_> = settings::store(cx)
             .read(cx)
@@ -988,6 +1141,7 @@ impl Render for PreferencesView {
         let body = match &self.page {
             Page::Application(t) => v_flex()
                 .gap_4()
+                .child(self.updates_form(cx))
                 .child(self.theme_form(t, cx))
                 .child(self.proxy_form(cx))
                 .into_any_element(),
@@ -1101,4 +1255,122 @@ fn import_icon(path: PathBuf, directory: PathBuf) -> Result<PathBuf, String> {
     let path = icons.join(format!("{:x}.svg", Sha256::digest(&data)));
     std::fs::write(&path, data).map_err(|e| e.to_string())?;
     Ok(path)
+}
+
+#[cfg(all(test, feature = "ui-tests"))]
+mod update_tests {
+    use super::*;
+    use crate::updates::Status;
+    use beacon_updater::{Asset, Format, Release};
+    use gpui_kit::test::TestWindowExt as _;
+
+    #[::core::prelude::v1::test]
+    fn settings_render_update_states_without_retained_views() {
+        let directory = tempfile::tempdir().unwrap();
+        let cx = &mut TestAppContext::single();
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            cx.set_reduce_motion(true);
+            crate::app::init(directory.path().join("logs"), cx);
+            settings::store(cx).update(cx, |state, _| {
+                state.preferences = settings::Preferences::default();
+                state.directory = directory.path().to_owned();
+                state.load_error = None;
+            });
+            crate::Bridge::init(cx).unwrap();
+            crate::updates::init(cx);
+        });
+        let (window, _) = cx.update(|cx| {
+            gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
+                window.set_view_retention(false);
+                cx.new(|cx| PreferencesView::new(None, window, cx))
+            })
+            .unwrap()
+        });
+        let draw = |cx: &mut TestAppContext| {
+            cx.update_window(window, |_, window, cx| {
+                window.draw(cx).clear(cx);
+            })
+            .unwrap();
+        };
+        draw(cx);
+        cx.update_window(window, |_, window, _| {
+            assert!(window.find("check-updates").visible());
+            assert!(window.find("auto-check-updates").visible());
+        })
+        .unwrap();
+        let release = Release {
+            version: "0.2.8".parse().unwrap(),
+            notes: "Release notes".into(),
+            page: "https://github.com/yoogoc/beacon/releases/tag/v0.2.8"
+                .parse()
+                .unwrap(),
+            asset: Asset {
+                url: "https://github.com/yoogoc/beacon/releases/download/v0.2.8/Beacon.app.tar.gz"
+                    .parse()
+                    .unwrap(),
+                signature: String::new(),
+                size: 1024,
+                format: Format::App,
+            },
+        };
+        cx.update(|cx| {
+            crate::updates::store(cx).update(cx, |updater, cx| {
+                updater.installation = beacon_updater::Installation::MacApp {
+                    bundle: "/tmp/Beacon.app".into(),
+                    executable: "/tmp/Beacon.app/Contents/MacOS/beacon".into(),
+                };
+                updater.status = Status::Available(release.clone());
+                cx.notify();
+            })
+        });
+        draw(cx);
+        cx.update_window(window, |_, window, _| {
+            assert!(window.find("download-update").visible())
+        })
+        .unwrap();
+        for received in [0, 512, 1024] {
+            cx.update(|cx| {
+                crate::updates::store(cx).update(cx, |updater, cx| {
+                    updater.status = Status::Downloading {
+                        release: release.clone(),
+                        received,
+                        total: 1024,
+                    };
+                    cx.notify();
+                })
+            });
+            draw(cx);
+            cx.update_window(window, |_, window, _| {
+                assert!(window.find("cancel-update").visible())
+            })
+            .unwrap();
+        }
+        cx.update(|cx| {
+            crate::updates::store(cx).update(cx, |updater, cx| {
+                updater.status = Status::Failed {
+                    message: "Signature verification failed".into(),
+                    release: Some(release.clone()),
+                };
+                cx.notify();
+            })
+        });
+        draw(cx);
+        cx.update_window(window, |_, window, _| {
+            assert!(window.find("download-update").visible())
+        })
+        .unwrap();
+        cx.update(|cx| {
+            crate::updates::store(cx).update(cx, |updater, cx| {
+                updater.installation = beacon_updater::Installation::Managed;
+                updater.status = Status::Available(release);
+                cx.notify();
+            })
+        });
+        draw(cx);
+        cx.update_window(window, |_, window, _| {
+            assert!(window.find("get-update-package").visible())
+        })
+        .unwrap();
+    }
 }

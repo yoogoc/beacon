@@ -29,7 +29,7 @@ class ReleasePlanTests(unittest.TestCase):
 
     def test_main_push_of_release_commit_still_produces_development_build(self):
         plan = release.release_plan("0.2.0", "push", "refs/heads/main", "103")
-        self.assertEqual(plan["version"], "0.2.0-dev.103")
+        self.assertEqual(plan["version"], "0.2.1-dev.103")
         self.assertEqual(plan["prerelease"], "true")
 
     def test_formal_tag_is_latest_and_preserves_version(self):
@@ -41,7 +41,7 @@ class ReleasePlanTests(unittest.TestCase):
     def test_manual_runs_only_produce_artifacts_even_on_a_tag(self):
         for ref in ("refs/heads/feature", "refs/tags/v0.2.0"):
             plan = release.release_plan("0.2.0", "workflow_dispatch", ref, "105")
-            self.assertEqual(plan["version"], "0.2.0-dev.105")
+            self.assertEqual(plan["version"], "0.2.1-dev.105")
             self.assertEqual(plan["publish"], "false")
 
     def test_mismatched_or_non_formal_tags_are_rejected(self):
@@ -161,9 +161,9 @@ class WorkspaceVersionTests(unittest.TestCase):
         command = [sys.executable, str(spec.origin), "--root", str(self.root), "prepare"]
         result = subprocess.run(command, env=environment, capture_output=True, text=True, check=True)
         plan = json.loads(result.stdout)
-        self.assertEqual(release.workspace_version(self.root), "0.1.0-dev.101")
+        self.assertEqual(release.workspace_version(self.root), "0.1.1-dev.101")
         self.assertIn("make_latest=false\n", output.read_text())
-        self.assertEqual(plan["tag"], "v0.1.0-dev.101")
+        self.assertEqual(plan["tag"], "v0.1.1-dev.101")
         environment["GITHUB_REF"] = "refs/tags/v0.1.0"
         before = self.contents()
         result = subprocess.run(command, env=environment, capture_output=True, text=True)

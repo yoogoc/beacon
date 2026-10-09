@@ -53,6 +53,7 @@ gpui_kit::actions!(
         OpenAppLogs,
         OpenShortcuts,
         OpenSettings,
+        CheckForUpdates,
         Quit,
         NewTab,
         CloseTab,
@@ -82,6 +83,10 @@ pub fn init(log_directory: PathBuf, cx: &mut App) {
     crate::preferences::init(cx);
     app_logs::init(log_directory, cx);
     cx.on_action(|_: &OpenSettings, cx| crate::preferences::application(cx));
+    cx.on_action(|_: &CheckForUpdates, cx| {
+        crate::preferences::application(cx);
+        crate::updates::store(cx).update(cx, |view, cx| view.check(cx));
+    });
     crate::shortcuts::init(cx);
     cx.on_action(|_: &OpenShortcuts, cx| crate::shortcuts::open(cx));
     cx.on_action(|_: &OpenAppLogs, cx| app_logs::open(cx));
@@ -91,6 +96,7 @@ pub fn init(log_directory: PathBuf, cx: &mut App) {
     cx.set_menus([
         Menu::new("Beacon").items([
             MenuItem::action("Settings…", OpenSettings),
+            MenuItem::action("Check for updates…", CheckForUpdates),
             MenuItem::separator(),
             MenuItem::os_submenu("Services", SystemMenuType::Services),
             MenuItem::separator(),
@@ -138,6 +144,58 @@ pub fn init(log_directory: PathBuf, cx: &mut App) {
             Some("BeaconWorkspace && !Sheet && !PopupMenu"),
         ),
     ]);
+}
+
+pub(crate) struct UpdateBlockers {
+    pub edits: Vec<String>,
+    pub shells: usize,
+    pub forwards: usize,
+}
+pub(crate) fn update_blockers(cx: &App) -> UpdateBlockers {
+    let mut blockers = UpdateBlockers {
+        edits: Vec::new(),
+        shells: 0,
+        forwards: 0,
+    };
+    for entry in cx.global::<WorkspaceWindows>().windows.values() {
+        if let Some(app) = entry.view.upgrade() {
+            for tab in &app.read(cx).tabs {
+                if let TabState::Connected(view) = &tab.state {
+                    blockers.edits.extend(view.read(cx).pending_edits(cx));
+                    blockers.shells += usize::from(view.read(cx).has_active_shell(cx));
+                }
+            }
+        }
+    }
+    blockers.forwards = cx
+        .global::<SharedConnections>()
+        .0
+        .read(cx)
+        .sessions
+        .values()
+        .map(|s| s.forwards().len())
+        .sum();
+    blockers
+}
+pub(crate) fn return_to_editors(cx: &mut App) {
+    let target = cx.global::<WorkspaceWindows>().windows.values().find_map(|entry| {
+        let app = entry.view.upgrade()?;
+        let index = app.read(cx).tabs.iter().position(|tab| {
+            matches!(&tab.state, TabState::Connected(view) if !view.read(cx).pending_edits(cx).is_empty())
+        })?;
+        Some((entry.handle, app, index))
+    });
+    if let Some((handle, app, index)) = target {
+        let _ = handle.update(cx, |_, window, cx| {
+            window.activate_window();
+            app.update(cx, |app, cx| {
+                app.activate(index, window, cx);
+                if let Some(view) = app.view(index) {
+                    view.update(cx, |view, cx| view.focus_pending_edits(window, cx));
+                }
+            });
+        });
+    }
 }
 
 /// One tab: a cluster, and a view into it once it has connected.
@@ -341,7 +399,7 @@ impl BeaconApp {
             cx.global_mut::<WorkspaceWindows>().windows.remove(&id);
         })
         .detach();
-        let this = Self {
+        let mut this = Self {
             focus: cx.focus_handle(),
             tab_scrolls: HashMap::from([(0, ScrollHandle::new())]),
             layout: Workspace::default(),
@@ -361,6 +419,25 @@ impl BeaconApp {
             quit_prompt_open: false,
             _subscriptions: vec![palette_events, preferences_events, connection_events],
         };
+
+        if let Some(updater) = crate::updates::maybe_store(cx) {
+            let badge = |updater: &crate::updates::Updater| match updater.status {
+                crate::updates::Status::Available(_) => 1,
+                crate::updates::Status::Ready(_) => 2,
+                _ => 0,
+            };
+            let mut previous = badge(updater.read(cx));
+            this._subscriptions
+                .push(cx.observe(&updater, move |_, updater, cx| {
+                    let next = badge(updater.read(cx));
+                    // Download progress belongs to Settings. Resource tables only
+                    // redraw when their update notification changes.
+                    if next != previous {
+                        previous = next;
+                        cx.notify();
+                    }
+                }));
+        }
 
         // Native window closing (including macOS's close-window shortcut)
         // does not pass through the resource-tab action handler.
@@ -1420,6 +1497,7 @@ impl BeaconApp {
                                     .label("Menu")
                                     .dropdown_menu(|menu, _, _| {
                                         menu.menu("Settings…", Box::new(OpenSettings))
+                                            .menu("Check for updates…", Box::new(CheckForUpdates))
                                             .menu("App logs", Box::new(OpenAppLogs))
                                             .menu("Keyboard shortcuts", Box::new(OpenShortcuts))
                                     }),
@@ -2307,6 +2385,12 @@ impl BeaconApp {
             }
         };
 
+        let update_label =
+            crate::updates::maybe_store(cx).and_then(|store| match &store.read(cx).status {
+                crate::updates::Status::Available(_) => Some("Update available"),
+                crate::updates::Status::Ready(_) => Some("Update ready"),
+                _ => None,
+            });
         let copy_description = description.clone();
         h_flex()
             .w_full()
@@ -2326,6 +2410,15 @@ impl BeaconApp {
                     .flex_shrink_0()
                     .child(format!("Beacon {}", env!("CARGO_PKG_VERSION"))),
             )
+            .when_some(update_label, |bar, label| {
+                bar.child(
+                    Button::new("open-updates")
+                        .ghost()
+                        .small()
+                        .label(label)
+                        .on_click(|_, _, cx| crate::preferences::application(cx)),
+                )
+            })
             .child(
                 h_flex()
                     .min_w_0()

@@ -136,6 +136,10 @@ impl Dimensions for Size {
 }
 
 impl TerminalView {
+    pub(crate) fn is_active(&self) -> bool {
+        matches!(self.state, State::Connecting | State::Running)
+    }
+
     pub fn new(
         session: Arc<ClusterSession>,
         namespace: String,

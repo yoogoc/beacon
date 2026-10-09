@@ -157,12 +157,13 @@ kube 走的是 rustls。也没有列 Vulkan 驱动（`mesa-vulkan-drivers` 之�
 
 | 触发 | 版本 / 标签 | GitHub 发布状态 |
 | --- | --- | --- |
-| push main | `0.2.0-dev.<GITHUB_RUN_NUMBER>` / `v0.2.0-dev.<GITHUB_RUN_NUMBER>` | Pre-release，不抢占 Latest |
+| push main | `0.2.1-dev.<GITHUB_RUN_NUMBER>` / `v0.2.1-dev.<GITHUB_RUN_NUMBER>`（当前 Cargo 为 `0.2.0`） | Pre-release，不抢占 Latest |
 | push `vX.Y.Z` 标签 | `X.Y.Z`，必须与源码版本完全一致 | 全部平台打包成功后发布正式 Release，标记 Latest |
 | 手动 dispatch | 同样生成唯一的 `X.Y.Z-dev.<GITHUB_RUN_NUMBER>` | 只上传 Actions artifact，不发 Release |
 
-`Cargo.toml` 的 `[workspace.package].version` 是版本唯一来源，当前下一轮开发目标为
-`0.2.0-dev.0`。CI 使用发布工作流的运行编号替换 `dev.0`，不把构建编号提交回仓库；
+`Cargo.toml` 的 `[workspace.package].version` 是版本唯一来源。若源码版本为正式的
+`X.Y.Z`，main 和手动构建使用 `X.Y.(Z+1)-dev.<编号>`；若已设置 `X.Y.Z-dev.0`，
+CI 保留该开发目标并使用运行编号替换 `dev.0`，不把构建编号提交回仓库；
 重跑同一次工作流沿用同一编号。编号可能有空缺，不影响排序。
 应用启动日志、界面版本及安装包都从这次修改后的 Cargo 版本读取；各个 workspace crate 的
 锁定版本同步修改，第三方依赖的版本与校验和保持不变。
@@ -175,7 +176,7 @@ Release 说明记录完整提交 SHA、工作流链接和实际提供的平台�
 
 ### 版本规则与正式发版
 
-Beacon 当前处于 `0.x` 阶段，采用以下项目约定：
+Beacon 在历史 `0.x` 阶段采用以下项目约定：
 
 | 变化 | 示例 | 版本选择 |
 | --- | --- | --- |
@@ -285,3 +286,97 @@ Linux 的 DEB 单独读取发布脚本生成的配置，以适配 Debian 的 `~d
 - `.deb` 的 `depends` 列表是从构建依赖推出来的，**没有在干净的 Debian 系统上装过**。
 
 [cargo-packager]: https://github.com/crabnebula-dev/cargo-packager
+
+
+## 自动更新 / Automatic updates
+
+Settings → Updates enables automatic checks by default, with automatic downloads
+initially off. Checks run 15 seconds after startup and every 24 hours. The macOS
+Beacon menu and the Windows/Linux application menu also provide **Check for updates**.
+Downloads use the saved global proxy and support cancellation and retry. Stable
+releases are the default; Development must be chosen explicitly. Only newer SemVer
+versions are offered. Main builds after a formal `X.Y.Z` use `X.Y.(Z+1)-dev.N`; an
+explicit `X.Y.Z-dev.N` workspace keeps its existing development baseline.
+
+设置 → Updates 默认自动检查，自动下载初始关闭。启动 15 秒后检查，随后每 24 小时
+检查；macOS 系统菜单、Windows/Linux 应用菜单提供手动检查入口。下载使用已保存的
+全局代理，可取消和重试。默认 Stable，可主动切换 Development，不会自动降级。
+正式版本之后的 main 构建自动使用下一 patch 的开发版本号，避免开发版被当前正式版
+的 SemVer 顺序遮住。
+
+Installation always asks for restart confirmation. Every workspace window is
+checked for unapplied YAML/Data changes, creation drafts and saves/creation operations in progress.
+Return to editors opens the affected tab. Active Shell/Exec and port forwards are
+reported before restart. Restart never reconnects clusters automatically.
+
+安装始终需要确认重启，会检查所有工作区窗口中尚未应用的 YAML、Data、创建草稿和
+进行中的保存或创建操作，允许返回对应编辑器。确认框说明活动 Shell/Exec 和端口转发会
+停止。重启后保持不自动连接集群、不自动打开资源页面。
+
+| Installation / 安装形式 | Update / 更新方式 |
+| --- | --- |
+| macOS `.app` | Signed `.app.tar.gz`, replace in a writable application folder and reopen; restore the previous app if replacement fails / 签名归档，替换失败恢复原应用 |
+| Windows NSIS | Signed installer, visible passive installation to the existing directory and reopen / 签名安装器，保留可见的安装进度 |
+| Linux AppImage | Signed raw AppImage, replace and reopen / 签名文件，替换后重启 |
+| `.deb`, source or portable binary | Check and open the package download; install with the system package manager / 检查并提供下载入口，由包管理器安装 |
+
+A copied helper waits for Beacon's exit lock before installation and verifies the
+package again. Downloaded bytes are streamed to a temporary file and verified with
+Minisign; partial, oversized and invalid downloads are removed. `update.json` is
+also signed. Error text is selectable/copyable in Settings; checks and installation
+results are recorded in App Logs. Failed installation reopens the existing app.
+
+独立辅助进程等待主应用释放退出锁，安装前再次验签。更新包流式下载到临时文件，
+取消、长度错误、验签失败时移除临时产物。更新清单 `update.json` 同样签名。设置页
+错误可选中复制，检查与安装结果写入 App Logs；安装失败会重新打开原应用。
+
+### Signing setup / 签名配置
+
+Generate a long-lived key with the pinned packager, outside the repository. Keep
+the private key and its password backed up securely; do not regenerate them for
+each release. Existing clients trust the public key embedded at build time.
+
+在仓库外生成长期使用的密钥，安全备份私钥和密码，不要每次发布都重新生成；已有
+客户端只信任构建时内置的公钥。
+
+```sh
+cargo install cargo-packager --version 0.11.8 --locked
+cargo packager signer generate --path /secure/location/beacon-update.key
+```
+
+Configure these GitHub repository Secrets / 配置以下仓库 Secrets：
+
+- `BEACON_UPDATE_PUBLIC_KEY`: contents of `beacon-update.key.pub` (packager's base64 text) / 公钥文件原文。
+- `BEACON_UPDATE_PRIVATE_KEY`: contents of `beacon-update.key` / 私钥文件原文。
+- `BEACON_UPDATE_PRIVATE_KEY_PASSWORD`: key password / 私钥密码。
+
+The publishing workflow refuses missing signing keys, signs platform packages,
+assembles and signs `update.json`, then verifies all signatures with the same
+public key embedded in the clients. Formal releases require all six platform
+packages; development releases can omit failed unproven targets, whose clients
+will report that no package is available. Everything is uploaded to a draft
+before publication. Source builds use the public key in
+`assets/packaging/update-public-key` and offer manual package installation;
+release builds must use the matching GitHub Secret. Manual unsigned workflow
+runs only produce artifacts and never publish an updater feed.
+
+发布流程缺少密钥时停止发布；签名平台包和清单后，用客户端内置公钥验证全部产物，
+最后统一上传草稿再发布。正式版本要求六个平台齐全，开发版本允许缺少失败的平台，
+对应客户端显示无可用更新包。本地源码构建使用仓库里的公钥，可检查更新并提供
+手动安装入口；正式构建验证 GitHub Secret 与仓库公钥一致。未配置签名的手动
+工作流只生成产物，不发布更新清单。
+
+Versions before the first updater-enabled release must be upgraded manually once.
+此前没有自动更新功能的版本，需要手动安装一次带自动更新的新版本。
+
+The repository maintainer's encrypted key is stored outside the checkout at
+`~/.local/share/beacon/update-signing/beacon-update.key` (directory mode 700,
+key mode 600). Its password is stored in macOS Keychain, service
+`dev.beacon.update-signing`, account `yoogoc/beacon`. Keep a separate secure backup
+of the key and password; GitHub Secrets cannot be read back. Only the public key
+is committed. Do not replace it casually: existing clients still trust it.
+
+维护者的加密私钥位于仓库外的 `~/.local/share/beacon/update-signing/beacon-update.key`，
+目录权限 700，私钥权限 600。密码存入 macOS Keychain，服务名
+`dev.beacon.update-signing`，账户 `yoogoc/beacon`。请另行安全备份私钥与密码，
+GitHub Secrets 无法读回；仓库只提交公钥。不要随意替换公钥，已有客户端仍信任它。

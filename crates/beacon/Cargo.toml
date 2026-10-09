@@ -13,6 +13,7 @@ path = "src/main.rs"
 [dependencies]
 beacon-kube.workspace = true
 beacon-ui.workspace = true
+beacon-updater.workspace = true
 gpui-kit.workspace = true
 anyhow.workspace = true
 directories.workspace = true

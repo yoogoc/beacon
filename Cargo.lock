@@ -670,11 +670,12 @@ checksum = "ac07cdecf99051d9a5238b80f35af32cdeba5b336e55d957b318b50137e18da5"
 
 [[package]]
 name = "beacon"
-version = "0.2.7"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "beacon-kube",
  "beacon-ui",
+ "beacon-updater",
  "directories",
  "embed-resource",
  "gpui-kit",
@@ -685,7 +686,7 @@ dependencies = [
 
 [[package]]
 name = "beacon-columns"
-version = "0.2.7"
+version = "1.0.0"
 dependencies = [
  "k8s-openapi",
  "serde",
@@ -694,7 +695,7 @@ dependencies = [
 
 [[package]]
 name = "beacon-kube"
-version = "0.2.7"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -717,13 +718,14 @@ dependencies = [
 
 [[package]]
 name = "beacon-ui"
-version = "0.2.7"
+version = "1.0.0"
 dependencies = [
  "alacritty_terminal",
  "anyhow",
  "base64 0.22.1",
  "beacon-columns",
  "beacon-kube",
+ "beacon-updater",
  "directories",
  "futures",
  "gpui-kit",
@@ -737,6 +739,26 @@ dependencies = [
  "tokio",
  "tracing",
  "x509-parser",
+]
+
+[[package]]
+name = "beacon-updater"
+version = "1.0.0"
+dependencies = [
+ "anyhow",
+ "base64 0.22.1",
+ "flate2",
+ "fs2",
+ "minisign-verify",
+ "reqwest",
+ "semver",
+ "serde",
+ "serde_json",
+ "tar",
+ "tempfile",
+ "tokio",
+ "tracing",
+ "url",
 ]
 
 [[package]]
@@ -2052,6 +2074,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "filetime"
+version = "0.2.29"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5c287a33c7f0a620c38e641e7f60827713987b3c0f26e8ddc9462cc69cf75759"
+dependencies = [
+ "cfg-if",
+ "libc",
+]
+
+[[package]]
 name = "find-msvc-tools"
 version = "0.1.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2217,6 +2249,16 @@ dependencies = [
  "cc",
  "libc",
  "pkg-config",
+]
+
+[[package]]
+name = "fs2"
+version = "0.4.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9564fc758e15025b46aa6643b1b77d047d1a56a1aea6e01002ac0c7026876213"
+dependencies = [
+ "libc",
+ "winapi",
 ]
 
 [[package]]
@@ -4853,6 +4895,12 @@ name = "minimal-lexical"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "68354c5c6bd36d73ff3feceb05efa59b6acb7626617f4962be322a825e61f79a"
+
+[[package]]
+name = "minisign-verify"
+version = "0.2.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "22f9645cb765ea72b8111f36c522475d2daa0d22c957a9826437e97534bc4e9e"
 
 [[package]]
 name = "miniz_oxide"
@@ -7929,6 +7977,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "tar"
+version = "0.4.46"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3f6221d9a6003c78398e3b239969f352578258df48c8eb051caadae0015bc840"
+dependencies = [
+ "filetime",
+ "libc",
+ "xattr",
+]
+
+[[package]]
 name = "tauri-winrt-notification"
 version = "0.7.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8625,6 +8684,7 @@ dependencies = [
  "idna",
  "percent-encoding",
  "serde",
+ "serde_derive",
 ]
 
 [[package]]
@@ -9992,6 +10052,16 @@ dependencies = [
  "rusticata-macros",
  "thiserror 2.0.20",
  "time",
+]
+
+[[package]]
+name = "xattr"
+version = "1.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "32e45ad4206f6d2479085147f02bc2ef834ac85886624a23575ae137c8aa8156"
+dependencies = [
+ "libc",
+ "rustix",
 ]
 
 [[package]]

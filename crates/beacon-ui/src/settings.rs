@@ -154,6 +154,7 @@ pub(crate) struct Preferences {
     pub themes: BTreeMap<String, CustomTheme>,
     pub proxy: Proxy,
     pub clusters: BTreeMap<String, ClusterSettings>,
+    pub updates: beacon_updater::Preferences,
 }
 impl Preferences {
     pub fn yaml_folding(&self, id: &ClusterId) -> crate::yaml_folding::YamlFolding {

@@ -108,7 +108,11 @@ def release_plan(version, event, ref, run_number):
     elif event == "workflow_dispatch" or (event == "push" and ref == "refs/heads/main"):
         if not re.fullmatch(r"[1-9][0-9]*", run_number):
             raise ValueError("GITHUB_RUN_NUMBER must be a positive integer")
-        version = f"{version.split('-')[0]}-dev.{run_number}"
+        base = version.split("-")[0]
+        if "-" not in version:
+            major, minor, patch = map(int, base.split("."))
+            base = f"{major}.{minor}.{patch + 1}"
+        version = f"{base}-dev.{run_number}"
         tag = f"v{version}"
         prerelease = True
     else:

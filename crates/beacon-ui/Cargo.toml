@@ -12,6 +12,7 @@ ui-tests = ["gpui-kit/test-support"]
 alacritty_terminal.workspace = true
 beacon-columns.workspace = true
 beacon-kube.workspace = true
+beacon-updater.workspace = true
 gpui-kit.workspace = true
 nucleo-matcher.workspace = true
 anyhow.workspace = true

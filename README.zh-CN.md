@@ -56,6 +56,7 @@ Beacon 使用 Rust 和 GPUI 构建，将集群、资源列表、详情和容器�
 | **资源写操作** | YAML 创建与服务端预校验，创建或 Apply 前预览 YAML diff 并确认；重启、扩缩容、单个及批量删除；按资源类型显示右键菜单和权限预检结果。 |
 | **ConfigMap 与 Secret** | 按键查看和编辑 Data；Secret 值默认遮盖；TLS 证书展示主题、签发者、有效期、算法、强度、扩展和公钥。 |
 | **指标与 Helm** | Pod / Node 的 CPU、内存指标可来自 Kubernetes Metrics API 或 Prometheus；从集群读取 Helm Release。 |
+| **应用更新** | 自动检查、可选自动下载、更新包验签、Stable / Development 渠道；安装前确认重启并保护未应用的资源编辑。 |
 | **外观与连接** | 浅色、深色、命名的自定义主题；字体和颜色配置保存到本地；全局代理与集群独立代理。 |
 | **诊断与键盘操作** | 命令面板、可搜索的快捷键指南、独立的应用日志窗口；底部可查看连接和 Watch 状态。 |
 
@@ -133,6 +134,8 @@ Shell / Exec 可自动回退到本机 `kubectl`。
 **应用设置**：macOS 使用系统菜单栏 **Beacon → Settings…**；
 Windows / Linux 使用应用菜单 **Menu → Settings…**。
 可选择主题、调整字体与各类按钮 / 文字的颜色，保存多个本地主题，并设置全局 HTTP、HTTPS 或 SOCKS5 代理。
+
+**应用更新**：在 **Settings → Updates** 或应用菜单 **Check for updates…** 中检查更新；安装前始终确认重启。Linux `.deb` 版本提供下载入口，由包管理器安装。
 
 **集群设置**：右键集群，打开 **Cluster settings…**。
 可设置别名、预设或导入的 SVG 图标、独立代理，以及 Kubernetes Metrics API / Prometheus / Disabled 指标来源。

@@ -42,6 +42,8 @@ jobs:
   package:
     needs: [prepare, checks]
     name: ${{ matrix.name }}
+    env:
+      BEACON_UPDATE_PUBLIC_KEY: ${{ secrets.BEACON_UPDATE_PUBLIC_KEY }}
     runs-on: ${{ matrix.runner }}
     # Development builds tolerate unverified packaging targets. Formal
     # releases require every target; shared lint/build/tests must always pass.
@@ -103,6 +105,25 @@ jobs:
           RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
         run: python scripts/release.py set "$RELEASE_VERSION"
 
+      - name: Validate updater signing configuration
+        shell: bash
+        env:
+          RELEASE_PUBLISH: ${{ needs.prepare.outputs.publish }}
+          CARGO_PACKAGER_SIGN_PRIVATE_KEY: ${{ secrets.BEACON_UPDATE_PRIVATE_KEY }}
+        run: |
+          if [ "$RELEASE_PUBLISH" = "true" ] && { [ -z "$BEACON_UPDATE_PUBLIC_KEY" ] || [ -z "$CARGO_PACKAGER_SIGN_PRIVATE_KEY" ]; }; then
+            echo "::error::Configure BEACON_UPDATE_PUBLIC_KEY and BEACON_UPDATE_PRIVATE_KEY before publishing signed updates."
+            exit 1
+          fi
+          python3 - <<'PYKEY'
+          import os
+          from pathlib import Path
+          configured = os.environ.get("BEACON_UPDATE_PUBLIC_KEY", "").strip()
+          expected = Path("assets/packaging/update-public-key").read_text().strip()
+          if configured and configured != expected:
+              raise SystemExit("The GitHub public key must match the public key checked into packaging assets")
+          PYKEY
+
       # rust-toolchain.toml pins the channel; this only adds the cross target.
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -141,23 +162,40 @@ jobs:
 
       - name: Package
         if: runner.os != 'Linux'
-        run: >
-          cargo packager -p beacon --release
-          --target ${{ matrix.target }}
-          --formats ${{ matrix.formats }}
+        shell: bash
+        env:
+          CARGO_PACKAGER_SIGN_PRIVATE_KEY: ${{ secrets.BEACON_UPDATE_PRIVATE_KEY }}
+          CARGO_PACKAGER_SIGN_PRIVATE_KEY_PASSWORD: ${{ secrets.BEACON_UPDATE_PRIVATE_KEY_PASSWORD }}
+        run: |
+          if [ -z "$CARGO_PACKAGER_SIGN_PRIVATE_KEY" ]; then unset CARGO_PACKAGER_SIGN_PRIVATE_KEY CARGO_PACKAGER_SIGN_PRIVATE_KEY_PASSWORD; fi
+          cargo packager -p beacon --release --target ${{ matrix.target }} --formats ${{ matrix.formats }}
 
       - name: Package Linux
         if: runner.os == 'Linux'
         shell: bash
         env:
           PACKAGE_TARGET: ${{ matrix.target }}
+          CARGO_PACKAGER_SIGN_PRIVATE_KEY: ${{ secrets.BEACON_UPDATE_PRIVATE_KEY }}
+          CARGO_PACKAGER_SIGN_PRIVATE_KEY_PASSWORD: ${{ secrets.BEACON_UPDATE_PRIVATE_KEY_PASSWORD }}
           # linuxdeploy needs this on runners without FUSE.
           APPIMAGE_EXTRACT_AND_RUN: 1
         run: |
+          if [ -z "$CARGO_PACKAGER_SIGN_PRIVATE_KEY" ]; then unset CARGO_PACKAGER_SIGN_PRIVATE_KEY CARGO_PACKAGER_SIGN_PRIVATE_KEY_PASSWORD; fi
           python scripts/release.py deb-config --target "$PACKAGE_TARGET" --output target/release-deb.json
           DEB_CONFIG=$(cat target/release-deb.json)
           cargo packager --config "$DEB_CONFIG" --formats deb
           cargo packager -p beacon --release --target "$PACKAGE_TARGET" --formats appimage
+
+      - name: Give signed macOS archives unique release names
+        if: runner.os == 'macOS'
+        shell: bash
+        env:
+          RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
+          RELEASE_PUBLISH: ${{ needs.prepare.outputs.publish }}
+        run: |
+          UPDATE_FLAGS=()
+          if [ "$RELEASE_PUBLISH" != "true" ]; then UPDATE_FLAGS+=(--unsigned); fi
+          python scripts/updates.py stage-macos --directory "target/${{ matrix.target }}/release" --platform "${{ matrix.name }}" --version "$RELEASE_VERSION" "${UPDATE_FLAGS[@]}"
 
       - uses: actions/upload-artifact@v4
         with:
@@ -169,6 +207,8 @@ jobs:
             target/${{ matrix.target }}/release/*.AppImage
             target/${{ matrix.target }}/release/*-setup.exe
             target/${{ matrix.target }}/release/*.msi
+            target/${{ matrix.target }}/release/*.app.tar.gz
+            target/${{ matrix.target }}/release/*.sig
           if-no-files-found: error
 
   release:
@@ -202,9 +242,37 @@ jobs:
             exit 1
           fi
 
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.98"
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: update-manifest
+      - name: Install cargo-packager signer
+        run: cargo install cargo-packager --version 0.11.8 --locked
+
       - uses: actions/download-artifact@v4
         with:
           path: artifacts
+
+      - name: Build and sign update manifest
+        env:
+          RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
+          RELEASE_PRERELEASE: ${{ needs.prepare.outputs.prerelease }}
+          CARGO_PACKAGER_SIGN_PRIVATE_KEY: ${{ secrets.BEACON_UPDATE_PRIVATE_KEY }}
+          CARGO_PACKAGER_SIGN_PRIVATE_KEY_PASSWORD: ${{ secrets.BEACON_UPDATE_PRIVATE_KEY_PASSWORD }}
+          BEACON_UPDATE_PUBLIC_KEY: ${{ secrets.BEACON_UPDATE_PUBLIC_KEY }}
+        shell: bash
+        run: |
+          UPDATE_FLAGS=()
+          if [ "$RELEASE_PRERELEASE" = "true" ]; then UPDATE_FLAGS+=(--allow-missing); fi
+          python scripts/updates.py manifest --artifacts artifacts --repository "$GITHUB_REPOSITORY" --version "$RELEASE_VERSION" --output artifacts/update.json "${UPDATE_FLAGS[@]}"
+          cargo packager signer sign artifacts/update.json
+          cargo run --locked -p beacon-updater --bin verify-update -- artifacts
 
       - name: Record build provenance and available packages
         env:
@@ -216,7 +284,7 @@ jobs:
           import os
           from pathlib import Path
 
-          packages = sorted(Path("artifacts").glob("*/*"))
+          packages = sorted(path for path in Path("artifacts").rglob("*") if path.is_file())
           if not packages or any(not path.is_file() for path in packages):
               raise SystemExit("No release packages found, or unexpected artifact layout")
           if len({path.name for path in packages}) != len(packages):

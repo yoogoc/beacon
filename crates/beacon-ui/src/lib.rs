@@ -31,6 +31,7 @@ pub mod table;
 pub mod terminal;
 pub mod theme;
 mod tls;
+pub mod updates;
 mod workspace;
 mod yaml_folding;
 mod yaml_review;

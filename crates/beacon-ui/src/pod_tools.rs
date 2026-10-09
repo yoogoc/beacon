@@ -208,6 +208,14 @@ impl LogLineWidths {
 }
 
 impl PodToolsView {
+    pub(crate) fn has_active_session(&self, cx: &App) -> bool {
+        matches!(self.ran, Exec::Running)
+            || self
+                .shell
+                .as_ref()
+                .is_some_and(|shell| shell.read(cx).is_active())
+    }
+
     pub(crate) fn new(
         session: Arc<ClusterSession>,
         object: Arc<DynamicObject>,

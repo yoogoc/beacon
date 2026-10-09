@@ -159,6 +159,7 @@ pub struct DetailView {
     /// walks past, and an editor is not a place to keep them by default.
     revealed: bool,
     yaml_editor: Entity<EditorState>,
+    yaml_baseline: String,
     apply: Apply,
     reviewing: bool,
 
@@ -234,6 +235,7 @@ impl DetailView {
             data: Data::Unopened,
             revealed: false,
             yaml_editor,
+            yaml_baseline: String::new(),
             apply: Apply::Idle,
             reviewing: false,
             events: ResourceStore::new(),
@@ -253,6 +255,35 @@ impl DetailView {
         this.watch_events(window, cx);
         this.start_clock(cx);
         this
+    }
+
+    pub(crate) fn has_pending_edits(&self, cx: &App) -> bool {
+        self.busy() || self.yaml_changed(cx) || self.data_changed(cx)
+    }
+
+    fn yaml_changed(&self, cx: &App) -> bool {
+        matches!(self.yaml, Yaml::Ready)
+            && self.yaml_editor.read(cx).value().as_ref() != self.yaml_baseline
+    }
+
+    fn data_changed(&self, cx: &App) -> bool {
+        match &self.data {
+            Data::Ready(keys) => keys.iter().any(|key| {
+                key.editor.as_ref().is_some_and(|editor| {
+                    Some(editor.read(cx).value().as_ref()) != key.entry.text.as_deref()
+                })
+            }),
+            Data::Unopened => false,
+        }
+    }
+
+    pub(crate) fn focus_pending_edits(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.data_changed(cx) {
+            self.select(DetailTab::Data, window, cx);
+        } else if self.yaml_changed(cx) {
+            self.select(DetailTab::Yaml, window, cx);
+            self.yaml_editor.read(cx).focus_handle(cx).focus(window, cx);
+        }
     }
 
     pub fn target(&self) -> &ObjectRef {
@@ -610,6 +641,7 @@ impl DetailView {
             let _ = this.update_in(cx, |view, window, cx| {
                 match result {
                     Ok(Ok((yaml, folds))) => {
+                        view.yaml_baseline = yaml.clone();
                         view.yaml_editor.update(cx, |editor, cx| {
                             editor.set_value(yaml, window, cx);
                             editor.set_initial_folded_lines(folds, cx);
