@@ -135,6 +135,10 @@ jobs:
         shell: pwsh
         run: ./scripts/check-windows-runtime.ps1 -Binary "target/${{ matrix.target }}/release/beacon.exe"
 
+      - name: Verify Windows application icon
+        if: runner.os == 'Windows'
+        run: python scripts/check-windows-icon.py "target/${{ matrix.target }}/release/beacon.exe"
+
       - name: Package
         if: runner.os != 'Linux'
         run: >

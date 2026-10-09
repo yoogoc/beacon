@@ -123,6 +123,10 @@ jobs:
       - name: Build
         run: cargo build --locked --workspace --all-targets --target ${{ matrix.target }}
 
+      - name: Verify Windows application icon
+        if: runner.os == 'Windows'
+        run: python scripts/check-windows-icon.py "target/${{ matrix.target }}/debug/beacon.exe"
+
       # beacon-kube and beacon-columns are headless by construction, so the
       # whole test suite runs on a CI runner without a display.
       - name: Test

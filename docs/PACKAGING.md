@@ -36,6 +36,13 @@ cargo packager -p beacon --release --formats nsis      # Windows
 
 界面内的图标是另一回事，由 `gpui_kit::assets::Assets` 提供，在 `main.rs` 里注册。
 
+Windows 的桌面和开始菜单快捷方式从 `beacon.exe` 读取图标。
+`crates/beacon/build.rs` 在 Windows 目标构建时编译 `assets/packaging/beacon.rc`，
+将 `beacon.ico` 的全部尺寸嵌入可执行文件；仅在打包配置中列出 `.ico` 不会完成这一步。
+构建需要 Windows SDK 的资源编译器，缺少编译器会直接失败。
+CI 与发布打包前运行 `scripts/check-windows-icon.py`，逐个校验嵌入图像与源 ICO 字节一致，
+避免只检查到安装器图标而漏掉应用及快捷方式。
+
 ## 签名与公证
 
 **证书。** 这台机器上没有 **Developer ID Application** 证书，所以 app 目前**没签名** ——

@@ -676,6 +676,7 @@ dependencies = [
  "beacon-kube",
  "beacon-ui",
  "directories",
+ "embed-resource",
  "gpui-kit",
  "tracing",
  "tracing-appender",
