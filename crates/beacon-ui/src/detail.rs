@@ -608,9 +608,15 @@ impl DetailView {
 
             let _ = this.update_in(cx, |view, window, cx| {
                 view.apply = match result {
-                    Ok(Ok(Applied::Ok(_))) => {
-                        // Re-read rather than trust the echo: defaulting and
-                        // admission webhooks both change what was sent.
+                    Ok(Ok(Applied::Ok(object))) => {
+                        // The watch may still hold the pre-save object. Rebuild
+                        // Data from the server's response, including defaulting
+                        // and admission changes, then fetch full YAML if needed.
+                        view.refresh(
+                            Arc::new(beacon_kube::store::slim(*object)),
+                            view.rules.clone(),
+                            cx,
+                        );
                         view.yaml = Yaml::Unopened;
                         view.data = Data::Unopened;
                         match view.tab {
@@ -707,7 +713,7 @@ impl DetailView {
             object.data[key.entry.field.name()][&key.entry.key] = Value::String(encoded);
         }
 
-        let object = match serde_json::to_value(&object) {
+        let mut object = match serde_json::to_value(&object) {
             Ok(object) => object,
             Err(error) => {
                 self.apply = Apply::Failed(error.to_string());
@@ -715,6 +721,11 @@ impl DetailView {
                 return;
             }
         };
+
+        // List items may omit these fields; the selected resource supplies
+        // the identity required by both the diff review and Server-Side Apply.
+        object["apiVersion"] = Value::String(self.kind.resource.api_version.clone());
+        object["kind"] = Value::String(self.kind.resource.kind.clone());
 
         self.review(object, force, window, cx);
     }
@@ -3004,6 +3015,209 @@ fn parse(yaml: &str) -> Result<Value, String> {
 fn reformat(yaml: &str) -> Result<String, String> {
     serde_saphyr::to_string(&parse(yaml)?)
         .map_err(|error| format!("Could not write the YAML back out: {error}"))
+}
+
+#[cfg(all(test, feature = "ui-tests"))]
+mod integration_tests {
+    use super::*;
+    use crate::feature_test_support as support;
+    use gpui_kit::test::TestWindowExt as _;
+    use serde_json::json;
+
+    fn edit_data(
+        view: &Entity<DetailView>,
+        key: &str,
+        text: &str,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        let Data::Ready(keys) = &view.read(cx).data else {
+            panic!("data editors not loaded");
+        };
+        let editor = keys
+            .iter()
+            .find(|entry| entry.entry.key == key)
+            .unwrap()
+            .editor
+            .clone()
+            .unwrap();
+        editor.read(cx).focus_handle(cx).focus(window, cx);
+        window.render_frame(cx);
+        window.press(
+            if cfg!(target_os = "macos") {
+                "cmd-a"
+            } else {
+                "ctrl-a"
+            },
+            cx,
+        );
+        window.input(text, cx);
+        assert_eq!(editor.read(cx).value().as_ref(), text);
+        assert!(view.read(cx).data_changed(cx));
+    }
+
+    fn saves_data_from_a_list_object(kind: &str, plural: &str, data: Value) {
+        let cx = &mut support::context();
+        let mut original = json!({
+            "apiVersion": "v1", "kind": kind,
+            "metadata": {
+                "name": "data-fixture", "namespace": "default", "uid": "data-uid",
+                "resourceVersion": "1", "labels": {"app": "fixture"},
+                "annotations": {"note": "keep me"},
+                "managedFields": [{"manager":"kubectl", "operation":"Apply", "apiVersion":"v1"}]
+            },
+            "data": data
+        });
+        if kind == "ConfigMap" {
+            original["binaryData"] = json!({"text": "aGVsbG8=", "binary": "/w=="});
+        } else {
+            original["type"] = json!("Opaque");
+        }
+        let (fixture, session) = support::fixture(cx, "data-fixture", vec![original.clone()]);
+        let mut listed: DynamicObject = serde_json::from_value(original.clone()).unwrap();
+        // List items can omit the type metadata carried by the list itself.
+        listed.types = None;
+        let listed = Arc::new(beacon_kube::store::slim(listed));
+        let (window, view) = cx.update(|cx| {
+            gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
+                window.set_view_retention(false);
+                cx.new(|cx| {
+                    let mut view = DetailView::new(
+                        session,
+                        Arc::new(support::kind("", kind, plural)),
+                        listed,
+                        None,
+                        window,
+                        cx,
+                    );
+                    view.select(DetailTab::Data, window, cx);
+                    view.revealed = true;
+                    view
+                })
+            })
+            .unwrap()
+        });
+
+        for (index, text) in ["changed-配置=value", "saved-again"]
+            .into_iter()
+            .enumerate()
+        {
+            cx.update_window(window, |_, window, cx| {
+                edit_data(&view, "setting", text, window, cx);
+                window.click("save-data", cx);
+            })
+            .unwrap();
+            support::render_until(cx, window, |window| {
+                window
+                    .try_find("confirm-yaml-review")
+                    .is_some_and(|button| button.visible())
+            });
+            assert_eq!(
+                fixture.object(kind, "data-fixture")["data"]["setting"],
+                if index == 0 {
+                    original["data"]["setting"].clone()
+                } else {
+                    json!(data::encode(
+                        beacon_kube::DataField::Data,
+                        kind == "Secret",
+                        "changed-配置=value"
+                    ))
+                }
+            );
+            if index == 0 {
+                // Cancelling the diff preserves the draft and sends no write.
+                cx.update_window(window, |_, window, cx| {
+                    window.click("cancel-yaml-review", cx)
+                })
+                .unwrap();
+                support::settle(cx, |cx| view.read_with(cx, |view, _| !view.reviewing));
+                assert!(
+                    !fixture
+                        .requests
+                        .lock()
+                        .unwrap()
+                        .iter()
+                        .any(|(line, _)| line.starts_with("PATCH"))
+                );
+                cx.update_window(window, |_, window, cx| window.click("save-data", cx))
+                    .unwrap();
+                support::render_until(cx, window, |window| {
+                    window
+                        .try_find("confirm-yaml-review")
+                        .is_some_and(|button| button.visible())
+                });
+            }
+            cx.update_window(window, |_, window, cx| {
+                assert!(
+                    !window
+                        .find("confirm-yaml-review")
+                        .disabled()
+                        .unwrap_or(false)
+                );
+                window.click("confirm-yaml-review", cx);
+            })
+            .unwrap();
+            support::settle(cx, |cx| {
+                view.read_with(cx, |view, _| matches!(view.apply, Apply::Done))
+            });
+            view.read_with(cx, |view, cx| {
+                let Data::Ready(keys) = &view.data else {
+                    panic!("saved data not reloaded");
+                };
+                let key = keys.iter().find(|key| key.entry.key == "setting").unwrap();
+                assert_eq!(key.editor.as_ref().unwrap().read(cx).value().as_ref(), text);
+                assert_eq!(key.entry.text.as_deref(), Some(text));
+                assert!(!view.has_pending_edits(cx));
+            });
+            let saved = fixture.object(kind, "data-fixture");
+            assert_eq!(
+                saved["data"]["setting"],
+                data::encode(beacon_kube::DataField::Data, kind == "Secret", text)
+            );
+            assert_eq!(saved["data"]["untouched"], original["data"]["untouched"]);
+            assert_eq!(saved["binaryData"], original["binaryData"]);
+            assert_eq!(saved["type"], original["type"]);
+            assert_eq!(saved["metadata"]["labels"], original["metadata"]["labels"]);
+            assert_eq!(
+                saved["metadata"]["annotations"],
+                original["metadata"]["annotations"]
+            );
+        }
+        let requests = fixture.requests.lock().unwrap();
+        let patches: Vec<_> = requests
+            .iter()
+            .filter(|(line, _)| line.starts_with("PATCH"))
+            .collect();
+        assert_eq!(patches.len(), 2);
+        for (line, manifest) in patches {
+            assert!(line.starts_with(&format!(
+                "PATCH /api/v1/namespaces/default/{plural}/data-fixture?"
+            )));
+            assert!(line.contains("fieldManager=beacon"));
+            assert!(!line.contains("force=true"));
+            assert_eq!(manifest["apiVersion"], "v1");
+            assert_eq!(manifest["kind"], kind);
+            assert!(manifest.pointer("/metadata/managedFields").is_none());
+        }
+    }
+
+    #[::core::prelude::v1::test]
+    fn configmap_data_edits_are_reviewed_saved_and_reloaded() {
+        saves_data_from_a_list_object(
+            "ConfigMap",
+            "configmaps",
+            json!({"setting":"old", "untouched":"line one\nline two\n"}),
+        );
+    }
+
+    #[::core::prelude::v1::test]
+    fn secret_data_edits_are_encoded_saved_and_reloaded() {
+        saves_data_from_a_list_object(
+            "Secret",
+            "secrets",
+            json!({"setting":"b2xk", "untouched":"/w=="}),
+        );
+    }
 }
 
 #[cfg(test)]

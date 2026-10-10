@@ -245,6 +245,19 @@ async fn serve(
             let mut template = template.clone();
             template.as_object_mut().unwrap().remove("$patch");
             object["spec"]["template"] = template;
+        } else if matches!(kind, "ConfigMap" | "Secret") {
+            if request["apiVersion"] != object["apiVersion"]
+                || request["kind"] != object["kind"]
+                || request.pointer("/metadata/managedFields").is_some()
+            {
+                response(&mut stream,"422 Unprocessable Entity",json!({"apiVersion":"v1","kind":"Status","status":"Failure","code":422,"reason":"Invalid","message":"apply requires apiVersion and kind without managedFields"}).to_string(),"application/json").await;
+                return;
+            }
+            for field in ["data", "binaryData"] {
+                if let Some(values) = request.get(field) {
+                    object[field] = values.clone();
+                }
+            }
         }
         object["metadata"]["resourceVersion"] = json!("2");
         {

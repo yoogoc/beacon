@@ -68,6 +68,8 @@ pub(crate) fn fixture(
             kind("apps", "Deployment", "deployments"),
             kind("apps", "ReplicaSet", "replicasets"),
             kind("", "Namespace", "namespaces"),
+            kind("", "ConfigMap", "configmaps"),
+            kind("", "Secret", "secrets"),
         ];
         let session = Arc::new(ClusterSession::for_testing(
             ClusterId::new(id),
