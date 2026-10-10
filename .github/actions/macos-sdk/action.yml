@@ -1,0 +1,39 @@
+name: macOS release SDK
+description: Select Xcode 27.0, prepare Metal tools, and keep macOS 11 deployment compatibility.
+
+inputs:
+  developer-dir:
+    description: Developer directory for Xcode 27.0
+    default: /Applications/Xcode_27.0.app/Contents/Developer
+
+outputs:
+  cache-suffix:
+    description: Separate build caches by Xcode and SDK version
+    value: ${{ steps.sdk.outputs.cache-suffix }}
+
+runs:
+  using: composite
+  steps:
+    - id: sdk
+      shell: bash
+      env:
+        BEACON_XCODE_DEVELOPER_DIR: ${{ inputs.developer-dir }}
+      run: |
+        export DEVELOPER_DIR="$BEACON_XCODE_DEVELOPER_DIR"
+        test -d "$DEVELOPER_DIR"
+        BEACON_XCODE_VERSION="$(xcodebuild -version)"
+        printf '%s\n' "$BEACON_XCODE_VERSION"
+        test "${BEACON_XCODE_VERSION%%$'\n'*}" = 'Xcode 27.0'
+        export SDKROOT="$(xcrun --sdk macosx --show-sdk-path)"
+        BEACON_MACOS_SDK_VERSION="$(xcrun --sdk macosx --show-sdk-version)"
+        test "$BEACON_MACOS_SDK_VERSION" = '27.0'
+
+        # Xcode distributes its Metal compiler as an optional component.
+        if ! xcrun --sdk macosx metal --version; then
+          xcodebuild -downloadComponent MetalToolchain
+          xcrun --sdk macosx metal --version
+        fi
+
+        printf 'DEVELOPER_DIR=%s\nSDKROOT=%s\nBEACON_MACOS_SDK_VERSION=%s\nMACOSX_DEPLOYMENT_TARGET=11.0\n' \
+          "$DEVELOPER_DIR" "$SDKROOT" "$BEACON_MACOS_SDK_VERSION" >> "$GITHUB_ENV"
+        printf 'cache-suffix=-xcode-27.0-sdk-%s\n' "$BEACON_MACOS_SDK_VERSION" >> "$GITHUB_OUTPUT"

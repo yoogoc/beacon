@@ -88,7 +88,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: macos-latest
+          - os: xcode-27
             target: aarch64-apple-darwin
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
@@ -98,6 +98,9 @@ jobs:
             target: aarch64-pc-windows-msvc
     steps:
       - uses: actions/checkout@v4
+      - uses: ./.github/actions/macos-sdk
+        id: macos-sdk
+        if: runner.os == 'macOS'
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -118,10 +121,14 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
         with:
-          key: ${{ matrix.os }}
+          key: ${{ matrix.os }}${{ steps.macos-sdk.outputs.cache-suffix }}
 
       - name: Build
         run: cargo build --locked --workspace --all-targets --target ${{ matrix.target }}
+
+      - name: Verify macOS SDK and deployment target
+        if: runner.os == 'macOS'
+        run: python scripts/check-macos-sdk.py "target/${{ matrix.target }}/debug/beacon" --sdk-version "$BEACON_MACOS_SDK_VERSION"
 
       - name: Verify Windows application icon
         if: runner.os == 'Windows'

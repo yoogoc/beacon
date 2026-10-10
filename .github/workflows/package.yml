@@ -53,7 +53,7 @@ jobs:
         include:
           # Built, mounted and launched on this machine. See docs/PACKAGING.md.
           - name: macos-arm64
-            runner: macos-15
+            runner: xcode-27
             target: aarch64-apple-darwin
             formats: app,dmg
             unproven: false
@@ -62,7 +62,7 @@ jobs:
           # Intel one: the macOS SDK produces both, and the Intel runners are
           # on their way out.
           - name: macos-amd64
-            runner: macos-15
+            runner: xcode-27
             target: x86_64-apple-darwin
             formats: app,dmg
             unproven: false
@@ -95,6 +95,9 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+      - uses: ./.github/actions/macos-sdk
+        id: macos-sdk
+        if: runner.os == 'macOS'
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -132,7 +135,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           # Six jobs on one key would evict each other every run.
-          key: ${{ matrix.name }}
+          key: ${{ matrix.name }}${{ steps.macos-sdk.outputs.cache-suffix }}
 
       # The same list CI builds with -- X11, Wayland, Vulkan, fonts, ALSA.
       - uses: ./.github/actions/linux-deps
@@ -149,6 +152,10 @@ jobs:
       # expand `--target` on both.
       - name: Build
         run: cargo build --locked --release -p beacon --target ${{ matrix.target }}
+
+      - name: Verify macOS SDK and deployment target
+        if: runner.os == 'macOS'
+        run: python scripts/check-macos-sdk.py "target/${{ matrix.target }}/release/beacon" --sdk-version "$BEACON_MACOS_SDK_VERSION"
 
       - name: Verify Windows runtime dependencies
         if: runner.os == 'Windows'

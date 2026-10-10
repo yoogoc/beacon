@@ -235,8 +235,8 @@ python3 -m unittest discover -s scripts/tests -p 'test_*.py' -v
 
 | 矩阵项 | runner | 格式 | 本机验证到哪 |
 | --- | --- | --- | --- |
-| macos-arm64 | `macos-15` | app, dmg | 打包 + 挂载 DMG + 从 bundle 启动，连上集群出界面 |
-| macos-amd64 | `macos-15` 上交叉编译 | app, dmg | 同上（Rosetta 下启动），产出 `Beacon_0.1.0_x64.dmg` |
+| macos-arm64 | `xcode-27` | app, dmg | 打包 + 挂载 DMG + 从 bundle 启动，连上集群出界面 |
+| macos-amd64 | `xcode-27` 上交叉编译 | app, dmg | 同上（Rosetta 下启动），产出 `Beacon_0.1.0_x64.dmg` |
 | linux-amd64 | `ubuntu-24.04` | deb, appimage | **没验过** |
 | linux-arm64 | `ubuntu-24.04-arm` | deb, appimage | **没验过** |
 | windows-amd64 | `windows-2022` | nsis | **没验过**（没有 Windows 机器） |
@@ -245,6 +245,17 @@ python3 -m unittest discover -s scripts/tests -p 'test_*.py' -v
 Intel mac 用**交叉编译**而不是申请 Intel runner：macOS SDK 两个架构都能出，而 Intel
 runner 正在退役。本机实测过这条路 —— 产物落在 `target/x86_64-apple-darwin/release/`，
 所以工作流里的上传路径统一用 triple 目录。
+
+macOS CI 与发布打包通过 `.github/actions/macos-sdk` 固定使用 Xcode 27.0 / macOS 27.0 SDK，
+同时准备 GPUI 编译着色器需要的 Metal 工具。`DEVELOPER_DIR` 与 `SDKROOT` 显式传给后续构建，
+缓存按工具链版本隔离；构建后校验 Mach-O 中实际记录的 SDK 与最低系统版本。
+SDK 升级保留 `MACOSX_DEPLOYMENT_TARGET=11.0`，与安装包的最低系统版本配置一致。
+`xcode-27` 镜像当前仍标记为预览，Xcode 27.0 本身使用正式版本，详情见
+[GitHub runner 工具链清单](https://github.com/actions/runner-images/blob/main/images/macos/xcode-27-arm64-Readme.md)。
+
+macOS CI and release packaging pin Xcode 27.0 and the macOS 27.0 SDK, prepare the Metal
+compiler, and isolate caches by toolchain version. Every binary's recorded SDK and deployment
+target are checked before packaging. The deployment target remains macOS 11.0.
 
 CI 先用矩阵里的 target 显式执行
 `cargo build --locked --release -p beacon --target <triple>`，再把同一个 target 传给 cargo-packager。
