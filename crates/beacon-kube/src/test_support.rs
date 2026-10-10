@@ -11,6 +11,7 @@ pub struct Fixture {
     pub url: String,
     pub requests: Arc<Mutex<Vec<(String, Value)>>>,
     objects: Arc<Mutex<Vec<Value>>>,
+    refuse_exec: Arc<std::sync::atomic::AtomicBool>,
     events: broadcast::Sender<Value>,
     task: tokio::task::JoinHandle<()>,
 }
@@ -27,6 +28,8 @@ impl Fixture {
         let requests = Arc::new(Mutex::new(vec![]));
         let (events, _) = broadcast::channel(64);
         let store = objects.clone();
+        let refuse_exec = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let exec_policy = refuse_exec.clone();
         let recorded = requests.clone();
         let changes = events.clone();
         let task = tokio::spawn(async move {
@@ -35,8 +38,8 @@ impl Fixture {
                 tokio::select! {
                     accepted = listener.accept() => {
                         let Ok((stream,_)) = accepted else { break; };
-                        let store = store.clone(); let recorded = recorded.clone(); let changes = changes.clone();
-                        connections.spawn(async move { serve(stream,store,recorded,changes).await; });
+                        let store = store.clone(); let recorded = recorded.clone(); let changes = changes.clone(); let exec_policy = exec_policy.clone();
+                        connections.spawn(async move { serve(stream,store,recorded,changes,exec_policy).await; });
                     }
                     _ = connections.join_next(), if !connections.is_empty() => {}
                 }
@@ -46,9 +49,14 @@ impl Fixture {
             url,
             requests,
             objects,
+            refuse_exec,
             events,
             task,
         }
+    }
+    pub fn refuse_exec(&self) {
+        self.refuse_exec
+            .store(true, std::sync::atomic::Ordering::Relaxed);
     }
     pub fn put(&self, object: Value) {
         let mut objects = self.objects.lock().unwrap();
@@ -91,6 +99,7 @@ async fn serve(
     objects: Arc<Mutex<Vec<Value>>>,
     requests: Arc<Mutex<Vec<(String, Value)>>>,
     events: broadcast::Sender<Value>,
+    refuse_exec: Arc<std::sync::atomic::AtomicBool>,
 ) {
     let mut header = Vec::new();
     while !header.ends_with(b"\r\n\r\n") {
@@ -123,6 +132,10 @@ async fn serve(
     let method = words.next().unwrap_or("");
     let path = words.next().unwrap_or("/");
     let url = url::Url::parse(&format!("http://fixture{path}")).unwrap();
+    if url.path().ends_with("/exec") && refuse_exec.load(std::sync::atomic::Ordering::Relaxed) {
+        response(&mut stream,"403 Forbidden",json!({"kind":"Status","apiVersion":"v1","status":"Failure","reason":"Forbidden","message":"Fixture refuses WebSocket exec","code":403}).to_string(),"application/json").await;
+        return;
+    }
     let query: std::collections::BTreeMap<_, _> = url
         .query_pairs()
         .map(|(a, b)| (a.into_owned(), b.into_owned()))
@@ -281,4 +294,89 @@ async fn serve(
         "application/json",
     )
     .await;
+}
+
+/// Isolated container-file fixture. Its kubectl substitute executes only against
+/// this temporary directory; no host kubeconfig or live API is consulted.
+#[cfg(unix)]
+pub struct FileFixture {
+    directory: tempfile::TempDir,
+    pub root: std::path::PathBuf,
+    pub program: std::path::PathBuf,
+}
+#[cfg(unix)]
+impl Default for FileFixture {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+#[cfg(unix)]
+impl FileFixture {
+    pub fn new() -> Self {
+        use std::os::unix::fs::PermissionsExt as _;
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().join("container");
+        std::fs::create_dir(&root).unwrap();
+        let root = std::fs::canonicalize(root).unwrap();
+        let tools = directory.path().join("tools");
+        std::fs::create_dir(&tools).unwrap();
+        let shim = r#"#!/usr/bin/env python3
+import os, sys, stat
+p=sys.argv[-1]
+if os.path.basename(sys.argv[0]) == 'mv':
+    source,dest=sys.argv[-2:]
+    if '-n' in sys.argv and os.path.lexists(dest): sys.exit(0)
+    os.rename(source,dest); sys.exit(0)
+s=os.lstat(p)
+if os.path.basename(sys.argv[0]) == 'readlink':
+    sys.stdout.write(os.readlink(p))
+else:
+    if '%F' not in sys.argv[2]: print(s.st_size)
+    else:
+        kind='directory' if stat.S_ISDIR(s.st_mode) else 'symbolic link' if stat.S_ISLNK(s.st_mode) else 'regular file' if stat.S_ISREG(s.st_mode) else 'fifo'
+        print(f'{kind}|{s.st_size}|{int(s.st_mtime)}|{stat.S_IMODE(s.st_mode):o}|{s.st_uid}:{s.st_gid}')
+"#;
+        for tool in ["stat", "readlink", "mv"] {
+            let p = tools.join(tool);
+            std::fs::write(&p, shim).unwrap();
+            std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        let program = directory.path().join("kubectl-fixture");
+        let script = format!(
+            r#"#!/usr/bin/env python3
+import os,sys,json
+root={root}
+args=sys.argv[1:]
+assert '--context' in args and '--kubeconfig' in args and '--container' in args
+assert '-t' not in args and os.environ.get('KUBECTL_REMOTE_COMMAND_WEBSOCKETS')=='false'
+assert os.path.isfile(args[args.index('--kubeconfig')+1])
+argv=args[args.index('--')+1:]
+assert argv[:2]==['sh','-c']
+for i,value in enumerate(argv[4:],4):
+    if value.startswith('/'):
+        argv[i]=value if value.startswith(root) else root+'/'+value.lstrip('/')
+os.environ['PATH']={tools}+os.pathsep+os.environ['PATH']
+os.environ['PYTHONDONTWRITEBYTECODE']='1'
+with open({calls},'a') as f: f.write(json.dumps(argv)+'\n')
+os.execv('/bin/sh',argv)
+"#,
+            root = serde_json::to_string(root.to_str().unwrap()).unwrap(),
+            tools = serde_json::to_string(tools.to_str().unwrap()).unwrap(),
+            calls = serde_json::to_string(directory.path().join("calls.jsonl").to_str().unwrap())
+                .unwrap()
+        );
+        std::fs::write(&program, script).unwrap();
+        std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755)).unwrap();
+        Self {
+            directory,
+            root,
+            program,
+        }
+    }
+    pub fn calls(&self) -> String {
+        std::fs::read_to_string(self.directory.path().join("calls.jsonl")).unwrap_or_default()
+    }
+    pub fn pod(&self) -> Value {
+        json!({"apiVersion":"v1","kind":"Pod","metadata":{"name":"file-pod","namespace":"default","uid":"file-uid","resourceVersion":"1"},"spec":{"containers":[{"name":"app","image":"fixture"},{"name":"sidecar","image":"fixture"}],"initContainers":[{"name":"finished-init","image":"fixture"}]},"status":{"phase":"Running","containerStatuses":[{"name":"app","image":"fixture","imageID":"fixture","ready":true,"restartCount":0,"containerID":"fixture://app","state":{"running":{}}},{"name":"sidecar","image":"fixture","imageID":"fixture","ready":true,"restartCount":0,"containerID":"fixture://sidecar","state":{"running":{}}}],"initContainerStatuses":[{"name":"finished-init","image":"fixture","imageID":"fixture","ready":false,"restartCount":0,"containerID":"fixture://init","state":{"terminated":{"exitCode":0}}}]}})
+    }
 }

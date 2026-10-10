@@ -76,6 +76,8 @@ pub struct ClusterSession {
     client: Client,
     connection: crate::connection::ConnectionOptions,
     transport: crate::connection::Transport,
+    #[cfg(any(test, feature = "test-support"))]
+    files_program: Option<std::path::PathBuf>,
     runtime: tokio::runtime::Handle,
     discovery: Discovery,
     /// Filled in one kind at a time, as somebody opens them.
@@ -115,6 +117,8 @@ impl ClusterSession {
             client,
             connection: crate::connection::ConnectionOptions::default(),
             transport,
+            #[cfg(any(test, feature = "test-support"))]
+            files_program: None,
             runtime,
             discovery: Discovery::from_kinds(kinds),
             printer_columns: Mutex::new(PrinterColumns::default()),
@@ -216,6 +220,8 @@ impl ClusterSession {
             client,
             connection,
             transport,
+            #[cfg(any(test, feature = "test-support"))]
+            files_program: None,
             runtime,
             discovery,
             printer_columns: Mutex::new(PrinterColumns::default()),
@@ -381,6 +387,22 @@ impl ClusterSession {
     /// Stops the forwards aimed at a pod that no longer exists.
     pub fn close_forwards_for(&self, namespace: &str, pod: &str) {
         self.forwards.close_for_pod(namespace, pod);
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn with_file_test_program(mut self, program: std::path::PathBuf) -> Self {
+        self.files_program = Some(program);
+        self
+    }
+    pub(crate) fn file_program(&self) -> &std::ffi::OsStr {
+        #[cfg(any(test, feature = "test-support"))]
+        if let Some(program) = &self.files_program {
+            return program.as_os_str();
+        }
+        std::ffi::OsStr::new("kubectl")
+    }
+    pub(crate) fn file_transport(&self) -> &crate::connection::Transport {
+        &self.transport
     }
 
     /// Runs a one-shot command in a container.

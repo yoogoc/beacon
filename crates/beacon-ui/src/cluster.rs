@@ -204,6 +204,7 @@ pub(crate) struct ResourceRequested {
 }
 
 impl EventEmitter<ResourceRequested> for ClusterView {}
+impl EventEmitter<crate::pod_files::FilesRequested> for ClusterView {}
 
 impl ClusterView {
     pub(crate) fn pending_edits(&self, cx: &App) -> Vec<String> {
@@ -1247,6 +1248,18 @@ impl ClusterView {
                 let rules = self.rules.clone();
                 tools.update(cx, |tools, cx| tools.refresh(object, rules, cx));
             }
+        }
+    }
+
+    pub(crate) fn open_files(&mut self, key: &ObjectRef, cx: &mut Context<Self>) {
+        if !crate::actions::may_exec(self.rules.as_deref()) {
+            return;
+        }
+        if let Some(object) = self.table.read(cx).delegate().object(key).cloned() {
+            cx.emit(crate::pod_files::FilesRequested {
+                session: self.session.clone(),
+                object,
+            });
         }
     }
 

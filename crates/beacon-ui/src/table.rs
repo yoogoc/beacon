@@ -369,6 +369,14 @@ impl ResourceTable {
                         .disabled(!may_exec),
                 );
 
+            let files_view = view.clone();
+            let files_target = target.clone();
+            menu = menu.item(PopupMenuItem::new("Files…").disabled(!may_exec).on_click(
+                move |_, _, cx| {
+                    let _ = files_view.update(cx, |view, cx| view.open_files(&files_target, cx));
+                },
+            ));
+
             let ports = actions::ports(&object.data);
             if !ports.is_empty() && target.namespace.is_some() {
                 for port in ports {

@@ -26,6 +26,7 @@ mod network;
 mod node_pods;
 mod overview;
 pub mod palette;
+mod pod_files;
 mod pod_logs;
 mod pod_tools;
 mod preferences;

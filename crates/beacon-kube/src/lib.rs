@@ -15,6 +15,8 @@ pub mod debug;
 pub mod discovery;
 pub mod error;
 pub mod exec;
+mod file_exec;
+pub mod files;
 pub mod forward;
 pub mod helm;
 mod kubectl;

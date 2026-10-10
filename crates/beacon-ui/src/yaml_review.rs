@@ -42,6 +42,25 @@ impl Preview {
         Self::new(&before, ops::prepare_apply(proposed))
     }
 
+    pub fn text(before: &str, after: String) -> Result<Self, String> {
+        let patch = TextDiff::from_lines(before, &after)
+            .unified_diff()
+            .context_radius(before.lines().count().max(after.lines().count()))
+            .header("file", "file")
+            .to_string();
+        let changed = before != after;
+        let files = if changed {
+            DiffFile::parse(&patch).map_err(|e| e.to_string())?
+        } else {
+            vec![DiffFile::unchanged("file", &after)]
+        };
+        Ok(Self {
+            manifest: Value::String(after),
+            files,
+            changed,
+        })
+    }
+
     pub fn create(proposed: Value) -> Result<Self, String> {
         Self::new("", proposed)
     }
@@ -120,6 +139,45 @@ pub(crate) fn open(
     window: &mut Window,
     cx: &mut App,
 ) -> Entity<ReviewView> {
+    open_titled(
+        preview,
+        context,
+        create,
+        force,
+        "Review YAML changes",
+        window,
+        cx,
+    )
+}
+
+pub(crate) fn open_text(
+    preview: Preview,
+    context: String,
+    window: &mut Window,
+    cx: &mut App,
+) -> Entity<ReviewView> {
+    let review = open_titled(
+        preview,
+        context,
+        false,
+        false,
+        "Review file changes",
+        window,
+        cx,
+    );
+    review.update(cx, |view, _| view.confirmation_label("Confirm and save"));
+    review
+}
+
+fn open_titled(
+    preview: Preview,
+    context: String,
+    create: bool,
+    force: bool,
+    title: &'static str,
+    window: &mut Window,
+    cx: &mut App,
+) -> Entity<ReviewView> {
     let review = cx.new(|cx| {
         let diff =
             cx.new(|cx| DiffState::new(preview.files.clone(), cx).with_mode(DiffMode::Split));
@@ -139,7 +197,7 @@ pub(crate) fn open(
         let confirmed = content.clone();
         let closed = content.clone();
         dialog
-            .title("Review YAML changes")
+            .title(title)
             .width(px(1200.))
             .margin_top(px(32.))
             .on_ok(move |_, _, cx| confirmed.update(cx, |view, cx| view.confirm(cx)))
@@ -247,9 +305,17 @@ impl Render for ReviewView {
                     .child(div().flex_1().child(if self.create {
                         "Current: new resource"
                     } else {
-                        "− Current cluster YAML"
+                        if self.preview.manifest.is_string() {
+                            "− Current file"
+                        } else {
+                            "− Current cluster YAML"
+                        }
                     }))
-                    .child(div().flex_1().child("+ Proposed YAML")),
+                    .child(div().flex_1().child(if self.preview.manifest.is_string() {
+                        "+ Proposed file"
+                    } else {
+                        "+ Proposed YAML"
+                    })),
             )
             .child(
                 div()

@@ -163,6 +163,8 @@ pub(crate) fn update_blockers(cx: &App) -> UpdateBlockers {
                 if let TabState::Connected(view) = &tab.state {
                     blockers.edits.extend(view.read(cx).pending_edits(cx));
                     blockers.shells += usize::from(view.read(cx).has_active_shell(cx));
+                } else if let TabState::Files(view) = &tab.state {
+                    blockers.edits.extend(view.read(cx).pending(cx));
                 }
             }
         }
@@ -181,7 +183,7 @@ pub(crate) fn return_to_editors(cx: &mut App) {
     let target = cx.global::<WorkspaceWindows>().windows.values().find_map(|entry| {
         let app = entry.view.upgrade()?;
         let index = app.read(cx).tabs.iter().position(|tab| {
-            matches!(&tab.state, TabState::Connected(view) if !view.read(cx).pending_edits(cx).is_empty())
+            matches!(&tab.state, TabState::Connected(view) if !view.read(cx).pending_edits(cx).is_empty()) || matches!(&tab.state, TabState::Files(view) if view.read(cx).pending(cx).is_some())
         })?;
         Some((entry.handle, app, index))
     });
@@ -192,6 +194,8 @@ pub(crate) fn return_to_editors(cx: &mut App) {
                 app.activate(index, window, cx);
                 if let Some(view) = app.view(index) {
                     view.update(cx, |view, cx| view.focus_pending_edits(window, cx));
+                } else if let TabState::Files(view) = &app.tabs[index].state {
+                    view.update(cx, |view, cx| view.focus_editor(window, cx));
                 }
             });
         });
@@ -217,12 +221,15 @@ struct Tab {
     /// Keep the app's sidebar and tab label in sync with this view's selection.
     _navigation: Option<Subscription>,
     _resource_requests: Option<Subscription>,
+    _files_requests: Option<Subscription>,
+    files_object: Option<Arc<beacon_kube::DynamicObject>>,
 }
 
 enum TabState {
     Disconnected,
     Connecting,
     Connected(Entity<ClusterView>),
+    Files(Entity<crate::pod_files::FilesView>),
     Failed(String),
 }
 
@@ -446,6 +453,9 @@ impl BeaconApp {
             let _ = view.update(cx, |view, cx| {
                 if view.main_window {
                     view.request_quit(window, cx);
+                } else if view.tabs.iter().any(|tab| matches!(&tab.state,TabState::Files(files) if files.read(cx).pending(cx).is_some())) {
+                    let answer = window.prompt(PromptLevel::Warning,"Close workspace?",Some("Unsaved file edits will be discarded and active file operations will stop."),&[PromptButton::cancel("Cancel"),PromptButton::ok("Close")],cx);
+                    cx.spawn_in(window,async move |_,cx| { if matches!(answer.await,Ok(1)) { let _ = cx.update(|window,_| window.remove_window()); } }).detach();
                 } else {
                     window.defer(cx, |window, _| window.remove_window());
                 }
@@ -513,6 +523,8 @@ impl BeaconApp {
             state: TabState::Connecting,
             _navigation: None,
             _resource_requests: None,
+            _files_requests: None,
+            files_object: None,
         });
         self.layout.insert(id, self.layout.focused, None);
 
@@ -562,7 +574,7 @@ impl BeaconApp {
                     .initial_kind
                     .as_ref()
                     .is_some_and(|initial| initial.gvk() == kind.gvk()),
-                TabState::Failed(_) => false,
+                TabState::Failed(_) | TabState::Files(_) => false,
             }
         };
         let index = self
@@ -652,9 +664,12 @@ impl BeaconApp {
             .map(|(ix, _)| ix)
             .collect();
         if session.is_none()
-            && indices
-                .iter()
-                .any(|index| matches!(self.tabs[*index].state, TabState::Connected(_)))
+            && indices.iter().any(|index| {
+                matches!(
+                    self.tabs[*index].state,
+                    TabState::Connected(_) | TabState::Files(_)
+                )
+            })
         {
             // Resource dialogs can own streams and terminals outside a tab.
             // Drop them when their workspace connection is removed.
@@ -662,13 +677,19 @@ impl BeaconApp {
         }
         for index in indices {
             if let Some(session) = &session {
-                if !matches!(self.tabs[index].state, TabState::Connected(_)) {
+                if !matches!(
+                    self.tabs[index].state,
+                    TabState::Connected(_) | TabState::Files(_)
+                ) {
                     let namespace = self.tabs[index].namespace.clone();
                     self.show(index, session.clone(), namespace, window, cx);
                 }
                 continue;
             }
             let tab = &mut self.tabs[index];
+            if let TabState::Files(view) = &tab.state {
+                view.update(cx, |view, cx| view.stop(cx));
+            }
             if let TabState::Connected(view) = &tab.state {
                 let (kind, scope, mode) = view.read(cx).navigation();
                 tab.initial_kind = kind;
@@ -677,6 +698,7 @@ impl BeaconApp {
             }
             tab._navigation = None;
             tab._resource_requests = None;
+            tab._files_requests = None;
             tab.state = if disconnected {
                 TabState::Disconnected
             } else if let Some(error) = &error {
@@ -710,6 +732,13 @@ impl BeaconApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if let Some(object) = self.tabs[index].files_object.clone() {
+            self.tabs[index].state = TabState::Files(
+                cx.new(|cx| crate::pod_files::FilesView::new(session, object, window, cx)),
+            );
+            cx.notify();
+            return;
+        }
         let initial_kind = self.tabs[index].initial_kind.take();
         let initial_scope = self.tabs[index].initial_scope.take();
         let initial_mode = self.tabs[index].initial_mode;
@@ -743,7 +772,69 @@ impl BeaconApp {
         cx.notify();
     }
 
+    fn open_files(
+        &mut self,
+        session: Arc<ClusterSession>,
+        object: Arc<beacon_kube::DynamicObject>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let existing = self.tabs.iter().position(|tab| {
+            tab.cluster == *session.id()
+                && self.layout.owner(tab.id) == Some(self.layout.focused)
+                && tab
+                    .files_object
+                    .as_ref()
+                    .is_some_and(|p| p.metadata.uid == object.metadata.uid)
+        });
+        if let Some(index) = existing {
+            self.tabs[index].files_object = Some(object.clone());
+            if let TabState::Files(files) = &self.tabs[index].state {
+                files.update(cx, |view, cx| view.reopen(object, window, cx));
+            } else {
+                let namespace = self.tabs[index].namespace.clone();
+                self.show(index, session, namespace, window, cx);
+            }
+            self.activate(index, window, cx);
+            return;
+        }
+        self.new_files_tab(session, object, window, cx);
+    }
+
+    fn new_files_tab(
+        &mut self,
+        session: Arc<ClusterSession>,
+        object: Arc<beacon_kube::DynamicObject>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let id = cx.global::<WorkspaceWindows>().next_tab;
+        cx.global_mut::<WorkspaceWindows>().next_tab += 1;
+        let view = cx.new(|cx| {
+            crate::pod_files::FilesView::new(session.clone(), object.clone(), window, cx)
+        });
+        self.tabs.push(Tab {
+            id,
+            cluster: session.id().clone(),
+            namespace: object.metadata.namespace.clone(),
+            initial_kind: None,
+            initial_scope: None,
+            initial_mode: Mode::Objects,
+            state: TabState::Files(view),
+            _navigation: None,
+            _resource_requests: None,
+            _files_requests: None,
+            files_object: Some(object),
+        });
+        self.layout.insert(id, self.layout.focused, None);
+        self.activate(self.tabs.len() - 1, window, cx);
+    }
+
     fn bind_tab(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
+        if let TabState::Files(files) = &self.tabs[index].state {
+            files.update(cx, |view, cx| view.bind_window(window, cx));
+            return;
+        }
         let Some(view) = self.view(index) else {
             return;
         };
@@ -782,6 +873,14 @@ impl BeaconApp {
                 }
             },
         );
+        let files_requests = cx.subscribe_in(
+            &view,
+            window,
+            |app, _, event: &crate::pod_files::FilesRequested, window, cx| {
+                app.open_files(event.session.clone(), event.object.clone(), window, cx);
+            },
+        );
+        self.tabs[index]._files_requests = Some(files_requests);
         self.tabs[index]._navigation = Some(navigation);
         self.tabs[index]._resource_requests = Some(resource_requests);
         cx.notify();
@@ -835,6 +934,7 @@ impl BeaconApp {
         // Subscriptions belong to the containing workspace, not to the view.
         tab._navigation = None;
         tab._resource_requests = None;
+        tab._files_requests = None;
         self.layout.remove(id);
         self.focus.focus(window, cx);
         self.sync_layout(window, cx);
@@ -842,7 +942,38 @@ impl BeaconApp {
     }
 
     fn close(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(tab) = self.tabs.get(index)
+            && let TabState::Files(files) = &tab.state
+            && files.read(cx).pending(cx).is_some()
+        {
+            let id = tab.id;
+            let answer = window.prompt(PromptLevel::Warning, "Close Files?", Some("Unsaved edits will be discarded and the active file operation will be cancelled."), &[PromptButton::cancel("Cancel"), PromptButton::ok("Close")], cx);
+            cx.spawn_in(window, async move |this, cx| {
+                if matches!(answer.await, Ok(1)) {
+                    let _ = this.update_in(cx, |app, window, cx| {
+                        if let Some(index) = app.index_of(id)
+                            && let TabState::Files(view) = &app.tabs[index].state
+                        {
+                            view.update(cx, |view, cx| {
+                                view.close_dialogs(window, cx);
+                                view.stop(cx);
+                            });
+                        }
+                        app.take_tab(id, window, cx);
+                        app.close_empty_window(window, cx);
+                    });
+                }
+            })
+            .detach();
+            return;
+        }
         if let Some(id) = self.tabs.get(index).map(|tab| tab.id) {
+            if let TabState::Files(view) = &self.tabs[index].state {
+                view.update(cx, |view, cx| {
+                    view.close_dialogs(window, cx);
+                    view.stop(cx);
+                });
+            }
             self.take_tab(id, window, cx);
             self.close_empty_window(window, cx);
         }
@@ -879,7 +1010,10 @@ impl BeaconApp {
         }
         self.bind_tab(index, window, cx);
         self.sync_layout(window, cx);
-        if !matches!(self.tabs[index].state, TabState::Connected(_)) {
+        if !matches!(
+            self.tabs[index].state,
+            TabState::Connected(_) | TabState::Files(_)
+        ) {
             self.sync_connection(&cluster, window, cx);
         }
         self.focus.focus(window, cx);
@@ -898,6 +1032,22 @@ impl BeaconApp {
         };
         self.activate(index, window, cx);
         let pane = self.layout.focused;
+        if let TabState::Files(files) = &self.tabs[index].state {
+            let files = files.read(cx);
+            let session = files.session.clone();
+            let object = files.object.clone();
+            let (container, directory, file) = files.navigation(cx);
+            self.new_files_tab(session, object, window, cx);
+            if let TabState::Files(files) = &self.tabs[self.active].state {
+                files.update(cx, |view, cx| {
+                    view.restore_navigation(container, directory, file, window, cx)
+                });
+            }
+            let id = self.tabs[self.active].id;
+            self.layout.move_tab(id, pane, None, Some(direction));
+            self.sync_layout(window, cx);
+            return;
+        }
         let tab = &self.tabs[index];
         let cluster = tab.cluster.clone();
         let (kind, scope, mode, filters) = match &tab.state {
@@ -1831,8 +1981,12 @@ impl BeaconApp {
     }
 
     fn tab_title(&self, tab: &Tab, cx: &App) -> SharedString {
+        if let Some(pod) = &tab.files_object {
+            return format!("Files · {}", pod.metadata.name.as_deref().unwrap_or("Pod")).into();
+        }
         match &tab.state {
             TabState::Connected(view) => view.read(cx).title(),
+            TabState::Files(view) => view.read(cx).title(),
             TabState::Disconnected => {
                 if tab.initial_mode == Mode::Objects {
                     tab.initial_kind
@@ -2044,6 +2198,12 @@ impl BeaconApp {
         let index = tab.and_then(|id| self.index_of(id));
         if let Some(view) = index.and_then(|index| self.view(index)) {
             return view.into_any_element();
+        }
+        if let Some(TabState::Files(files)) = index
+            .and_then(|index| self.tabs.get(index))
+            .map(|tab| &tab.state)
+        {
+            return files.clone().into_any_element();
         }
         let state = index
             .and_then(|index| self.tabs.get(index))
@@ -2369,6 +2529,20 @@ impl BeaconApp {
                     0,
                 )
             }
+            Some(TabState::Files(files)) => {
+                let files = files.read(cx);
+                let session = &files.session;
+                description.push_str(&format!("\nAPI server: {}", session.server()));
+                (
+                    Tone::Healthy,
+                    format!(
+                        "{} · Kubernetes {} · Files",
+                        name.unwrap_or_default(),
+                        session.version()
+                    ),
+                    session.active_watches(),
+                )
+            }
             Some(TabState::Connected(cluster)) => {
                 let cluster = cluster.read(cx);
                 let session = cluster.session();
@@ -2612,5 +2786,115 @@ mod rendering_tests {
             assert_eq!(list.bounds().origin.x, plus.bounds().right());
         })
         .unwrap();
+    }
+}
+
+#[cfg(all(test, feature = "ui-tests", unix))]
+mod file_workspace_tests {
+    use super::*;
+    use crate::bridge::Bridge;
+    use crate::feature_test_support as support;
+    use beacon_kube::test_support::{FileFixture, Fixture};
+
+    #[::core::prelude::v1::test]
+    fn files_split_detach_and_merge_keep_the_same_view_and_bound_session() {
+        let cx = &mut support::context();
+        let directory = tempfile::tempdir().unwrap();
+        support::workspace(cx, directory.path());
+        let files = FileFixture::new();
+        std::fs::write(files.root.join("fixture.txt"), "hello").unwrap();
+        let pod = files.pod();
+        let (_fixture, session) = cx.read(|cx| Bridge::global(cx).handle()).block_on(async {
+            let fixture = Fixture::start(vec![pod.clone()]).await;
+            fixture.refuse_exec();
+            let session = Arc::new(
+                ClusterSession::for_testing(
+                    ClusterId::new("workspace-file-fixture"),
+                    fixture.url.clone(),
+                    vec![],
+                )
+                .with_file_test_program(files.program.clone()),
+            );
+            (fixture, session)
+        });
+        let object: Arc<beacon_kube::DynamicObject> =
+            Arc::new(serde_json::from_value(pod).unwrap());
+        let (window, app) = cx.update(|cx| {
+            gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
+                window.set_view_retention(false);
+                cx.new(|cx| {
+                    let mut app = BeaconApp::new(window, cx);
+                    app.contexts = Ok(Contexts::default());
+                    app.connections.update(cx, |state, _| {
+                        state.sessions.insert(session.id().clone(), session.clone());
+                    });
+                    app.open_files(session.clone(), object.clone(), window, cx);
+                    app
+                })
+            })
+            .unwrap()
+        });
+        let first_id = app.read_with(cx, |a, _| a.tabs[0].id);
+        cx.update_window(window, |_, w, cx| {
+            app.update(cx, |a, cx| {
+                a.open_files(session.clone(), object.clone(), w, cx);
+                assert_eq!(a.tabs.len(), 1);
+                a.split_tab(first_id, Direction::Right, w, cx);
+                assert_eq!(a.tabs.len(), 2);
+                assert_eq!(a.layout.panes().len(), 2);
+            })
+        })
+        .unwrap();
+        let (second_id, view_id) = app.read_with(cx, |a, _| {
+            let tab = &a.tabs[1];
+            let TabState::Files(view) = &tab.state else {
+                panic!("File split opened a resource page");
+            };
+            (tab.id, view.entity_id())
+        });
+        cx.update_window(window, |_, w, cx| {
+            app.update(cx, |a, cx| a.detach_tab(second_id, None, w, cx))
+        })
+        .unwrap();
+        cx.run_until_parked();
+        let (detached, handle) = cx.read(|cx| {
+            cx.global::<WorkspaceWindows>()
+                .windows
+                .values()
+                .find(|entry| !entry.main)
+                .map(|entry| (entry.view.upgrade().unwrap(), entry.handle))
+                .unwrap()
+        });
+        detached.read_with(cx, |a, cx| {
+            assert_eq!(a.tabs.len(), 1);
+            let TabState::Files(view) = &a.tabs[0].state else {
+                panic!("lost Files on detach");
+            };
+            assert_eq!(view.entity_id(), view_id);
+            assert!(Arc::ptr_eq(&view.read(cx).session, &session));
+        });
+        cx.update_window(handle, |_, w, cx| {
+            detached.update(cx, |a, cx| a.merge_to_main(second_id, w, cx))
+        })
+        .unwrap();
+        cx.run_until_parked();
+        app.read_with(cx, |a, _| {
+            assert_eq!(a.tabs.len(), 2);
+            let TabState::Files(view) = &a.tabs[a.index_of(second_id).unwrap()].state else {
+                panic!("lost Files on merge");
+            };
+            assert_eq!(view.entity_id(), view_id);
+        });
+        cx.update_window(window, |_, w, cx| {
+            app.update(cx, |a, cx| a.disconnect(session.id(), w, cx))
+        })
+        .unwrap();
+        app.read_with(cx, |a, _| {
+            assert!(
+                a.tabs
+                    .iter()
+                    .all(|tab| matches!(tab.state, TabState::Disconnected))
+            )
+        });
     }
 }
