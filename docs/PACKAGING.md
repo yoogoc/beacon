@@ -142,12 +142,12 @@ cargo-packager **不探测 `.deb` 依赖**，只写配置里的 `depends`，不�
 kube 走的是 rustls。也没有列 Vulkan 驱动（`mesa-vulkan-drivers` 之类）：那是用户机器上
 显卡驱动的事，`libvulkan1` 这个 loader 才是应用自己的依赖。
 
-## CI：push 时自动打包并发布
+## CI：标签发布与手动打包
 
 `.github/workflows/package.yml`，矩阵是 mac / windows / linux × amd64 / arm64。
 
-触发限定在 **push 到 main、push `v*` tag、以及手动 dispatch**。其他分支和 PR 运行
-`.github/workflows/ci.yml`；main 和发布标签通过可复用的同一 CI 工作流执行检查，不重复触发一份独立 CI。
+打包触发限定在 **push `v*` tag、以及手动 dispatch**。push 到 main 不会自动构建、打包或发布。
+其他分支和 PR 运行 `.github/workflows/ci.yml`；发布标签和手动打包通过可复用的同一 CI 工作流执行检查。
 
 发布依次执行：
 
@@ -158,12 +158,12 @@ kube 走的是 rustls。也没有列 Vulkan 驱动（`mesa-vulkan-drivers` 之�
 
 | 触发 | 版本 / 标签 | GitHub 发布状态 |
 | --- | --- | --- |
-| push main | `0.2.1-dev.<GITHUB_RUN_NUMBER>` / `v0.2.1-dev.<GITHUB_RUN_NUMBER>`（当前 Cargo 为 `0.2.0`） | Pre-release，不抢占 Latest |
+| push main | 保留源码版本 | 不触发构建或发布 |
 | push `vX.Y.Z` 标签 | `X.Y.Z`，必须与源码版本完全一致 | 全部平台打包成功后发布正式 Release，标记 Latest |
 | 手动 dispatch | 同样生成唯一的 `X.Y.Z-dev.<GITHUB_RUN_NUMBER>` | 只上传 Actions artifact，不发 Release |
 
 `Cargo.toml` 的 `[workspace.package].version` 是版本唯一来源。若源码版本为正式的
-`X.Y.Z`，main 和手动构建使用 `X.Y.(Z+1)-dev.<编号>`；若已设置 `X.Y.Z-dev.0`，
+`X.Y.Z`，手动构建使用 `X.Y.(Z+1)-dev.<编号>`；若已设置 `X.Y.Z-dev.0`，
 CI 保留该开发目标并使用运行编号替换 `dev.0`，不把构建编号提交回仓库；
 重跑同一次工作流沿用同一编号。编号可能有空缺，不影响排序。
 应用启动日志、界面版本及安装包都从这次修改后的 Cargo 版本读取；各个 workspace crate 的
@@ -194,18 +194,19 @@ Beacon 在历史 `0.x` 阶段采用以下项目约定：
 # 同时更新 workspace、Cargo.lock 中的本地 crate 版本与 macOS 版本元数据。
 python3 scripts/release.py set 0.2.0
 
-# 检查修改并提交。先在 main 发布工作流中验证这份代码。
+# 检查修改并提交。main 推送不会触发构建。
 git diff -- Cargo.toml Cargo.lock assets/packaging/Info.plist
 git add Cargo.toml Cargo.lock assets/packaging/Info.plist
 git commit -m "chore(release): prepare 0.2.0"
 git push origin main
 
-# 上一步检查与打包通过后，在同一提交上创建正式标签。
+# 在同一提交上创建正式标签，触发完整检查、打包与发布。
 git tag -a v0.2.0 -m "Beacon 0.2.0"
 git push origin v0.2.0
 ```
 
-创建标签时应仍在准备版本的同一提交上；标签触发后会再次执行完整检查与打包。
+创建标签时应仍在准备版本的同一提交上；标签触发后会执行完整检查与打包。
+如需在正式发布前验证安装包，可先在 Actions 中手动运行 package 工作流。
 `v0.2.0` 配 `0.2.0-dev.0` 或 `0.2.1` 会在准备阶段失败。
 本地版本脚本需要 Python 3.11 或更新版本；CI 固定使用 Python 3.12。
 
@@ -218,8 +219,9 @@ git commit -m "chore(release): start 0.2.1 development"
 git push origin main
 ```
 
-随后 main 发布 `0.2.1-dev.<编号>`；开发新功能时将目标改成 `0.3.0-dev.0`。
-每次正常 push 无需手动修改版本。正式发布说明中还应补充本轮用户可见的变化、已知问题，以及需要用户执行的迁移步骤。
+需要开发安装包时，在 Actions 中手动运行 package 工作流，生成 `0.2.1-dev.<编号>` 的 artifact；
+开发新功能时将目标改成 `0.3.0-dev.0`。每次正常 push 无需手动修改版本。
+正式发布说明中还应补充本轮用户可见的变化、已知问题，以及需要用户执行的迁移步骤。
 历史 `main-<SHA>` Release 不会被本流程修改；首次正式发布前 GitHub 上可能仍显示旧的 Latest，
 首次 `vX.Y.Z` 正式发布后由新版本接替。
 
@@ -292,17 +294,20 @@ Linux 的 DEB 单独读取发布脚本生成的配置，以适配 Debian 的 `~d
 ## 自动更新 / Automatic updates
 
 Settings → Updates enables automatic checks by default, with automatic downloads
-initially off. Checks run 15 seconds after startup and every 24 hours. The macOS
+initially off. When enabled, one background check starts at startup, then checks run every 24 hours. The macOS
 Beacon menu and the Windows/Linux application menu also provide **Check for updates**.
-Downloads use the saved global proxy and support cancellation and retry. Stable
+Checks and downloads use the system proxy by default (macOS / Windows OS settings,
+or proxy environment variables); an explicit global proxy or Direct mode overrides it.
+Downloads support cancellation and retry. Stable
 releases are the default; Development must be chosen explicitly. Only newer SemVer
-versions are offered. Main builds after a formal `X.Y.Z` use `X.Y.(Z+1)-dev.N`; an
+versions are offered. Manual builds after a formal `X.Y.Z` use `X.Y.(Z+1)-dev.N`; an
 explicit `X.Y.Z-dev.N` workspace keeps its existing development baseline.
 
-设置 → Updates 默认自动检查，自动下载初始关闭。启动 15 秒后检查，随后每 24 小时
-检查；macOS 系统菜单、Windows/Linux 应用菜单提供手动检查入口。下载使用已保存的
-全局代理，可取消和重试。默认 Stable，可主动切换 Development，不会自动降级。
-正式版本之后的 main 构建自动使用下一 patch 的开发版本号，避免开发版被当前正式版
+设置 → Updates 默认自动检查，自动下载初始关闭。启用时，启动后立即在后台检查一次，随后每 24 小时
+检查；macOS 系统菜单、Windows/Linux 应用菜单提供手动检查入口。检查与下载默认使用系统代理
+（macOS / Windows 系统设置或代理环境变量）；显式配置的全局代理或 Direct 模式优先。
+下载可取消和重试。默认 Stable，可主动切换 Development，不会自动降级。
+正式版本之后的手动构建使用下一 patch 的开发版本号，避免开发版被当前正式版
 的 SemVer 顺序遮住。
 
 Installation always asks for restart confirmation. Every workspace window is

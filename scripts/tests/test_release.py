@@ -17,26 +17,32 @@ spec.loader.exec_module(release)
 
 
 class ReleasePlanTests(unittest.TestCase):
-    def test_main_builds_are_unique_ordered_and_not_latest(self):
-        first = release.release_plan("0.2.0-dev.0", "push", "refs/heads/main", "101")
-        second = release.release_plan("0.2.0-dev.0", "push", "refs/heads/main", "102")
+    def test_manual_builds_are_unique_ordered_and_not_latest(self):
+        first = release.release_plan("0.2.0-dev.0", "workflow_dispatch", "refs/heads/main", "101")
+        second = release.release_plan("0.2.0-dev.0", "workflow_dispatch", "refs/heads/main", "102")
         self.assertEqual(first["version"], "0.2.0-dev.101")
         self.assertEqual(second["tag"], "v0.2.0-dev.102")
         self.assertEqual(first["prerelease"], "true")
         self.assertEqual(first["make_latest"], "false")
-        self.assertEqual(first["publish"], "true")
-        self.assertEqual(first, release.release_plan("0.2.0-dev.0", "push", "refs/heads/main", "101"))
+        self.assertEqual(first["publish"], "false")
+        self.assertEqual(first, release.release_plan("0.2.0-dev.0", "workflow_dispatch", "refs/heads/main", "101"))
 
-    def test_main_push_of_release_commit_still_produces_development_build(self):
-        plan = release.release_plan("0.2.0", "push", "refs/heads/main", "103")
+    def test_manual_build_of_release_commit_uses_next_patch(self):
+        plan = release.release_plan("0.2.0", "workflow_dispatch", "refs/heads/main", "103")
         self.assertEqual(plan["version"], "0.2.1-dev.103")
         self.assertEqual(plan["prerelease"], "true")
+
+    def test_main_pushes_are_rejected(self):
+        for version in ("0.2.0", "0.2.0-dev.0"):
+            with self.subTest(version=version), self.assertRaisesRegex(ValueError, "only formal tags and manual packaging"):
+                release.release_plan(version, "push", "refs/heads/main", "103")
 
     def test_formal_tag_is_latest_and_preserves_version(self):
         plan = release.release_plan("0.2.0", "push", "refs/tags/v0.2.0", "104")
         self.assertEqual(plan["version"], "0.2.0")
         self.assertEqual(plan["prerelease"], "false")
         self.assertEqual(plan["make_latest"], "true")
+        self.assertEqual(plan["publish"], "true")
 
     def test_manual_runs_only_produce_artifacts_even_on_a_tag(self):
         for ref in ("refs/heads/feature", "refs/tags/v0.2.0"):
@@ -58,9 +64,9 @@ class ReleasePlanTests(unittest.TestCase):
         for event, ref, number in (
             ("push", "refs/heads/feature", "107"),
             ("pull_request", "refs/pull/1/merge", "107"),
-            ("push", "refs/heads/main", ""),
-            ("push", "refs/heads/main", "0"),
-            ("push", "refs/heads/main", "001"),
+            ("workflow_dispatch", "refs/heads/main", ""),
+            ("workflow_dispatch", "refs/heads/main", "0"),
+            ("workflow_dispatch", "refs/heads/main", "001"),
         ):
             with self.subTest(event=event, ref=ref, number=number), self.assertRaises(ValueError):
                 release.release_plan("0.2.0", event, ref, number)
@@ -155,7 +161,7 @@ class WorkspaceVersionTests(unittest.TestCase):
             release.deb_config(self.root, "aarch64-apple-darwin")
 
     def test_cli_prepare_writes_outputs_and_invalid_tags_do_not_modify_files(self):
-        environment = dict(os.environ, GITHUB_EVENT_NAME="push", GITHUB_REF="refs/heads/main", GITHUB_RUN_NUMBER="101")
+        environment = dict(os.environ, GITHUB_EVENT_NAME="workflow_dispatch", GITHUB_REF="refs/heads/main", GITHUB_RUN_NUMBER="101")
         output = self.root / "github-output"
         environment["GITHUB_OUTPUT"] = str(output)
         command = [sys.executable, str(spec.origin), "--root", str(self.root), "prepare"]
@@ -163,7 +169,9 @@ class WorkspaceVersionTests(unittest.TestCase):
         plan = json.loads(result.stdout)
         self.assertEqual(release.workspace_version(self.root), "0.1.1-dev.101")
         self.assertIn("make_latest=false\n", output.read_text())
+        self.assertIn("publish=false\n", output.read_text())
         self.assertEqual(plan["tag"], "v0.1.1-dev.101")
+        environment["GITHUB_EVENT_NAME"] = "push"
         environment["GITHUB_REF"] = "refs/tags/v0.1.0"
         before = self.contents()
         result = subprocess.run(command, env=environment, capture_output=True, text=True)

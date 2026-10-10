@@ -46,6 +46,9 @@ pub(crate) fn store(cx: &App) -> Entity<Updater> {
 }
 
 pub fn init(cx: &mut App) {
+    if maybe_store(cx).is_some() {
+        return;
+    }
     let preferences = settings::store(cx);
     let cache = preferences.read(cx).directory.join("updates");
     let mut configuration = (
@@ -105,41 +108,39 @@ pub fn init(cx: &mut App) {
             }
         })
         .detach();
+        view.check_automatically(cx);
         view.timer = Some(cx.spawn(async move |this, cx| {
-            cx.background_executor()
-                .timer(Duration::from_secs(15))
-                .await;
             loop {
+                cx.background_executor()
+                    .timer(Duration::from_secs(24 * 60 * 60))
+                    .await;
                 if this
-                    .update(cx, |view, cx| {
-                        if settings::store(cx).read(cx).preferences.updates.auto_check
-                            && matches!(
-                                view.status,
-                                Status::Idle | Status::Current | Status::Failed { .. }
-                            )
-                        {
-                            view.check(cx);
-                        }
-                    })
+                    .update(cx, |view, cx| view.check_automatically(cx))
                     .is_err()
                 {
                     break;
                 }
-                cx.background_executor()
-                    .timer(Duration::from_secs(24 * 60 * 60))
-                    .await;
             }
         }));
     });
 }
 impl Updater {
-    fn client(cx: &App) -> anyhow::Result<Client> {
-        let proxy = match &settings::store(cx).read(cx).preferences.proxy {
+    fn proxy(cx: &App) -> beacon_updater::Proxy {
+        match &settings::store(cx).read(cx).preferences.proxy {
             Proxy::System => beacon_updater::Proxy::System,
             Proxy::Direct => beacon_updater::Proxy::Direct,
             Proxy::Custom(url) => beacon_updater::Proxy::Custom(url.clone()),
-        };
-        Client::new(proxy, beacon_updater::PUBLIC_KEY)
+        }
+    }
+    fn check_automatically(&mut self, cx: &mut Context<Self>) {
+        if settings::store(cx).read(cx).preferences.updates.auto_check
+            && matches!(
+                self.status,
+                Status::Idle | Status::Current | Status::Failed { .. }
+            )
+        {
+            self.check(cx);
+        }
     }
     fn error(
         &mut self,
@@ -175,13 +176,7 @@ impl Updater {
         ) {
             return;
         }
-        let client = match Self::client(cx) {
-            Ok(c) => c,
-            Err(e) => {
-                self.error(e, None, cx);
-                return;
-            }
-        };
+        let proxy = Self::proxy(cx);
         self.cancel(cx);
         let generation = self.generation;
         self.status = Status::Checking;
@@ -189,6 +184,9 @@ impl Updater {
         let installation = self.installation.clone();
         let channel = settings::store(cx).read(cx).preferences.updates.channel;
         let checking = Bridge::global(cx).run(async move {
+            // OS proxy lookup and HTTP initialization belong on the network
+            // worker, so the first update check never delays the main window.
+            let client = Client::new(proxy, beacon_updater::PUBLIC_KEY)?;
             client
                 .check(env!("CARGO_PKG_VERSION"), channel, &installation)
                 .await
@@ -235,13 +233,7 @@ impl Updater {
         if !self.installation.can_install() {
             return;
         }
-        let client = match Self::client(cx) {
-            Ok(c) => c,
-            Err(e) => {
-                self.error(e, Some(release), cx);
-                return;
-            }
-        };
+        let proxy = Self::proxy(cx);
         self.cancel(cx);
         let generation = self.generation;
         let cache = self.cache.clone();
@@ -253,11 +245,15 @@ impl Updater {
         cx.notify();
         let (tx, mut rx) = futures::channel::mpsc::unbounded();
         let downloading = Bridge::global(cx).run(async move {
-            let result = client
-                .download(release, cache, |received, total| {
-                    let _ = tx.unbounded_send(Progress::Bytes(received, total));
-                })
-                .await;
+            let result = async {
+                let client = Client::new(proxy, beacon_updater::PUBLIC_KEY)?;
+                client
+                    .download(release, cache, |received, total| {
+                        let _ = tx.unbounded_send(Progress::Bytes(received, total));
+                    })
+                    .await
+            }
+            .await;
             let _ = tx.unbounded_send(Progress::Done(
                 result.map(Arc::new).map_err(|e| format!("{e:#}")),
             ));
@@ -404,4 +400,83 @@ impl Updater {
 enum Progress {
     Bytes(u64, u64),
     Done(Result<Arc<Downloaded>, String>),
+}
+
+#[cfg(all(test, feature = "ui-tests"))]
+mod tests {
+    use super::*;
+
+    fn initialize(auto_check: bool, directory: &std::path::Path, cx: &mut App) {
+        gpui_kit::init(cx);
+        crate::app::init(directory.join("logs"), cx);
+        settings::store(cx).update(cx, |state, _| {
+            state.preferences = settings::Preferences::default();
+            state.preferences.updates.auto_check = auto_check;
+            state.directory = directory.to_owned();
+            // Fail HTTP client initialization locally; these scheduling tests
+            // never contact GitHub or use the developer's proxy configuration.
+            state.preferences.proxy = Proxy::Custom("://invalid".into());
+        });
+        Bridge::init(cx).unwrap();
+        init(cx);
+    }
+
+    #[::core::prelude::v1::test]
+    fn startup_checks_once_without_delay_then_waits_a_day() {
+        let directory = tempfile::tempdir().unwrap();
+        let cx = TestAppContext::single();
+        cx.update(|cx| {
+            initialize(true, directory.path(), cx);
+            let updater = store(cx);
+            assert!(matches!(updater.read(cx).status, Status::Checking));
+            assert_eq!(updater.read(cx).generation, 1);
+            init(cx);
+            assert_eq!(store(cx).entity_id(), updater.entity_id());
+            updater.update(cx, |view, cx| view.check_automatically(cx));
+            assert_eq!(updater.read(cx).generation, 1);
+            updater.update(cx, |view, cx| view.cancel(cx));
+        });
+        cx.run_until_parked();
+        cx.executor().advance_clock(Duration::from_secs(15));
+        cx.run_until_parked();
+        cx.update(|cx| assert_eq!(store(cx).read(cx).generation, 2));
+        cx.executor()
+            .advance_clock(Duration::from_secs(24 * 60 * 60 - 15));
+        cx.run_until_parked();
+        cx.update(|cx| {
+            let updater = store(cx);
+            assert_eq!(updater.read(cx).generation, 3);
+            updater.update(cx, |view, cx| view.cancel(cx));
+        });
+    }
+
+    #[::core::prelude::v1::test]
+    fn disabled_checks_stay_idle_and_system_proxy_is_the_default() {
+        let directory = tempfile::tempdir().unwrap();
+        let cx = TestAppContext::single();
+        cx.update(|cx| {
+            initialize(false, directory.path(), cx);
+            assert!(matches!(store(cx).read(cx).status, Status::Idle));
+            settings::store(cx).update(cx, |state, _| {
+                state.preferences.proxy = settings::Preferences::default().proxy;
+            });
+            assert!(matches!(Updater::proxy(cx), beacon_updater::Proxy::System));
+            settings::store(cx).update(cx, |state, _| {
+                state.preferences.proxy = Proxy::Direct;
+            });
+            assert!(matches!(Updater::proxy(cx), beacon_updater::Proxy::Direct));
+            settings::store(cx).update(cx, |state, _| {
+                state.preferences.proxy = Proxy::Custom("http://localhost:8080".into());
+            });
+            assert!(matches!(Updater::proxy(cx), beacon_updater::Proxy::Custom(url) if url == "http://localhost:8080"));
+        });
+        cx.run_until_parked();
+        cx.executor()
+            .advance_clock(Duration::from_secs(24 * 60 * 60));
+        cx.run_until_parked();
+        cx.update(|cx| {
+            assert!(matches!(store(cx).read(cx).status, Status::Idle));
+            assert_eq!(store(cx).read(cx).generation, 0);
+        });
+    }
 }

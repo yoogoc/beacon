@@ -904,6 +904,7 @@ impl PreferencesView {
         }));
     }
     fn proxy_form(&self, cx: &mut Context<Self>) -> AnyElement {
+        let cluster = matches!(self.page, Page::Cluster(_));
         let choices = [
             (
                 ProxyChoice::Inherit,
@@ -912,8 +913,16 @@ impl PreferencesView {
             ),
             (
                 ProxyChoice::System,
-                "Kubeconfig / environment",
-                "Use your existing network configuration.",
+                if cluster {
+                    "Kubeconfig / environment"
+                } else {
+                    "System proxy"
+                },
+                if cluster {
+                    "Use your existing network configuration."
+                } else {
+                    "Use system proxy settings for updates, and kubeconfig / environment settings for clusters."
+                },
             ),
             (
                 ProxyChoice::Direct,
@@ -926,7 +935,6 @@ impl PreferencesView {
                 "Set an explicit HTTP, HTTPS or SOCKS5 proxy.",
             ),
         ];
-        let cluster = matches!(self.page, Page::Cluster(_));
         let buttons = choices
             .into_iter()
             .filter(|(choice, _, _)| cluster || *choice != ProxyChoice::Inherit)
@@ -952,7 +960,7 @@ impl PreferencesView {
             .when(self.proxy.choice == ProxyChoice::Inherit, |form| {
                 let global = settings::store(cx).read(cx).preferences.proxy.clone();
                 let label = match global {
-                    Proxy::System => "Kubeconfig / environment".to_owned(),
+                    Proxy::System => "System proxy / kubeconfig / environment".to_owned(),
                     Proxy::Direct => "Direct connection".to_owned(),
                     Proxy::Custom(url) => url,
                 };
@@ -966,7 +974,7 @@ impl PreferencesView {
                         form.child(hint("SOCKS5 cannot carry kubectl's SPDY Shell/Exec fallback. Use HTTP or HTTPS when that compatibility path is needed.", cx))
                     })
             })
-            .child(hint("An explicit proxy overrides NO_PROXY. Direct bypasses both kubeconfig and environment proxies.", cx))
+            .child(hint(if cluster { "An explicit proxy overrides NO_PROXY. Direct bypasses both kubeconfig and environment proxies." } else { "An explicit proxy overrides NO_PROXY. Direct bypasses system, kubeconfig and environment proxies." }, cx))
             .child(hint(if cluster { "Connection changes take effect after reconnecting." } else { "Clusters can override this setting in their connection preferences." }, cx))
             .into_any_element()
     }
@@ -1055,7 +1063,7 @@ impl PreferencesView {
             .child(setting_row("Download automatically", "Ask before restarting to install an update.",
                 Switch::new("auto-download-updates").accessibility_label("Automatically download updates").color(cx.theme().link).checked(self.updates.auto_download).disabled(!can_install)
                     .on_click(cx.listener(|view, checked, window, cx| { view.updates.auto_download = *checked; view.save_updates(window, cx); })), cx))
-            .child(hint("Checks run shortly after startup and every 24 hours. Installation always requires restart confirmation. Downloads use the saved global proxy.", cx))
+            .child(hint("Checks run once at startup and every 24 hours when enabled. Checks and downloads use the system proxy by default, or the saved global proxy override. Installation always requires restart confirmation.", cx))
             .child(setting_row("Release channel", "Choose which releases you receive.", h_flex().gap_2().children([(Channel::Stable, "Stable"), (Channel::Development, "Development")].into_iter().map(|(channel, label)| {
                 Button::new(label).outline().small().selected(self.updates.channel == channel).label(label).disabled(matches!(updater.status, Status::Installing))
                     .on_click(cx.listener(move |view, _, window, cx| { view.updates.channel = channel; view.save_updates(window, cx); }))
@@ -2065,6 +2073,7 @@ mod update_tests {
             crate::app::init(directory.path().join("logs"), cx);
             settings::store(cx).update(cx, |state, _| {
                 state.preferences = settings::Preferences::default();
+                state.preferences.updates.auto_check = false;
                 state.directory = directory.path().to_owned();
                 state.load_error = None;
             });

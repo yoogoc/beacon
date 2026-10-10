@@ -67,8 +67,8 @@ It uses your existing kubeconfig and cluster permissions, discovering both built
 ### Download a build
 
 Check [Releases](https://github.com/yoogoc/beacon/releases) for available platform artifacts.
-Every push to `main` that passes checks and required packaging publishes a **development pre-release**,
-such as `v0.2.0-dev.101`. Formal `vX.Y.Z` tags must match the Cargo version and publish a Release marked as
+Pushes to `main` do not automatically build or publish packages.
+Formal `vX.Y.Z` tags must match the Cargo version and publish a Release marked as
 **Latest** after all platform packages succeed. See the [release procedure (中文)](docs/PACKAGING.md#版本规则与正式发版).
 Manually triggered packaging runs publish artifacts in
 [Actions](https://github.com/yoogoc/beacon/actions/workflows/package.yml).

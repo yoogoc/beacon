@@ -1,10 +1,9 @@
 name: package
 
-# Main pushes publish development prereleases; vX.Y.Z tags publish formal
-# releases. Manual runs produce artifacts only. All paths run the shared CI.
+# vX.Y.Z tags publish formal releases. Manual runs produce artifacts only.
+# Branch pushes do not trigger packaging. Both paths run the shared CI.
 on:
   push:
-    branches: [main]
     tags: ["v*"]
   workflow_dispatch:
 
@@ -215,8 +214,8 @@ jobs:
     if: needs.prepare.outputs.publish == 'true'
     needs: [prepare, checks, package]
     runs-on: ubuntu-24.04
-    # Reruns of the same release cannot upload concurrently. Distinct main
-    # pushes keep their own builds rather than cancelling earlier versions.
+    # Reruns of the same release cannot upload concurrently. Distinct release
+    # tags keep their own builds rather than cancelling earlier versions.
     concurrency:
       group: release-${{ needs.prepare.outputs.tag }}
       cancel-in-progress: false

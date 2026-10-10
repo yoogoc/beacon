@@ -105,7 +105,7 @@ def release_plan(version, event, ref, run_number):
         if tag != f"v{version}":
             raise ValueError(f"tag {tag} does not match Cargo version {version}; run release.py set first")
         prerelease = False
-    elif event == "workflow_dispatch" or (event == "push" and ref == "refs/heads/main"):
+    elif event == "workflow_dispatch":
         if not re.fullmatch(r"[1-9][0-9]*", run_number):
             raise ValueError("GITHUB_RUN_NUMBER must be a positive integer")
         base = version.split("-")[0]
@@ -116,7 +116,7 @@ def release_plan(version, event, ref, run_number):
         tag = f"v{version}"
         prerelease = True
     else:
-        raise ValueError("only main pushes, formal tags and manual packaging are supported")
+        raise ValueError("only formal tags and manual packaging are supported")
     return {
         "version": version,
         "tag": tag,

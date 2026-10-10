@@ -44,7 +44,7 @@ jobs:
 
       # The packaging config names its icons by relative path. Without this a
       # rename would build and test perfectly and then fail in the release
-      # workflow, on main, after the commit that broke it.
+      # workflow when a release tag is pushed.
       - name: Packaging assets and version metadata
         run: |
           python3 - <<'EOF'
