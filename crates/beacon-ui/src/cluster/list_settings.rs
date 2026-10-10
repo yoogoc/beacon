@@ -6,7 +6,7 @@ pub(super) struct ListSettings {
     columns_open: bool,
     presets_open: bool,
     name: Entity<InputState>,
-    error: Option<String>,
+    pub(super) error: Option<String>,
 }
 
 impl ListSettings {
@@ -168,7 +168,11 @@ impl ClusterView {
         self._subscriptions.push(subscription);
     }
 
-    pub(super) fn render_column_picker(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    pub(super) fn render_column_picker(
+        &self,
+        layout: toolbar::Layout,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
         let choices = self.table.read(cx).delegate().column_choices();
         let search = OptionSearch::new(self.picker_search.read(cx).value().as_ref());
         let input = self.picker_search.clone();
@@ -178,7 +182,10 @@ impl ClusterView {
             .on_open_change(move |open, window, cx| {
                 let _ = opening.update(cx, |view, cx| view.open_list_menu(true, *open, window, cx));
             })
-            .trigger(Button::new("resource-columns-trigger").small().outline().label("Columns"))
+            .trigger(Button::new("resource-columns-trigger").small().ghost()
+                .icon(Icon::new(gpui_kit::assets::IconName::Columns3))
+                .when(layout.text_actions(), |button| button.label("Columns"))
+                .accessibility_label("Columns").tooltip("Choose visible columns"))
             .content(move |_, _, cx| {
                 let reset = weak.clone();
                 let rows: Vec<_> = choices.iter().filter(|(_, name, _, _)| search.matches(name)).map(|(id, name, visible, required)| {
@@ -200,7 +207,11 @@ impl ClusterView {
             })
     }
 
-    pub(super) fn render_saved_filters(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    pub(super) fn render_saved_filters(
+        &self,
+        layout: toolbar::Layout,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
         let preferences = self.resource_preferences(cx);
         let search = OptionSearch::new(self.picker_search.read(cx).value().as_ref());
         let input = self.picker_search.clone();
@@ -214,7 +225,10 @@ impl ClusterView {
             .on_open_change(move |open, window, cx| {
                 let _ = opening.update(cx, |view, cx| view.open_list_menu(false, *open, window, cx));
             })
-            .trigger(Button::new("resource-saved-filters-trigger").small().outline().label("Saved filters"))
+            .trigger(Button::new("resource-saved-filters-trigger").small().ghost()
+                .icon(Icon::new(gpui_kit::assets::IconName::Bookmark))
+                .when(layout.text_actions(), |button| button.label("Saved filters").dropdown_caret(true))
+                .accessibility_label("Saved filters").tooltip("Save or apply resource filters"))
             .content(move |_, _, cx| {
                 let saving = weak.clone();
                 let rows: Vec<_> = preferences.filters.iter().filter(|(name, _)| search.matches(name)).map(|(name, preset)| {
@@ -244,19 +258,5 @@ impl ClusterView {
                             .label(if replacing { "Replace" } else { "Save" })
                             .on_click(move |_, _, cx| { let _ = saving.update(cx, |view, cx| view.save_filter_preset(cx)); })))
             })
-    }
-
-    pub(super) fn render_list_preferences_error(&self, cx: &App) -> Option<AnyElement> {
-        self.list_settings.error.as_ref().map(|error| {
-            div()
-                .w_full()
-                .text_sm()
-                .text_color(cx.theme().danger)
-                .child(crate::copyable_text::copyable_text(
-                    "list-preferences-error",
-                    error.clone(),
-                ))
-                .into_any_element()
-        })
     }
 }

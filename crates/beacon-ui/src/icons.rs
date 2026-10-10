@@ -1,4 +1,4 @@
-//! Sidebar icons bundled with the binary; no external files are needed.
+//! Application icons bundled with the binary; no external files are needed.
 use crate::catalog::{Category, Section};
 use gpui_kit::component::{Icon, IconName};
 use gpui_kit::{AssetSource, SharedString};
@@ -18,10 +18,21 @@ gpui_kit::assets::icon_assets!(
         Upload,
         Activity,
         X,
+        Tags,
+        Shapes,
+        Layers,
+        Columns3,
+        Bookmark,
+        Logs,
+        Database,
+        ShieldCheck,
+        CircleCheck,
+        CircleX,
+        Trash,
     ]
 );
 
-/// The default component icons plus the small set used by settings pages.
+/// The default component icons plus those used by settings and resource tools.
 pub struct Assets;
 impl AssetSource for Assets {
     fn load(&self, path: &str) -> gpui_kit::Result<Option<Cow<'static, [u8]>>> {

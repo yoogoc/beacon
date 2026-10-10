@@ -44,6 +44,7 @@ use crate::table::ResourceTable;
 use crate::theme::{BeaconTheme as _, Tone};
 
 mod list_settings;
+mod toolbar;
 
 /// The namespace picker's entry for "do not scope at all". A namespace cannot
 /// contain a space, so this can never collide with a real one.
@@ -138,6 +139,8 @@ pub struct ClusterView {
 
     table: Entity<TableState<ResourceTable>>,
     list_settings: list_settings::ListSettings,
+    toolbar_layout: std::rc::Rc<std::cell::Cell<toolbar::Layout>>,
+    toolbar_open: bool,
 
     /// The panel for the selected object. `None` means nothing is selected, or
     /// the user closed it.
@@ -324,6 +327,8 @@ impl ClusterView {
             row_search,
             table,
             list_settings: list_settings::ListSettings::new(window, cx),
+            toolbar_layout: Default::default(),
+            toolbar_open: false,
             detail: None,
             pending_reveal: None,
             split,
@@ -1167,6 +1172,7 @@ impl ClusterView {
         tracing::info!(kind = %kind.display_name(), "showing");
         self.mode = Mode::Objects;
         self.kind = Some(kind);
+        self.toolbar_open = false;
         self.list_settings.close();
         self.filter_menu_open = None;
         self.label_menu_open = false;
@@ -1995,7 +2001,11 @@ impl ClusterView {
     /// both. The contents are built with an `App` rather than this view's
     /// `Context`, so the handlers go back through a weak handle -- which also
     /// stops an open menu from keeping a closed tab's view alive.
-    fn render_namespace_picker(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_namespace_picker(
+        &self,
+        layout: toolbar::Layout,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
         let view = cx.entity().downgrade();
         let selected = self.scoped_to.clone();
         let names = self.namespace_names.clone();
@@ -2025,9 +2035,16 @@ impl ClusterView {
             .trigger(
                 Button::new("namespace-picker-trigger")
                     .small()
-                    .outline()
-                    .label(self.scope_label())
-                    .tooltip("Which namespaces the table shows"),
+                    .secondary()
+                    .icon(Icon::new(gpui_kit::assets::IconName::Layers))
+                    .when(layout != toolbar::Layout::Minimal, |button| {
+                        button
+                            .label(self.scope_label())
+                            .dropdown_caret(true)
+                            .max_w(px(180.))
+                    })
+                    .accessibility_label(format!("Namespace: {}", self.scope_label()))
+                    .tooltip(format!("Namespace: {}", self.scope_label())),
             )
             .content(move |_, _, cx| {
                 let everything = selected.is_empty();
@@ -2202,7 +2219,11 @@ impl ClusterView {
         }
     }
 
-    fn render_label_picker(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_label_picker(
+        &self,
+        layout: toolbar::Layout,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
         let table = self.table.read(cx).delegate();
         let selector = table.label_selector().clone();
         let selected = table.label_filter().to_string();
@@ -2237,9 +2258,11 @@ impl ClusterView {
                 });
             })
             .trigger(
-                Button::new("label-filter-trigger")
-                    .small().outline()
-                    .label(if selector.is_empty() { "Labels: All".into() } else { format!("Labels: {}", selector.len()) })
+                toolbar::filter_button("label-filter-trigger", gpui_kit::assets::IconName::Tags,
+                    if layout == toolbar::Layout::Minimal { if selector.is_empty() { "All".into() } else { selector.len().to_string() } }
+                    else if selector.is_empty() { "Labels: All".into() } else { format!("Labels: {}", selector.len()) },
+                    !selector.is_empty(), cx)
+                    .accessibility_label(if selected.is_empty() { "Labels: All".into() } else { format!("Labels: {selected}") })
                     .tooltip(if selected.is_empty() { "Filter resources by labels".into() } else { selected }),
             )
             .content(move |_, _, cx| {
@@ -2291,7 +2314,12 @@ impl ClusterView {
     }
 
     /// Exact facets come from all watched objects, including currently hidden rows.
-    fn render_field_picker(&self, field: Field, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_field_picker(
+        &self,
+        field: Field,
+        layout: toolbar::Layout,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
         let table = self.table.read(cx);
         let selected = table.delegate().field_filter(field).map(str::to_owned);
         let mut types = table.delegate().filter_values(field);
@@ -2326,11 +2354,24 @@ impl ClusterView {
                 });
             })
             .trigger(
-                Button::new(SharedString::from(format!("filter-trigger-{field:?}")))
-                    .small()
-                    .outline()
-                    .label(format!("{}: {label}", field.label()))
-                    .tooltip(format!("Filter by {}", field.label().to_lowercase())),
+                toolbar::filter_button(
+                    SharedString::from(format!("filter-trigger-{field:?}")),
+                    toolbar::field_icon(field),
+                    if layout == toolbar::Layout::Minimal {
+                        label.clone()
+                    } else {
+                        format!("{}: {label}", field.label())
+                    },
+                    selected.is_some(),
+                    cx,
+                )
+                .max_w(px(if layout == toolbar::Layout::Minimal {
+                    100.
+                } else {
+                    140.
+                }))
+                .accessibility_label(format!("{}: {label}", field.label()))
+                .tooltip(format!("{}: {label}", field.label())),
             )
             .content(move |_, _, cx| {
                 let matching: Vec<_> = types
@@ -2348,6 +2389,7 @@ impl ClusterView {
                             .id(SharedString::from(format!("filter-{field:?}-{name}")))
                             .role(Role::Button)
                             .aria_label(name.to_string())
+                            .test_support()
                             .w_full()
                             .px_2()
                             .py_1()
@@ -2407,196 +2449,17 @@ impl ClusterView {
                     })
             })
     }
-
-    fn render_toolbar(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let (shown, total) = self.counts(cx);
-        let title = match self.mode {
-            Mode::Objects => self
-                .kind
-                .as_ref()
-                .map(|kind| kind.resource.kind.clone())
-                .unwrap_or_else(|| "Nothing selected".into()),
-            other => other.label().to_string(),
-        };
-
-        // `12 of 340` while filtering, `340` otherwise: the fraction is only
-        // information when something is being hidden. The other modes count
-        // their own rows -- showing the pod count above a list of Helm
-        // releases is worse than showing nothing.
-        let count = match self.mode {
-            // A count of zero beside a skeleton is a number that is not true
-            // yet.
-            Mode::Objects if self.table.read(cx).delegate().is_loading() => String::new(),
-            Mode::Objects if shown == total => total.to_string(),
-            Mode::Objects => format!("{shown} of {total}"),
-            Mode::Releases => match &self.releases {
-                Releases::Ready(releases) => releases.len().to_string(),
-                _ => String::new(),
-            },
-            Mode::Forwards => self.session.forwards().len().to_string(),
-        };
-        let selected = if self.mode == Mode::Objects {
-            self.table.read(cx).delegate().selected_count()
-        } else {
-            0
-        };
-        h_flex()
-            .w_full()
-            .flex_wrap()
-            .flex_shrink_0()
-            .px_3()
-            .py_1p5()
-            .gap_3()
-            .items_center()
-            .justify_between()
-            .border_b_1()
-            .border_color(cx.theme().border)
-            .child(
-                h_flex()
-                    .gap_2()
-                    .items_center()
-                    .child(
-                        div()
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .text_sm()
-                            .child(title),
-                    )
-                    .child(
-                        div()
-                            .text_xs()
-                            .text_color(cx.theme().muted_foreground)
-                            .child(count),
-                    ),
-            )
-            .child(
-                h_flex()
-                    .flex_wrap()
-                    .gap_2()
-                    .items_center()
-                    // What the last write said. It lives here rather than in a
-                    // toast because the thing it is about is on screen.
-                    .when(
-                        self.mode == Mode::Objects
-                            && self.kind.as_ref().is_some_and(|kind| {
-                                kind.resource.group.is_empty() && kind.resource.kind == "Pod"
-                            }),
-                        |bar| {
-                            bar.child(
-                                Button::new("aggregate-pod-logs")
-                                    .small()
-                                    .ghost()
-                                    .label("Aggregated logs…")
-                                    .on_click(cx.listener(|view, _, window, cx| {
-                                        view.aggregate_filtered(window, cx)
-                                    })),
-                            )
-                        },
-                    )
-                    .children(self.outcome.as_ref().map(|outcome| {
-                        let (tone, text) = match outcome {
-                            Outcome::Running(what) => (Tone::Progressing, format!("{what}…")),
-                            Outcome::Done(what) => (Tone::Healthy, format!("{what} — done")),
-                            Outcome::Failed(why) => (Tone::Critical, why.clone()),
-                        };
-                        div()
-                            .max_w(px(360.))
-                            .truncate()
-                            .text_xs()
-                            .text_color(cx.theme().tone(tone))
-                            .child(crate::copyable_text::copyable_text(
-                                "operation-outcome",
-                                text,
-                            ))
-                    }))
-                    .children((selected > 0).then(|| {
-                        h_flex()
-                            .gap_1()
-                            .items_center()
-                            .child(div().text_xs().child(format!("{selected} selected")))
-                            .child(
-                                Button::new("clear-selected")
-                                    .small()
-                                    .ghost()
-                                    .label("Clear")
-                                    .on_click(cx.listener(|view, _, _, cx| {
-                                        view.table.update(cx, |table, cx| {
-                                            table.delegate_mut().clear_selected();
-                                            cx.notify();
-                                        });
-                                        cx.notify();
-                                    })),
-                            )
-                            .child(
-                                Button::new("delete-selected")
-                                    .small()
-                                    .danger()
-                                    .label("Delete selected")
-                                    .disabled(!self.may_delete() || self.bulk_deleting)
-                                    .on_click(cx.listener(|view, _, window, cx| {
-                                        view.start_delete_selected(window, cx);
-                                    })),
-                            )
-                    }))
-                    .children(
-                        self.kind
-                            .as_ref()
-                            .filter(|_| self.mode == Mode::Objects)
-                            .map(|_| self.render_column_picker(cx).into_any_element()),
-                    )
-                    .children(
-                        self.kind
-                            .as_ref()
-                            .filter(|_| self.mode == Mode::Objects)
-                            .map(|_| self.render_saved_filters(cx).into_any_element()),
-                    )
-                    .children(
-                        self.kind
-                            .as_ref()
-                            .filter(|_| self.mode == Mode::Objects)
-                            .map(|kind| {
-                                Button::new("create-resource")
-                                    .small()
-                                    .primary()
-                                    .label("Create")
-                                    .disabled(!kind.supports("create"))
-                                    .tooltip(format!("Create a {} from YAML", kind.resource.kind))
-                                    .on_click(cx.listener(|view, _, window, cx| {
-                                        view.start_create(window, cx)
-                                    }))
-                            }),
-                    )
-                    .child(
-                        div()
-                            .w(px(220.))
-                            .child(Input::new(&self.row_search).small()),
-                    )
-                    .children(
-                        self.kind
-                            .as_ref()
-                            .filter(|_| self.mode == Mode::Objects)
-                            .map(|_| self.render_label_picker(cx).into_any_element()),
-                    )
-                    .children(
-                        self.kind
-                            .as_ref()
-                            .filter(|_| self.mode == Mode::Objects)
-                            .into_iter()
-                            .flat_map(|kind| Field::for_kind(kind))
-                            .map(|field| self.render_field_picker(field, cx).into_any_element()),
-                    )
-                    .children(
-                        self.kind
-                            .as_ref()
-                            .filter(|kind| kind.namespaced)
-                            .map(|_| self.render_namespace_picker(cx)),
-                    ),
-            )
-            .children(self.render_list_preferences_error(cx))
-    }
 }
 
 impl Render for ClusterView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if self.toolbar_open && self.toolbar_layout.get() != toolbar::Layout::Overflow {
+            self.toolbar_open = false;
+            self.namespace_menu_open = false;
+            self.label_menu_open = false;
+            self.filter_menu_open = None;
+            self.list_settings.close();
+        }
         if self.is_idle() {
             return v_flex()
                 .size_full()
@@ -2622,9 +2485,18 @@ impl Render for ClusterView {
         // `TableState` renders itself; it is the virtualised table, not a
         // delegate that something else draws.
         let table = div()
+            .relative()
             .size_full()
             .overflow_hidden()
-            .child(self.table.clone())
+            .child(
+                div()
+                    .size_full()
+                    .when(self.mode == Mode::Objects && self.kind.is_some(), |table| {
+                        table.pb(px(64.))
+                    })
+                    .child(self.table.clone()),
+            )
+            .children(self.render_create_button(cx))
             .into_any_element();
 
         let table = match self.mode {
