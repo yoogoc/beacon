@@ -15,6 +15,7 @@ use beacon_kube::{
     Applied, ClusterSession, DeleteTarget, Delta, Forward, Health, Kind, ObjectRef, Operation,
     Release, ResourceStore, Rules, WatchKey, resources,
 };
+use gpui_kit::component::WindowExt as _;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::checkbox::Checkbox;
 use gpui_kit::component::input::{Input, InputEvent, InputState};
@@ -149,6 +150,7 @@ pub struct ClusterView {
     /// Pod streams and terminals have their own lifetime and bottom split.
     pod_tools: Option<Entity<PodToolsView>>,
     pod_tools_split: Entity<ResizableState>,
+    debug_dialogs: Vec<WeakEntity<crate::debug_container::DebugView>>,
 
     /// What this user may do in the current namespace. `None` until the answer
     /// arrives; see [`crate::actions`].
@@ -207,6 +209,17 @@ impl ClusterView {
     pub(crate) fn pending_edits(&self, cx: &App) -> Vec<String> {
         let mut edits = Vec::new();
         if self
+            .debug_dialogs
+            .iter()
+            .filter_map(WeakEntity::upgrade)
+            .any(|view| view.read(cx).busy())
+        {
+            edits.push(format!(
+                "{}: debug container operation",
+                self.session.id().display_name()
+            ));
+        }
+        if self
             .creation
             .as_ref()
             .is_some_and(|view| view.read(cx).has_pending_edits(cx))
@@ -242,6 +255,11 @@ impl ClusterView {
         self.pod_tools
             .as_ref()
             .is_some_and(|view| view.read(cx).has_active_session(cx))
+            || self
+                .debug_dialogs
+                .iter()
+                .filter_map(WeakEntity::upgrade)
+                .any(|view| view.read(cx).has_active_terminal(cx))
     }
 
     pub fn new(
@@ -310,6 +328,7 @@ impl ClusterView {
             split,
             pod_tools: None,
             pod_tools_split: cx.new(|_| ResizableState::default()),
+            debug_dialogs: vec![],
             rules: None,
             prompt: None,
             creation: None,
@@ -431,6 +450,70 @@ impl ClusterView {
     /// Snapshot used to build a row's menu without borrowing its table again.
     pub(crate) fn menu_context(&self) -> Option<(Arc<Kind>, Option<Arc<Rules>>)> {
         Some((self.kind.clone()?, self.rules.clone()))
+    }
+
+    pub(crate) fn debug_for(
+        &mut self,
+        target: &ObjectRef,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(object) = self.table.read(cx).delegate().object(target).cloned() {
+            let view = crate::debug_container::open(self.session.clone(), object, window, cx);
+            self.debug_dialogs.retain(|view| view.upgrade().is_some());
+            self.debug_dialogs.push(view.downgrade());
+        }
+    }
+
+    pub(crate) fn aggregate_for(
+        &self,
+        target: &ObjectRef,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(object) = self.table.read(cx).delegate().object(target) {
+            match beacon_kube::aggregate_logs::workload_selector(object) {
+                Ok(selector) => {
+                    crate::aggregate_logs::open(
+                        self.session.clone(),
+                        vec![target.namespace.clone()],
+                        selector,
+                        window,
+                        cx,
+                    );
+                }
+                Err(error) => window.push_notification(error, cx),
+            }
+        }
+    }
+
+    fn aggregate_filtered(&self, window: &mut Window, cx: &mut Context<Self>) {
+        let scopes = if self.scoped_to.is_empty() {
+            vec![None]
+        } else {
+            self.scoped_to.iter().cloned().map(Some).collect()
+        };
+        crate::aggregate_logs::open(
+            self.session.clone(),
+            scopes,
+            self.table.read(cx).delegate().label_filter().into(),
+            window,
+            cx,
+        );
+    }
+
+    pub(crate) fn compare_for(
+        &self,
+        target: &ObjectRef,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let (Some(kind), Some(object)) = (
+            self.kind.clone(),
+            self.table.read(cx).delegate().object(target).cloned(),
+        ) {
+            crate::resource_compare::open(self.session.clone(), kind, object, window, cx);
+        }
     }
 
     /// Everything the command palette can offer about this cluster.
@@ -2379,6 +2462,23 @@ impl ClusterView {
                     .items_center()
                     // What the last write said. It lives here rather than in a
                     // toast because the thing it is about is on screen.
+                    .when(
+                        self.mode == Mode::Objects
+                            && self.kind.as_ref().is_some_and(|kind| {
+                                kind.resource.group.is_empty() && kind.resource.kind == "Pod"
+                            }),
+                        |bar| {
+                            bar.child(
+                                Button::new("aggregate-pod-logs")
+                                    .small()
+                                    .ghost()
+                                    .label("Aggregated logs…")
+                                    .on_click(cx.listener(|view, _, window, cx| {
+                                        view.aggregate_filtered(window, cx)
+                                    })),
+                            )
+                        },
+                    )
                     .children(self.outcome.as_ref().map(|outcome| {
                         let (tone, text) = match outcome {
                             Outcome::Running(what) => (Tone::Progressing, format!("{what}…")),
@@ -2603,5 +2703,116 @@ impl Render for ClusterView {
                     .child(creation)
             }))
             .into_any_element()
+    }
+}
+
+#[cfg(all(test, feature = "ui-tests"))]
+mod integration_tests {
+    use super::*;
+    use crate::feature_test_support as support;
+    use gpui_kit::test::TestWindowExt as _;
+    use serde_json::json;
+
+    fn menu(window: &Window) -> Vec<(String, bool)> {
+        gpui_kit::base::test_support::snapshots(window)
+            .into_iter()
+            .filter(|item| item.role() == Some(Role::MenuItem))
+            .filter_map(|item| {
+                item.label()
+                    .map(|label| (label.to_owned(), item.disabled().unwrap_or(false)))
+            })
+            .collect()
+    }
+
+    #[::core::prelude::v1::test]
+    fn row_actions_match_the_context_menu_and_keep_the_clicked_target() {
+        let cx = &mut support::context();
+        let directory = tempfile::tempdir().unwrap();
+        support::workspace(cx, directory.path());
+        let pod = |name| json!({"apiVersion":"v1","kind":"Pod","metadata":{"name":name,"namespace":"default","uid":name,"resourceVersion":"1"},"spec":{"containers":[{"name":"app","image":"busybox"}]},"status":{"phase":"Running"}});
+        let (fixture, session) =
+            support::fixture(cx, "actions-fixture", vec![pod("alpha"), pod("beta")]);
+        let (window, view) = cx.update(|cx| {
+            gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
+                window.set_view_retention(false);
+                cx.new(|cx| {
+                    ClusterView::new(
+                        session,
+                        Some("default".into()),
+                        Some(Arc::new(support::kind("", "Pod", "pods"))),
+                        None,
+                        false,
+                        window,
+                        cx,
+                    )
+                })
+            })
+            .unwrap()
+        });
+        support::settle(cx, |cx| {
+            view.read_with(cx, |view, cx| {
+                view.counts(cx).0 == 2 && view.rules.is_some()
+            })
+        });
+        view.update(cx, |view, cx| {
+            view.table.update(cx, |state, cx| {
+                let table = state.delegate_mut();
+                let mut layout = table.layout_snapshot();
+                layout.hidden = table
+                    .column_choices()
+                    .into_iter()
+                    .filter(|(_, name, _, _)| !matches!(name.as_str(), "Name" | "Status"))
+                    .map(|(id, _, _, _)| id)
+                    .collect();
+                table.apply_layout(layout);
+                cx.notify();
+            })
+        });
+        let dropdown = cx
+            .update_window(window, |_, window, cx| {
+                window.render_frame(cx);
+                assert!(window.find(("resource-actions", 0usize)).visible());
+                window.click(("resource-actions", 0usize), cx);
+                menu(window)
+            })
+            .unwrap();
+        assert!(
+            dropdown
+                .iter()
+                .any(|(label, _)| label == "Debug container…")
+        );
+        assert!(
+            dropdown
+                .iter()
+                .any(|(label, _)| label == "Compare resource…")
+        );
+        assert!(view.read_with(cx, |view, _| view.detail.is_none()));
+        let context = cx
+            .update_window(window, |_, window, cx| {
+                window.press("escape", cx);
+                window.right_click(("row", 0usize), cx);
+                menu(window)
+            })
+            .unwrap();
+        assert_eq!(dropdown, context);
+        cx.update_window(window, |_, window, cx| {
+            let target = gpui_kit::base::test_support::snapshots(window)
+                .into_iter()
+                .find(|item| {
+                    item.role() == Some(Role::MenuItem) && item.label() == Some("Copy name")
+                })
+                .unwrap();
+            window.click(target.path().last().unwrap().clone(), cx);
+            assert_eq!(cx.read_from_clipboard().unwrap().text().unwrap(), "alpha");
+        })
+        .unwrap();
+        assert!(
+            !fixture
+                .requests
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|(line, _)| line.starts_with("PATCH") || line.starts_with("DELETE"))
+        );
     }
 }

@@ -651,6 +651,15 @@ impl BeaconApp {
             .filter(|(_, tab)| &tab.cluster == cluster)
             .map(|(ix, _)| ix)
             .collect();
+        if session.is_none()
+            && indices
+                .iter()
+                .any(|index| matches!(self.tabs[*index].state, TabState::Connected(_)))
+        {
+            // Resource dialogs can own streams and terminals outside a tab.
+            // Drop them when their workspace connection is removed.
+            window.close_all_dialogs(cx);
+        }
         for index in indices {
             if let Some(session) = &session {
                 if !matches!(self.tabs[index].state, TabState::Connected(_)) {
@@ -1970,7 +1979,9 @@ impl BeaconApp {
         let new_tab = Button::new(("new-tab", pane_id as usize))
             .xsmall()
             .ghost()
-            .label("+")
+            .icon(IconName::Plus)
+            .size(px(28.))
+            .flex_shrink_0()
             .tooltip("Open another tab in this pane")
             .on_click(cx.listener(move |view, _, window, cx| {
                 view.focus_pane(pane_id, window, cx);
@@ -2006,7 +2017,9 @@ impl BeaconApp {
                 Button::new(("tab-list", pane_id as usize))
                     .xsmall()
                     .ghost()
-                    .label("⌄")
+                    .icon(IconName::ChevronDown)
+                    .size(px(28.))
+                    .flex_shrink_0()
                     .tooltip("Tabs in this pane")
                     .dropdown_menu(move |menu, _, _| {
                         choices.iter().fold(menu, |menu, (id, title)| {
@@ -2563,5 +2576,41 @@ impl Render for BeaconApp {
                 // Deferred so it paints over the table rather than under it.
                 this.child(deferred(self.render_palette(cx)))
             })
+    }
+}
+
+#[cfg(all(test, feature = "ui-tests"))]
+mod rendering_tests {
+    use super::*;
+    use crate::feature_test_support as support;
+    use gpui_kit::test::TestWindowExt as _;
+
+    #[::core::prelude::v1::test]
+    fn trailing_tab_buttons_are_equal_squares_on_the_same_baseline() {
+        let cx = &mut support::context();
+        let directory = tempfile::tempdir().unwrap();
+        support::workspace(cx, directory.path());
+        let (window, _) = cx.update(|cx| {
+            gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
+                window.set_view_retention(false);
+                cx.new(|cx| {
+                    let mut app = BeaconApp::new(window, cx);
+                    app.contexts = Ok(Contexts::default());
+                    app
+                })
+            })
+            .unwrap()
+        });
+        cx.update_window(window, |_, window, cx| {
+            window.render_frame(cx);
+            let plus = window.find(("new-tab", 0usize));
+            let list = window.find(("tab-list", 0usize));
+            assert!(plus.visible() && list.visible());
+            assert_eq!(plus.bounds().size, size(px(28.), px(28.)));
+            assert_eq!(list.bounds().size, plus.bounds().size);
+            assert_eq!(list.bounds().origin.y, plus.bounds().origin.y);
+            assert_eq!(list.bounds().origin.x, plus.bounds().right());
+        })
+        .unwrap();
     }
 }

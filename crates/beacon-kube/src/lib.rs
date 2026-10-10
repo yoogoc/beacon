@@ -6,10 +6,12 @@
 //! this crate, a headless CLI or an integration test is another.
 
 pub mod access;
+pub mod aggregate_logs;
 pub mod argo;
 pub mod config;
 pub mod connection;
 pub mod data;
+pub mod debug;
 pub mod discovery;
 pub mod error;
 pub mod exec;
@@ -19,13 +21,17 @@ mod kubectl;
 pub mod labels;
 pub mod logs;
 pub mod metrics;
+pub mod network;
 pub mod ops;
 pub mod relationships;
 pub mod resources;
+pub mod rollout;
 pub mod session;
 pub mod shell_env;
 pub mod store;
 pub mod terminal;
+#[cfg(any(test, feature = "test-support"))]
+pub mod test_support;
 pub mod watch;
 
 pub use access::Rules;

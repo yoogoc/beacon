@@ -181,7 +181,7 @@ fn log_filename(
 /// Keep measured widths aligned with the bounded log buffer. Only arriving
 /// lines need shaping; scrolling through history reuses their measurements.
 #[derive(Default)]
-struct LogLineWidths {
+pub(crate) struct LogLineWidths {
     wrapped_font: Option<(Font, Pixels)>,
     font: Option<(Font, Pixels)>,
     dropped: usize,
@@ -220,17 +220,17 @@ fn render_log_row(row: &crate::pod_logs::Row, wrap: bool, cx: &App) -> AnyElemen
         .into_any_element()
 }
 
-struct LogCanvas<'a> {
-    logs: &'a LogBuffer,
-    display: Rc<RefCell<crate::pod_logs::Display>>,
-    wrap: bool,
-    wrapped: &'a ListState,
-    unwrapped: &'a UniformListScrollHandle,
-    widths: &'a mut LogLineWidths,
+pub(crate) struct LogCanvas<'a> {
+    pub(crate) logs: &'a LogBuffer,
+    pub(crate) display: Rc<RefCell<crate::pod_logs::Display>>,
+    pub(crate) wrap: bool,
+    pub(crate) wrapped: &'a ListState,
+    pub(crate) unwrapped: &'a UniformListScrollHandle,
+    pub(crate) widths: &'a mut LogLineWidths,
 }
 
 impl LogCanvas<'_> {
-    fn render(&mut self, window: &mut Window, cx: &App) -> AnyElement {
+    pub(crate) fn render(&mut self, window: &mut Window, cx: &App) -> AnyElement {
         let count = self.display.borrow().rows.len();
         let dropped = self.logs.dropped();
         let wrapped_font = (window.text_style().font(), window.rem_size());

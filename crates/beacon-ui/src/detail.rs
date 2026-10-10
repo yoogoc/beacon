@@ -39,6 +39,8 @@ pub enum DetailTab {
     Overview,
     Pods,
     Related,
+    History,
+    Network,
     /// A ConfigMap's or Secret's keys, one editor each.
     Data,
     Yaml,
@@ -49,6 +51,12 @@ impl DetailTab {
     /// Pod streams and terminals belong to the independent bottom panel.
     fn for_kind(kind: &Kind) -> Vec<Self> {
         let mut tabs = vec![Self::Overview];
+        if crate::network::supported(&kind.resource.group, &kind.resource.kind) {
+            tabs.push(Self::Network);
+        }
+        if kind.resource.group == "apps" && kind.resource.kind == "Deployment" {
+            tabs.push(Self::History);
+        }
         if kind.resource.group.is_empty() && kind.resource.kind == "Node" {
             tabs.push(Self::Pods);
         }
@@ -72,6 +80,8 @@ impl DetailTab {
             Self::Overview => "Overview",
             Self::Pods => "Pods",
             Self::Related => "Related",
+            Self::History => "History",
+            Self::Network => "Network",
             Self::Data => "Data",
             Self::Yaml => "YAML",
             Self::Events => "Events",
@@ -147,6 +157,8 @@ pub struct DetailView {
     overview: crate::overview::Projection,
     node_pods: Option<Entity<crate::node_pods::NodePodsView>>,
     related: Option<Entity<crate::related::RelatedView>>,
+    rollout: Option<Entity<crate::rollout::RolloutView>>,
+    network: Option<Entity<crate::network::NetworkView>>,
     argo_nodes: Arc<beacon_kube::argo::Nodes>,
     argo_graph: crate::argo::Graph,
     argo_graph_error: Option<String>,
@@ -229,6 +241,8 @@ impl DetailView {
             overview,
             node_pods: None,
             related: None,
+            rollout: None,
+            network: None,
             argo_nodes: Arc::new(beacon_kube::argo::Nodes::new()),
             argo_graph: crate::argo::Graph::default(),
             argo_graph_error: None,
@@ -270,7 +284,13 @@ impl DetailView {
     }
 
     pub(crate) fn has_pending_edits(&self, cx: &App) -> bool {
-        self.busy() || self.yaml_changed(cx) || self.data_changed(cx)
+        self.busy()
+            || self.yaml_changed(cx)
+            || self.data_changed(cx)
+            || self
+                .rollout
+                .as_ref()
+                .is_some_and(|view| view.read(cx).busy())
     }
 
     fn yaml_changed(&self, cx: &App) -> bool {
@@ -318,8 +338,20 @@ impl DetailView {
             crate::overview::project(&self.kind.resource.group, &self.kind.resource.kind, &object);
         let changed = !Arc::ptr_eq(&self.object, &object);
         self.object = object;
+        if let Some(network) = &self.network {
+            network.update(cx, |view, cx| view.refresh(self.object.clone(), cx));
+        }
         if let Some(related) = &self.related {
             related.update(cx, |view, cx| view.refresh(self.object.clone(), cx));
+        }
+        if let Some(rollout) = &self.rollout {
+            rollout.update(cx, |view, cx| {
+                view.refresh(
+                    self.object.clone(),
+                    crate::actions::may_apply(&self.kind, rules.as_deref()),
+                    cx,
+                )
+            });
         }
         if changed {
             self.load_argo(cx);
@@ -338,8 +370,31 @@ impl DetailView {
         }
         self.tab = tab;
         match tab {
+            DetailTab::Network if self.network.is_none() => {
+                let session = self.session.clone();
+                let kind = self.kind.clone();
+                let object = self.object.clone();
+                let network = cx
+                    .new(|cx| crate::network::NetworkView::new(session, kind, object, window, cx));
+                cx.subscribe(&network, |_, _, event: &OwnerRequested, cx| {
+                    cx.emit(OwnerRequested {
+                        kind: event.kind.clone(),
+                        target: event.target.clone(),
+                    })
+                })
+                .detach();
+                self.network = Some(network);
+            }
             DetailTab::Pods if self.node_pods.is_none() => self.load_node_pods(window, cx),
             DetailTab::Related if self.related.is_none() => self.load_related(window, cx),
+            DetailTab::History if self.rollout.is_none() => {
+                let session = self.session.clone();
+                let object = self.object.clone();
+                let may_patch = crate::actions::may_apply(&self.kind, self.rules.as_deref());
+                self.rollout = Some(cx.new(|cx| {
+                    crate::rollout::RolloutView::new(session, object, may_patch, window, cx)
+                }));
+            }
             DetailTab::Data if matches!(self.data, Data::Unopened) => self.load_data(window, cx),
             DetailTab::Yaml if matches!(self.yaml, Yaml::Unopened) => self.load_yaml(window, cx),
             _ => {}
@@ -2853,8 +2908,18 @@ impl Render for DetailView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let body = match self.tab {
             DetailTab::Overview => self.render_overview(cx),
+            DetailTab::Network => self
+                .network
+                .clone()
+                .map(|view| view.into_any_element())
+                .unwrap_or_else(|| div().into_any_element()),
             DetailTab::Pods => self.render_node_pods(cx),
             DetailTab::Related => self.render_related(),
+            DetailTab::History => self
+                .rollout
+                .clone()
+                .map(|view| view.into_any_element())
+                .unwrap_or_else(|| div().into_any_element()),
             DetailTab::Data => self.render_data(cx),
             DetailTab::Yaml => self.render_yaml(cx),
             DetailTab::Events => self.render_events(cx),

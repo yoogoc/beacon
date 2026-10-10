@@ -136,6 +136,15 @@ impl Dimensions for Size {
 }
 
 impl TerminalView {
+    pub(crate) fn set_command(
+        &mut self,
+        command: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.command
+            .update(cx, |input, cx| input.set_value(command, window, cx));
+    }
     pub(crate) fn is_active(&self) -> bool {
         matches!(self.state, State::Connecting | State::Running)
     }

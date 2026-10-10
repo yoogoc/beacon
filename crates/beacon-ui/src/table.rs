@@ -17,11 +17,14 @@ use beacon_kube::labels::LabelSelector;
 use beacon_kube::{
     DeleteTarget, Delta, DeltaBatch, DynamicObject, Metrics, ObjectRef, ResourceStore, data,
 };
+use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::checkbox::Checkbox;
-use gpui_kit::component::menu::{PopupMenu, PopupMenuItem};
+use gpui_kit::component::menu::{DropdownMenu as _, PopupMenu, PopupMenuItem};
 use gpui_kit::component::table::{Column, ColumnSort, TableDelegate, TableState};
 use gpui_kit::component::tooltip::Tooltip;
-use gpui_kit::component::{ActiveTheme as _, Disableable as _, h_flex, v_flex};
+use gpui_kit::component::{
+    ActiveTheme as _, Disableable as _, IconName, Sizable as _, h_flex, v_flex,
+};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use nucleo_matcher::{
@@ -292,6 +295,182 @@ impl ResourceTable {
         self.rebuild_display_columns();
         self.reindex();
         Ok(())
+    }
+
+    fn is_action_column(&self, column: usize) -> bool {
+        self.context_view.is_some()
+            && column == self.display_columns.len() + usize::from(self.selection_column)
+    }
+
+    fn row_menu(&self, target: ObjectRef, mut menu: PopupMenu, cx: &App) -> PopupMenu {
+        let Some(view) = self.context_view.clone() else {
+            return menu;
+        };
+        let Some(cluster) = view.upgrade() else {
+            return menu;
+        };
+        let Some((kind, rules)) = cluster.read(cx).menu_context() else {
+            return menu;
+        };
+        let Some(object) = self.object(&target) else {
+            return menu;
+        };
+        let replicas = object
+            .data
+            .get("spec")
+            .and_then(|spec| spec.get("replicas"))
+            .and_then(serde_json::Value::as_i64)
+            .unwrap_or(1) as i32;
+        let group = kind.resource.group.as_str();
+        let name = kind.resource.kind.as_str();
+        let is_pod = group.is_empty() && name == "Pod";
+
+        menu = menu
+            .label(format!("{name} · {}", target.name))
+            .item(detail_item(
+                "Open details",
+                &view,
+                &target,
+                DetailTab::Overview,
+            ));
+
+        if data::is_keyed(group, name) {
+            menu = menu.item(detail_item("View data", &view, &target, DetailTab::Data));
+        }
+        if is_pod {
+            let debug_view = view.clone();
+            let debug_target = target.clone();
+            let may_debug = rules
+                .as_deref()
+                .is_none_or(|rules| rules.allows("patch", "", "pods/ephemeralcontainers"))
+                && actions::may_exec(rules.as_deref());
+            menu = menu.item(
+                PopupMenuItem::new("Debug container…")
+                    .disabled(!may_debug)
+                    .on_click(move |_, window, cx| {
+                        let _ = debug_view
+                            .update(cx, |view, cx| view.debug_for(&debug_target, window, cx));
+                    }),
+            );
+            menu = menu.item(pod_tools_item(
+                "View logs",
+                &view,
+                &target,
+                PodToolTab::Logs,
+            ));
+            let may_exec = actions::may_exec(rules.as_deref());
+            menu = menu
+                .item(
+                    pod_tools_item("Run command", &view, &target, PodToolTab::Exec)
+                        .disabled(!may_exec),
+                )
+                .item(
+                    pod_tools_item("Open shell", &view, &target, PodToolTab::Shell)
+                        .disabled(!may_exec),
+                );
+
+            let ports = actions::ports(&object.data);
+            if !ports.is_empty() && target.namespace.is_some() {
+                for port in ports {
+                    let forward_view = view.clone();
+                    let forward_target = target.clone();
+                    menu = menu.item(PopupMenuItem::new(format!("Forward port {port}")).on_click(
+                        move |_, window, cx| {
+                            let _ = forward_view.update(cx, |cluster, cx| {
+                                cluster.start_forward_for(forward_target.clone(), port, window, cx);
+                            });
+                        },
+                    ));
+                }
+            }
+        }
+        menu = menu.item(detail_item("View YAML", &view, &target, DetailTab::Yaml));
+        if crate::network::supported(group, name) {
+            menu = menu.item(detail_item(
+                "Network paths",
+                &view,
+                &target,
+                DetailTab::Network,
+            ));
+        }
+        if group == "apps" && name == "Deployment" {
+            menu = menu.item(detail_item(
+                "Deployment history",
+                &view,
+                &target,
+                DetailTab::History,
+            ));
+        }
+        if group == "apps"
+            && matches!(
+                name,
+                "Deployment" | "StatefulSet" | "DaemonSet" | "ReplicaSet"
+            )
+        {
+            let logs_view = view.clone();
+            let logs_target = target.clone();
+            menu = menu.item(PopupMenuItem::new("View aggregated logs").on_click(
+                move |_, window, cx| {
+                    let _ = logs_view
+                        .update(cx, |view, cx| view.aggregate_for(&logs_target, window, cx));
+                },
+            ));
+        }
+
+        let compare_view = view.clone();
+        let compare_target = target.clone();
+        menu = menu.item(
+            PopupMenuItem::new("Compare resource…").on_click(move |_, window, cx| {
+                let _ = compare_view
+                    .update(cx, |view, cx| view.compare_for(&compare_target, window, cx));
+            }),
+        );
+        let choices = actions::available(&kind, rules.as_deref(), replicas);
+        if !choices.is_empty() {
+            menu = menu.separator();
+        }
+        for choice in choices {
+            let action_view = view.clone();
+            let action_target = target.clone();
+            let operation = choice.operation;
+            menu = menu.item(
+                PopupMenuItem::new(choice.label)
+                    .disabled(!choice.allowed)
+                    .on_click(move |_, window, cx| {
+                        let _ = action_view.update(cx, |cluster, cx| {
+                            cluster.start_for(action_target.clone(), operation.clone(), window, cx);
+                        });
+                    }),
+            );
+        }
+
+        let copy_name = target.name.clone();
+        menu = menu
+            .separator()
+            .item(PopupMenuItem::new("Copy name").on_click(move |_, _, cx| {
+                cx.write_to_clipboard(ClipboardItem::new_string(copy_name.clone()));
+            }));
+        if let Some(row) = self.rows.iter().position(|key| key == &target)
+            && let Some(index) = self
+                .columns
+                .columns
+                .iter()
+                .position(|column| column.header == "Status")
+            && let Some((_, value)) = self.cell(row, index)
+            && !value.is_missing()
+        {
+            menu = menu.item(crate::copyable_text::copy_item(
+                "Copy status",
+                value.display().to_string(),
+            ));
+        }
+        if is_pod {
+            menu = menu.item(crate::copyable_text::copy_item(
+                "Copy container states",
+                beacon_columns::containers::description(&object.data),
+            ));
+        }
+        menu
     }
 
     fn data_column(&self, index: usize) -> Option<usize> {
@@ -859,7 +1038,9 @@ impl SortKey {
 
 impl TableDelegate for ResourceTable {
     fn columns_count(&self, _: &App) -> usize {
-        self.display_columns.len() + usize::from(self.selection_column)
+        self.display_columns.len()
+            + usize::from(self.selection_column)
+            + usize::from(self.context_view.is_some())
     }
 
     /// Draws the component's skeleton rows instead of an empty table. The
@@ -874,6 +1055,14 @@ impl TableDelegate for ResourceTable {
     }
 
     fn column(&self, index: usize, _: &App) -> Column {
+        if self.is_action_column(index) {
+            return Column::new("actions", "Actions")
+                .width(px(72.))
+                .min_width(px(72.))
+                .resizable(false)
+                .movable(false)
+                .selectable(false);
+        }
         if self.selection_column && index == 0 {
             return Column::new("select", "")
                 .width(px(44.))
@@ -995,125 +1184,14 @@ impl TableDelegate for ResourceTable {
     fn context_menu(
         &mut self,
         row: usize,
-        mut menu: PopupMenu,
-        _window: &mut Window,
+        menu: PopupMenu,
+        _: &mut Window,
         cx: &mut Context<TableState<Self>>,
     ) -> PopupMenu {
-        let (Some(target), Some(view)) = (self.key_at(row).cloned(), self.context_view.clone())
-        else {
-            return menu;
-        };
-        let Some(cluster) = view.upgrade() else {
-            return menu;
-        };
-        let Some((kind, rules)) = cluster.read(cx).menu_context() else {
-            return menu;
-        };
-        let Some(object) = self.object(&target) else {
-            return menu;
-        };
-        let replicas = object
-            .data
-            .get("spec")
-            .and_then(|spec| spec.get("replicas"))
-            .and_then(serde_json::Value::as_i64)
-            .unwrap_or(1) as i32;
-        let group = kind.resource.group.as_str();
-        let name = kind.resource.kind.as_str();
-        let is_pod = group.is_empty() && name == "Pod";
-
-        menu = menu
-            .label(format!("{name} · {}", target.name))
-            .item(detail_item(
-                "Open details",
-                &view,
-                &target,
-                DetailTab::Overview,
-            ));
-
-        if data::is_keyed(group, name) {
-            menu = menu.item(detail_item("View data", &view, &target, DetailTab::Data));
+        match self.key_at(row).cloned() {
+            Some(target) => self.row_menu(target, menu, cx),
+            None => menu,
         }
-        if is_pod {
-            menu = menu.item(pod_tools_item(
-                "View logs",
-                &view,
-                &target,
-                PodToolTab::Logs,
-            ));
-            let may_exec = actions::may_exec(rules.as_deref());
-            menu = menu
-                .item(
-                    pod_tools_item("Run command", &view, &target, PodToolTab::Exec)
-                        .disabled(!may_exec),
-                )
-                .item(
-                    pod_tools_item("Open shell", &view, &target, PodToolTab::Shell)
-                        .disabled(!may_exec),
-                );
-
-            let ports = actions::ports(&object.data);
-            if !ports.is_empty() && target.namespace.is_some() {
-                for port in ports {
-                    let forward_view = view.clone();
-                    let forward_target = target.clone();
-                    menu = menu.item(PopupMenuItem::new(format!("Forward port {port}")).on_click(
-                        move |_, window, cx| {
-                            let _ = forward_view.update(cx, |cluster, cx| {
-                                cluster.start_forward_for(forward_target.clone(), port, window, cx);
-                            });
-                        },
-                    ));
-                }
-            }
-        }
-        menu = menu.item(detail_item("View YAML", &view, &target, DetailTab::Yaml));
-
-        let choices = actions::available(&kind, rules.as_deref(), replicas);
-        if !choices.is_empty() {
-            menu = menu.separator();
-        }
-        for choice in choices {
-            let action_view = view.clone();
-            let action_target = target.clone();
-            let operation = choice.operation;
-            menu = menu.item(
-                PopupMenuItem::new(choice.label)
-                    .disabled(!choice.allowed)
-                    .on_click(move |_, window, cx| {
-                        let _ = action_view.update(cx, |cluster, cx| {
-                            cluster.start_for(action_target.clone(), operation.clone(), window, cx);
-                        });
-                    }),
-            );
-        }
-
-        let copy_name = target.name.clone();
-        menu = menu
-            .separator()
-            .item(PopupMenuItem::new("Copy name").on_click(move |_, _, cx| {
-                cx.write_to_clipboard(ClipboardItem::new_string(copy_name.clone()));
-            }));
-        if let Some(index) = self
-            .columns
-            .columns
-            .iter()
-            .position(|column| column.header == "Status")
-            && let Some((_, value)) = self.cell(row, index)
-            && !value.is_missing()
-        {
-            menu = menu.item(crate::copyable_text::copy_item(
-                "Copy status",
-                value.display().to_string(),
-            ));
-        }
-        if is_pod {
-            menu = menu.item(crate::copyable_text::copy_item(
-                "Copy container states",
-                beacon_columns::containers::description(&object.data),
-            ));
-        }
-        menu
     }
 
     fn render_td(
@@ -1123,6 +1201,32 @@ impl TableDelegate for ResourceTable {
         _: &mut Window,
         cx: &mut Context<TableState<Self>>,
     ) -> impl IntoElement {
+        if self.is_action_column(column) {
+            let Some(target) = self.key_at(row).cloned() else {
+                return h_flex().into_any_element();
+            };
+            let table = cx.entity().downgrade();
+            return h_flex()
+                .id(("resource-actions-cell", row))
+                .size_full()
+                .justify_center()
+                .on_click(|_, _, cx| cx.stop_propagation())
+                .child(
+                    Button::new(("resource-actions", row))
+                        .xsmall()
+                        .ghost()
+                        .icon(IconName::Ellipsis)
+                        .accessibility_label(format!("Actions for {}", target.name))
+                        .tooltip("Resource actions")
+                        .dropdown_menu(move |menu, _, cx| match table.upgrade() {
+                            Some(table) => {
+                                table.read(cx).delegate().row_menu(target.clone(), menu, cx)
+                            }
+                            None => menu,
+                        }),
+                )
+                .into_any_element();
+        }
         if self.selection_column && column == 0 {
             let Some(key) = self.key_at(row).cloned() else {
                 return h_flex().into_any_element();

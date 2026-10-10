@@ -73,6 +73,10 @@ pub struct Discovery {
 }
 
 impl Discovery {
+    #[cfg(any(test, feature = "test-support"))]
+    pub(crate) fn from_kinds(kinds: Vec<Kind>) -> Self {
+        Self { kinds }
+    }
     /// Asks the cluster what it serves.
     ///
     /// Only listable kinds are kept, at the server's preferred version for each

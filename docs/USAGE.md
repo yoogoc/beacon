@@ -158,6 +158,7 @@ Pod 右键菜单也可转发已声明端口到 localhost；转发在切换页面
 
 ## 创建、修改与删除资源
 
+资源列表每行最右侧的 **Actions**（省略号）与右键菜单提供相同的操作及权限判断。
 右键菜单按类型提供适用的操作：Pod 的容器工具、工作负载的重启 / 扩缩容、
 ConfigMap / Secret 的 Data，以及 YAML、复制名称、删除等通用操作。
 菜单中的操作始终指向右键时的对象。权限预检发现操作不被允许时，会禁用并显示原因；
@@ -174,6 +175,51 @@ YAML 编辑器支持语法高亮与 **Format**。保存使用 Server-Side Apply�
 确认框以可滚动的表格列出每个目标的命名空间和名称。
 搜索及类型筛选会从选中集合移除隐藏项；删除携带 UID 前置条件，避免删除同名的新对象。
 成功的目标清除选中，失败项保留并显示错误。
+
+## 多 Pod 日志聚合
+
+Deployment、ReplicaSet、StatefulSet、DaemonSet 的操作菜单提供 **View aggregated logs**，
+使用该工作负载的 Label 选择器及命名空间。Pod 列表工具栏的 **Aggregated logs…**
+沿用当前 Label 筛选和命名空间范围；没有 Label 时需要先输入选择器并点击 **Apply**。
+
+日志逐行附带 `[namespace/pod:container]` 前缀和时间戳。新副本自动加入；容器重启或 Pod 重建后重新跟踪日志。
+可选择全部普通容器或一个容器名称，支持 **Previous**、搜索高亮、暂停跟随、跳到最新和自动换行。
+**Copy** 复制当前搜索结果；**Download…** 选择文件夹后建立独立子目录，
+为当前可读取的各个 Pod / 容器保存完整日志，下载不受搜索过滤影响。
+部分日志读取失败时保留其他来源的结果并显示错误；**Apply selector / retry** 重新读取选择器和日志。
+
+## 部署历史与回滚
+
+Deployment 的操作菜单提供 **Deployment history**，打开独立 **History** 详情页。
+展示控制器保留的 ReplicaSet 版本、镜像、创建时间及当前版本；旧版本可能已按 `revisionHistoryLimit` 清理。
+**Refresh** 重新读取版本列表，Deployment 的 Updated / Ready / Available 副本及条件随 Watch 更新。
+
+选择旧版本的 **Compare / roll back…** 先读取当前 Deployment，再展示 Pod 模板的 YAML 差异。
+点击 **Confirm and roll back** 后才提交回滚，保留当前副本数等模板之外的设置。
+预览后对象被替换或修改时提交会被拒绝，需要刷新并重新检查差异。
+没有 Patch 权限时仍可通过 **Compare revision…** 查看差异。
+
+## 临时调试容器
+
+运行中的 Pod 操作菜单提供 **Debug container…**。填写唯一容器名称、镜像、目标容器和 Shell 路径，
+选择 **Restricted**（默认）或 **Baseline** 安全配置。
+**Create and open terminal** 创建临时容器，等待其运行后打开终端。
+镜像需要包含指定 Shell；Restricted 配置使用非 root 用户，镜像也需要支持该用户。
+临时容器写入 Pod 后无法单独删除，条目随 Pod 删除；关闭对话框结束终端会话。
+需要 `pods/ephemeralcontainers` 的 Patch 权限及 Pod Exec 权限，服务端仍执行最终授权和安全策略检查。
+
+## 网络链路与资源对比
+
+Ingress、Service、EndpointSlice、Pod 的操作菜单提供 **Network paths**，打开独立 **Network** 详情页。
+按实际引用显示 **Ingress → Service → EndpointSlice → Pod**，点击存在的节点可跳转定位。
+提示缺失资源、空端点、未就绪端点、Selector 不匹配及端口配置问题；资源读取失败时显示错误，避免把无权限误判成资源缺失。
+链路反映当前资源配置，不执行网络连通性测试。
+
+资源操作菜单的 **Compare resource…** 打开只读对比窗口。
+选择已连接集群、目标命名空间和名称，点击 **Compare** 读取双方资源并显示 YAML 差异。
+可切换并排 / 统一视图，按需包含 Status 和运行时 Metadata；默认忽略这些字段及命名空间差异。
+Secret 值默认遮盖，用摘要保留差异判断；只有点击 **Reveal values** 才显示原值。
+此窗口没有保存或同步资源的操作。
 
 ## ConfigMap、Secret 与 TLS
 

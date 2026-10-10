@@ -55,7 +55,12 @@ It uses your existing kubeconfig and cluster permissions, discovering both built
 | **Resource details** | Overview, YAML, and Events; selectable values; collapsible labels and annotations; container ports, requests and limits, probes, environment, and mounts; clickable owner links. |
 | **Argo Workflows** | Dedicated resource group, Workflow and template graphs, CronWorkflow run history, and separate node details with Pod containers, inputs, outputs, artifacts, and YAML. Controller resources stay collapsed in the sidebar. |
 | **Pod tools** | Logs with keyword search and highlighting, pause / resume follow, jump to latest, word wrap, container selection, and download. Run commands, open Shell, and forward ports in a separate bottom panel. Filled / hollow markers show regular / init container states. |
-| **Resource operations** | Create YAML resources with server validation, review a YAML diff before creating or applying changes, restart, scale, and delete individually or in bulk. Context menus reflect resource types and permission checks. |
+| **Aggregated logs** | Follow Pods selected by a workload or label, with Pod / container prefixes and timestamps. New replicas join automatically; search, pause, wrap, and download separate log files to a chosen folder. |
+| **Deployment history** | Inspect retained revisions, images, and creation times; review a template diff before rolling back and follow rollout progress. |
+| **Debug containers** | Add an ephemeral container to a running Pod, choose its image, target container, and security profile, then open its terminal. |
+| **Network paths** | Explore Ingress → Service → EndpointSlice → Pod relationships, inspect missing references, readiness, and port mismatches, and navigate between resources. |
+| **Resource comparison** | Compare resources across connected clusters or namespaces in a read-only YAML diff, excluding runtime fields by default and concealing Secret values. |
+| **Resource operations** | Create YAML resources with server validation, review a YAML diff before creating or applying changes, restart, scale, and delete individually or in bulk. Row action menus share resource-specific operations and permission checks with right-click menus. |
 | **ConfigMaps and Secrets** | View and edit data by key. Secret values start concealed. Inspect TLS certificate subjects, issuers, validity, algorithms, key strength, extensions, and public keys. |
 | **Metrics and Helm** | Read Pod / Node CPU and memory from the Kubernetes Metrics API or Prometheus, and inspect Helm releases stored in the cluster. |
 | **Updates** | Automatic checks, optional automatic downloads, signed packages, Stable / Development channels, and restart confirmation that protects unapplied edits. |

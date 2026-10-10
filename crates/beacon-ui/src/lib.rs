@@ -5,6 +5,7 @@
 
 pub mod actions;
 mod activity;
+mod aggregate_logs;
 pub mod app;
 mod app_logs;
 mod argo;
@@ -15,9 +16,13 @@ pub mod cluster;
 mod connections;
 mod copyable_text;
 mod create;
+mod debug_container;
 pub mod detail;
+#[cfg(all(test, feature = "ui-tests"))]
+mod feature_test_support;
 mod filters;
 mod icons;
+mod network;
 mod node_pods;
 mod overview;
 pub mod palette;
@@ -26,6 +31,8 @@ mod pod_tools;
 mod preferences;
 pub mod prompt;
 mod related;
+mod resource_compare;
+mod rollout;
 mod settings;
 mod shortcuts;
 pub mod status;

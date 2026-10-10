@@ -89,6 +89,41 @@ pub struct ClusterSession {
 }
 
 impl ClusterSession {
+    /// Isolated API fixture: never reads the user's kubeconfig or credentials.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn for_testing(id: ClusterId, server: String, kinds: Vec<crate::Kind>) -> Self {
+        let runtime = tokio::runtime::Handle::current();
+        let client = Client::try_from(Config::new(server.parse().expect("fixture URL")))
+            .expect("fixture client");
+        let health = Arc::new(HealthState::new(Health::Connected));
+        let registry = Arc::new(Registry::new(
+            client.clone(),
+            runtime.clone(),
+            health.clone(),
+        ));
+        let config = serde_json::from_value(serde_json::json!({"apiVersion":"v1","kind":"Config","clusters":[{"name":"fixture","cluster":{"server":server}}],"contexts":[{"name":id.as_str(),"context":{"cluster":"fixture","user":"fixture"}}],"users":[{"name":"fixture","user":{}}],"current-context":id.as_str()})).expect("fixture kubeconfig");
+        let transport = crate::connection::Transport::new(
+            config,
+            id.as_str(),
+            crate::connection::Proxy::Direct,
+        )
+        .expect("isolated fixture transport");
+        Self {
+            id,
+            server,
+            version: "v1.37.0-fixture".into(),
+            client,
+            connection: crate::connection::ConnectionOptions::default(),
+            transport,
+            runtime,
+            discovery: Discovery::from_kinds(kinds),
+            printer_columns: Mutex::new(PrinterColumns::default()),
+            access: Mutex::new(Access::default()),
+            forwards: Forwards::default(),
+            registry,
+            health,
+        }
+    }
     /// Builds a client for a kubeconfig context and proves it can reach the
     /// API server.
     ///

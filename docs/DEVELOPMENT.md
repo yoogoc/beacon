@@ -44,6 +44,13 @@ cargo test --workspace
 cargo build --workspace --all-targets
 ```
 
+多 Pod 日志、部署回滚、调试容器、网络链路及跨集群对比的界面 / API 集成检查使用本机 HTTP 模拟服务，
+不读取宿主机 kubeconfig 的凭据，也不修改现有集群资源：
+
+```sh
+cargo test --locked -p beacon-ui --features ui-tests --lib integration_tests
+```
+
 CI 对 macOS、Linux、Windows 执行构建与测试；检查配置见
 [ci.yml](../.github/workflows/ci.yml)。
 

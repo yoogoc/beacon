@@ -79,7 +79,7 @@ impl Preview {
     }
 }
 
-fn canonical_yaml(mut value: Value) -> Result<String, String> {
+pub(crate) fn canonical_yaml(mut value: Value) -> Result<String, String> {
     fn sort(value: &mut Value) {
         match value {
             Value::Object(map) => {
@@ -106,6 +106,8 @@ pub(crate) struct ReviewView {
     create: bool,
     force: bool,
     resolved: bool,
+    confirmation_label: Option<String>,
+    confirmation_allowed: bool,
 }
 
 impl EventEmitter<ReviewEvent> for ReviewView {}
@@ -128,6 +130,8 @@ pub(crate) fn open(
             create,
             force,
             resolved: false,
+            confirmation_label: None,
+            confirmation_allowed: true,
         }
     });
     let content = review.clone();
@@ -146,8 +150,14 @@ pub(crate) fn open(
 }
 
 impl ReviewView {
+    pub(crate) fn confirmation_label(&mut self, label: &str) {
+        self.confirmation_label = Some(label.into());
+    }
+    pub(crate) fn read_only(&mut self) {
+        self.confirmation_allowed = false;
+    }
     fn confirm(&mut self, cx: &mut Context<Self>) -> bool {
-        if self.resolved || !self.preview.changed {
+        if self.resolved || !self.preview.changed || !self.confirmation_allowed {
             return false;
         }
         self.resolved = true;
@@ -168,7 +178,9 @@ impl ReviewView {
 impl Render for ReviewView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let mode = self.diff.read(cx).mode();
-        let label = if self.create {
+        let label = if let Some(label) = self.confirmation_label.as_deref() {
+            label
+        } else if self.create {
             "Confirm and create"
         } else if self.force {
             "Confirm force apply"
@@ -273,17 +285,23 @@ impl Render for ReviewView {
                                     .label("Back to editing")
                                     .on_click(cx.listener(|view, _, window, cx| {
                                         view.cancel(cx);
-                                        window.close_dialog(cx);
+                                        // Deliver the event while the dialog still owns its view.
+                                        // Subscribers hold only a weak handle to the emitter.
+                                        window.defer(cx, |window, cx| window.close_dialog(cx));
                                     })),
                             )
                             .child(
                                 Button::new("confirm-yaml-review")
                                     .primary()
                                     .label(label)
-                                    .disabled(!self.preview.changed || self.resolved)
+                                    .disabled(
+                                        !self.preview.changed
+                                            || self.resolved
+                                            || !self.confirmation_allowed,
+                                    )
                                     .on_click(cx.listener(|view, _, window, cx| {
                                         if view.confirm(cx) {
-                                            window.close_dialog(cx);
+                                            window.defer(cx, |window, cx| window.close_dialog(cx));
                                         }
                                     })),
                             ),

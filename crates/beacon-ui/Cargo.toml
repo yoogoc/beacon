@@ -6,7 +6,7 @@ rust-version.workspace = true
 license.workspace = true
 
 [features]
-ui-tests = ["gpui-kit/test-support"]
+ui-tests = ["gpui-kit/test-support", "beacon-kube/test-support"]
 
 [dependencies]
 alacritty_terminal.workspace = true
