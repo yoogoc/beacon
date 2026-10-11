@@ -6,6 +6,7 @@ use beacon_kube::{
     connection::{MetricsSource, Prometheus, Proxy},
 };
 use gpui_kit::assets::IconName;
+use gpui_kit::base::Button as NavigationButton;
 use gpui_kit::component::{Disableable as _, Selectable as _, Sizable as _};
 use gpui_kit::component::{
     Icon,
@@ -719,7 +720,7 @@ impl PreferencesView {
                             .flex_1()
                             .min_w_0()
                             .font_family(cx.theme().mono_font_family.clone())
-                            .text_sm()
+                            .text_size(cx.theme().mono_font_size)
                             .child(crate::copyable_text::copyable_text(
                                 ("yaml-fold-path", index),
                                 field.path.clone(),
@@ -728,7 +729,6 @@ impl PreferencesView {
                     .child(
                         Switch::new(("yaml-fold-field", index))
                             .accessibility_label(format!("Collapse {}", field.path))
-                            .color(cx.theme().link)
                             .checked(field.collapsed)
                             .on_click(cx.listener(move |view, checked, _, cx| {
                                 if let Page::Cluster(c) = &mut view.page
@@ -1052,16 +1052,16 @@ impl PreferencesView {
             .on_click(|_, _, cx| crate::updates::store(cx).update(cx, |view, cx| view.check(cx)));
         let mut form = v_flex().gap_3()
             .child(h_flex().gap_3().p_4().rounded_lg().bg(cx.theme().muted).items_center()
-                .child(Icon::new(IconName::RadioTower).size_6().text_color(cx.theme().link))
+                .child(Icon::new(IconName::RadioTower).size_6().text_color(cx.theme().primary))
                 .child(v_flex().flex_1().gap_1()
                     .child(div().font_weight(FontWeight::MEDIUM).child(format!("Beacon {}", env!("CARGO_PKG_VERSION"))))
                     .child(hint(if self.updates.channel == Channel::Stable { "Stable release" } else { "Development release" }, cx)))
                 .child(check_button))
             .child(setting_row("Check automatically", "Check for new releases in the background.",
-                Switch::new("auto-check-updates").accessibility_label("Automatically check for updates").color(cx.theme().link).checked(self.updates.auto_check)
+                Switch::new("auto-check-updates").accessibility_label("Automatically check for updates").checked(self.updates.auto_check)
                     .on_click(cx.listener(|view, checked, window, cx| { view.updates.auto_check = *checked; view.save_updates(window, cx); })), cx))
             .child(setting_row("Download automatically", "Ask before restarting to install an update.",
-                Switch::new("auto-download-updates").accessibility_label("Automatically download updates").color(cx.theme().link).checked(self.updates.auto_download).disabled(!can_install)
+                Switch::new("auto-download-updates").accessibility_label("Automatically download updates").checked(self.updates.auto_download).disabled(!can_install)
                     .on_click(cx.listener(|view, checked, window, cx| { view.updates.auto_download = *checked; view.save_updates(window, cx); })), cx))
             .child(hint("Checks run once at startup and every 24 hours when enabled. Checks and downloads use the system proxy by default, or the saved global proxy override. Installation always requires restart confirmation.", cx))
             .child(setting_row("Release channel", "Choose which releases you receive.", h_flex().gap_2().children([(Channel::Stable, "Stable"), (Channel::Development, "Development")].into_iter().map(|(channel, label)| {
@@ -1186,7 +1186,7 @@ impl PreferencesView {
                     .h_full()
                     .p_2()
                     .gap_2()
-                    .bg(theme.muted)
+                    .bg(theme.tokens.sidebar)
                     .children((0..3).map(|_| {
                         div()
                             .w_full()
@@ -1206,7 +1206,7 @@ impl PreferencesView {
                             .w(relative(0.6))
                             .h(px(4.))
                             .rounded_full()
-                            .bg(theme.link),
+                            .bg(theme.button_primary),
                     )
                     .children([1., 1., 0.7].into_iter().map(|width| {
                         div()
@@ -1245,12 +1245,12 @@ impl PreferencesView {
                 .p_2()
                 .rounded_lg()
                 .bg(if selected {
-                    cx.theme().link.opacity(0.09)
+                    cx.theme().muted
                 } else {
                     cx.theme().background
                 })
                 .border_color(if selected {
-                    cx.theme().link
+                    cx.theme().primary
                 } else {
                     cx.theme().border
                 })
@@ -1268,7 +1268,7 @@ impl PreferencesView {
                                 .child(label)
                                 .child(Icon::new(IconName::CircleCheck).size_4().text_color(
                                     if selected {
-                                        cx.theme().link
+                                        cx.theme().primary
                                     } else {
                                         cx.theme().transparent
                                     },
@@ -1338,7 +1338,7 @@ impl PreferencesView {
                     .py_2()
                     .border_b_1()
                     .border_color(theme.border)
-                    .text_size(px(11.))
+                    .text_size(theme.font_size * 0.6875)
                     .text_color(theme.muted_foreground)
                     .child(Icon::new(IconName::RadioTower).size_3())
                     .child("Beacon · Theme preview"),
@@ -1350,11 +1350,15 @@ impl PreferencesView {
                         v_flex()
                             .w(px(90.))
                             .flex_shrink_0()
-                            .bg(theme.muted)
+                            .bg(theme.tokens.sidebar)
                             .p_3()
                             .gap_3()
-                            .text_size(px(11.))
-                            .child(div().text_color(theme.link).child("Workloads"))
+                            .text_size(theme.font_size * 0.6875)
+                            .child(
+                                div()
+                                    .text_color(theme.sidebar_accent_foreground)
+                                    .child("Workloads"),
+                            )
                             .child(div().text_color(theme.muted_foreground).child("Network"))
                             .child(div().text_color(theme.muted_foreground).child("Config"))
                             .child(div().text_color(theme.muted_foreground).child("Storage")),
@@ -1379,9 +1383,10 @@ impl PreferencesView {
                                             )
                                             .child(
                                                 div()
-                                                    .text_size(px(11.))
+                                                    .text_size(theme.font_size * 0.6875)
                                                     .text_color(theme.muted_foreground)
                                                     .font_family(theme.mono_font_family.clone())
+                                                    .text_size(theme.mono_font_size * 0.85)
                                                     .child("default"),
                                             ),
                                     )
@@ -1390,7 +1395,7 @@ impl PreferencesView {
                                             .rounded_md()
                                             .px_2()
                                             .py_1()
-                                            .text_size(px(11.))
+                                            .text_size(theme.font_size * 0.6875)
                                             .bg(theme.button_primary)
                                             .text_color(theme.button_primary_foreground)
                                             .child("Create"),
@@ -1402,7 +1407,7 @@ impl PreferencesView {
                                     .pb_2()
                                     .border_b_1()
                                     .border_color(theme.border)
-                                    .text_size(px(11.))
+                                    .text_size(theme.font_size * 0.6875)
                                     .text_color(theme.muted_foreground)
                                     .child("Name")
                                     .child("Status"),
@@ -1411,7 +1416,7 @@ impl PreferencesView {
                                 h_flex()
                                     .justify_between()
                                     .gap_2()
-                                    .text_size(px(11.))
+                                    .text_size(theme.font_size * 0.6875)
                                     .child(name)
                                     .child(
                                         h_flex()
@@ -1640,20 +1645,16 @@ impl PreferencesView {
                 .p_3()
                 .w_full()
                 .bg(if selected {
-                    cx.theme().link.opacity(0.09)
+                    cx.theme().muted
                 } else {
                     cx.theme().background
                 })
                 .border_color(if selected {
-                    cx.theme().link
+                    cx.theme().primary
                 } else {
                     cx.theme().border
                 })
-                .text_color(if selected {
-                    cx.theme().link
-                } else {
-                    cx.theme().foreground
-                })
+                .text_color(cx.theme().foreground)
                 .accessibility_label(format!("{label} cluster icon"))
                 .child(
                     v_flex()
@@ -1673,7 +1674,7 @@ impl PreferencesView {
         });
         v_flex().gap_5()
             .child(h_flex().gap_3().p_4().rounded_lg().bg(cx.theme().muted).items_center()
-                .child(div().size(px(40.)).flex_shrink_0().rounded_lg().bg(cx.theme().link.opacity(0.1)).text_color(cx.theme().link)
+                .child(div().size(px(40.)).flex_shrink_0().rounded_lg().bg(cx.theme().muted).text_color(cx.theme().primary)
                     .flex().items_center().justify_center().child(settings::icon(&c.icon).size_6()))
                 .child(v_flex().flex_1().min_w_0().gap_1().child(div().font_weight(FontWeight::MEDIUM)
                     .child(crate::copyable_text::copyable_text("cluster-display-name", name)))
@@ -1690,7 +1691,7 @@ impl PreferencesView {
                     .child(settings::icon(&c.icon)).child(hint("Custom SVG icon", cx)))))
             .child(v_flex().gap_1().p_3().rounded_lg().bg(cx.theme().muted)
                 .child(hint("Kubeconfig context", cx))
-                .child(div().font_family(cx.theme().mono_font_family.clone()).text_sm()
+                .child(div().font_family(cx.theme().mono_font_family.clone()).text_size(cx.theme().mono_font_size)
                     .child(crate::copyable_text::copyable_text("cluster-context", c.id.to_string()))))
             .into_any_element()
     }
@@ -1765,9 +1766,10 @@ impl PreferencesView {
             .flex_shrink_0()
             .h_full()
             .min_h_0()
-            .bg(cx.theme().sidebar)
+            .bg(cx.theme().tokens.sidebar)
+            .text_color(cx.theme().sidebar_foreground)
             .border_r_1()
-            .border_color(cx.theme().border)
+            .border_color(cx.theme().sidebar_border)
             .px_3()
             .py_5()
             .gap_5()
@@ -1781,8 +1783,8 @@ impl PreferencesView {
                             .size(px(32.))
                             .flex_shrink_0()
                             .rounded_lg()
-                            .bg(cx.theme().link.opacity(0.1))
-                            .text_color(cx.theme().link)
+                            .bg(cx.theme().tokens.sidebar_accent)
+                            .text_color(cx.theme().sidebar_accent_foreground)
                             .flex()
                             .items_center()
                             .justify_center()
@@ -1801,7 +1803,7 @@ impl PreferencesView {
                             .child(
                                 div()
                                     .text_xs()
-                                    .text_color(cx.theme().muted_foreground)
+                                    .text_color(cx.theme().sidebar_foreground.opacity(0.7))
                                     .truncate()
                                     .child(subtitle),
                             ),
@@ -1814,7 +1816,7 @@ impl PreferencesView {
                         div()
                             .px_2()
                             .text_xs()
-                            .text_color(cx.theme().muted_foreground)
+                            .text_color(cx.theme().sidebar_foreground.opacity(0.7))
                             .child(if cluster {
                                 "THIS CLUSTER"
                             } else {
@@ -1823,12 +1825,15 @@ impl PreferencesView {
                     )
                     .children(sections.into_iter().map(|section| {
                         let selected = self.section == section;
-                        Button::new(section.id())
-                            .ghost()
+                        NavigationButton::new(section.id())
                             .selected(selected)
                             .w_full()
                             .justify_start()
                             .h(px(38.))
+                            .px_2()
+                            .rounded(cx.theme().radius)
+                            .border_1()
+                            .border_color(cx.theme().transparent)
                             .accessibility_label(section.label())
                             .child(
                                 h_flex()
@@ -1842,15 +1847,21 @@ impl PreferencesView {
                             )
                             .text_sm()
                             .bg(if selected {
-                                cx.theme().link.opacity(0.1)
+                                Background::from(cx.theme().tokens.sidebar_accent)
                             } else {
-                                cx.theme().transparent
+                                Background::from(cx.theme().transparent)
                             })
                             .text_color(if selected {
-                                cx.theme().link
+                                cx.theme().sidebar_accent_foreground
                             } else {
-                                cx.theme().foreground
+                                cx.theme().sidebar_foreground
                             })
+                            .hover(|style| {
+                                style
+                                    .bg(cx.theme().tokens.sidebar_accent.opacity(0.8))
+                                    .text_color(cx.theme().sidebar_accent_foreground)
+                            })
+                            .focus_visible(|style| style.border_color(cx.theme().ring))
                             .on_click(cx.listener(move |view, _, window, cx| {
                                 view.select_section(section, window, cx)
                             }))
@@ -1860,7 +1871,7 @@ impl PreferencesView {
                 div()
                     .px_2()
                     .text_xs()
-                    .text_color(cx.theme().muted_foreground)
+                    .text_color(cx.theme().sidebar_foreground.opacity(0.7))
                     .child(if cluster {
                         "Settings stored locally".to_owned()
                     } else {
@@ -1897,6 +1908,7 @@ impl Render for PreferencesView {
         v_flex()
             .size_full()
             .track_focus(&self.focus)
+            .font_family(cx.theme().font_family.clone())
             .bg(cx.theme().background)
             .text_color(cx.theme().foreground)
             .on_action(|_: &crate::app::CloseTab, window, cx| {

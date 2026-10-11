@@ -29,6 +29,12 @@ gpui_kit::assets::icon_assets!(
         CircleCheck,
         CircleX,
         Trash,
+        FolderPlus,
+        Pencil,
+        Lock,
+        Link,
+        FileCode,
+        FileArchive,
     ]
 );
 

@@ -8,25 +8,27 @@ use beacon_kube::{
 use gpui_kit::assets::IconName;
 use gpui_kit::base::TestSupportExt as _;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::input::{Input, InputEvent, InputState, Textarea, TextareaState};
-use gpui_kit::component::menu::{ContextMenuExt as _, PopupMenuItem};
-use gpui_kit::component::resizable::{ResizableState, h_resizable, resizable_panel};
-use gpui_kit::component::select::{SearchableVec, Select, SelectEvent, SelectGroup, SelectState};
-use gpui_kit::component::tooltip::Tooltip;
+use gpui_kit::component::input::{Input, InputEvent, InputState, TextareaState};
+use gpui_kit::component::resizable::ResizableState;
+use gpui_kit::component::select::{SearchableVec, SelectEvent, SelectGroup, SelectState};
 use gpui_kit::component::{
     ActiveTheme as _, Disableable as _, Sizable as _, WindowExt as _, h_flex, v_flex,
 };
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use std::{
+    cell::Cell,
     collections::BTreeSet,
     path::PathBuf,
+    rc::Rc,
     sync::{
         Arc,
         atomic::{AtomicU64, Ordering},
     },
     time::Duration,
 };
+
+mod presentation;
 
 pub(crate) struct FilesRequested {
     pub session: Arc<ClusterSession>,
@@ -43,6 +45,9 @@ pub(crate) struct FilesView {
     path: Entity<InputState>,
     search: Entity<InputState>,
     split: Entity<ResizableState>,
+    width: Rc<Cell<Pixels>>,
+    list_width: Rc<Cell<Pixels>>,
+    details: bool,
     listing: Option<Arc<Listing>>,
     visible: Arc<Vec<usize>>,
     preview: Option<Preview>,
@@ -148,6 +153,9 @@ impl FilesView {
             path,
             search,
             split: cx.new(|_| ResizableState::default()),
+            width: Rc::new(Cell::new(px(900.))),
+            list_width: Rc::new(Cell::new(px(440.))),
+            details: false,
             listing: None,
             visible: Arc::new(Vec::new()),
             preview: None,
@@ -761,233 +769,8 @@ impl FilesView {
                 .unwrap_or_default(),
         );
     }
-    fn render_list(&self, cx: &mut Context<Self>) -> AnyElement {
-        let listing = self.listing.clone();
-        let visible = self.visible.clone();
-        let count = visible.len();
-        let this = cx.entity().downgrade();
-        let selected = self.selected.clone();
-        let focused = self.preview.as_ref().map(|p| p.entry.path.clone());
-        let list = uniform_list("pod-file-list", count, move |range, _, cx| {
-            range
-                .map(|index| {
-                    let entry = &listing.as_ref().unwrap().entries[visible[index]];
-                    let key = entry.path.clone();
-                    let checked = selected.contains(&key);
-                    let open = this.clone();
-                    let pick = this.clone();
-                    let target = entry.clone();
-                    let menu = this.clone();
-                    let menu_entry = entry.clone();
-                    let hover = format!(
-                        "{}\n{} · {} · mode {} · owner {}\nModified {}",
-                        entry.path,
-                        entry.kind,
-                        size(entry.size),
-                        entry.permissions,
-                        entry.owner,
-                        modified(entry.modified)
-                    );
-                    h_flex()
-                        .id(SharedString::from(format!("file-row-{index}")))
-                        .h(px(34.))
-                        .w_full()
-                        .gap_2()
-                        .px_2()
-                        .text_sm()
-                        .cursor_pointer()
-                        .tooltip(move |w, cx| Tooltip::new(hover.clone()).build(w, cx))
-                        .when(focused.as_ref() == Some(&key) || checked, |row| {
-                            row.bg(cx.theme().muted)
-                        })
-                        .hover(|row| row.bg(cx.theme().muted.opacity(0.6)))
-                        .child(
-                            checkbox(SharedString::from(format!("select-file-{index}")))
-                                .checked(checked)
-                                .accessibility_label(format!("Select {}", entry.name()))
-                                .on_click(move |_, _, cx| {
-                                    cx.stop_propagation();
-                                    let _ = pick.update(cx, |view, cx| {
-                                        if !view.selected.insert(key.clone()) {
-                                            view.selected.remove(&key);
-                                        }
-                                        cx.notify();
-                                    });
-                                }),
-                        )
-                        .child(
-                            div().flex_1().min_w_0().overflow_hidden().child(
-                                Button::new(SharedString::from(format!("open-file-{index}")))
-                                    .xsmall()
-                                    .ghost()
-                                    .icon(if entry.directory() {
-                                        IconName::Folder
-                                    } else if entry.link.is_some() {
-                                        IconName::Link
-                                    } else {
-                                        IconName::File
-                                    })
-                                    .label(entry.name().to_owned())
-                                    .tooltip(entry.path.clone())
-                                    .on_click({
-                                        let open = open.clone();
-                                        let target = target.clone();
-                                        move |_, w, cx| {
-                                            cx.stop_propagation();
-                                            let _ = open.update(cx, |v, cx| {
-                                                v.open_entry(target.clone(), w, cx)
-                                            });
-                                        }
-                                    }),
-                            ),
-                        )
-                        .child(div().w(px(75.)).text_xs().child(size(entry.size)))
-                        .child(div().w(px(55.)).text_xs().child(entry.permissions.clone()))
-                        .on_click(move |_, window, cx| {
-                            let _ = open
-                                .update(cx, |view, cx| view.open_entry(target.clone(), window, cx));
-                        })
-                        .context_menu(move |popup, _, cx| {
-                            let open = menu.clone();
-                            let target = menu_entry.clone();
-                            let copy = menu_entry.path.clone();
-                            let download = menu.clone();
-                            let delete = menu.clone();
-                            let for_download = menu_entry.clone();
-                            let for_delete = menu_entry.clone();
-                            let writable = menu.upgrade().is_some_and(|v| {
-                                v.read(cx).listing.as_ref().is_some_and(|l| l.writable)
-                            }) && menu_entry.writable;
-                            popup
-                                .item(PopupMenuItem::new("Open").on_click(move |_, window, cx| {
-                                    let _ = open.update(cx, |v, cx| {
-                                        v.open_entry(target.clone(), window, cx)
-                                    });
-                                }))
-                                .item(PopupMenuItem::new("Download…").on_click(
-                                    move |_, window, cx| {
-                                        let _ = download.update(cx, |v, cx| {
-                                            v.selected =
-                                                BTreeSet::from([for_download.path.clone()]);
-                                            v.download(window, cx);
-                                        });
-                                    },
-                                ))
-                                .item(crate::copyable_text::copy_item("Copy path", copy))
-                                .separator()
-                                .item(PopupMenuItem::new("Delete…").disabled(!writable).on_click(
-                                    move |_, window, cx| {
-                                        let _ = delete.update(cx, |v, cx| {
-                                            if !v.selected.contains(&for_delete.path) {
-                                                v.selected =
-                                                    BTreeSet::from([for_delete.path.clone()]);
-                                            }
-                                            v.delete(window, cx);
-                                        });
-                                    },
-                                ))
-                        })
-                        .into_any_element()
-                })
-                .collect::<Vec<_>>()
-        })
-        .size_full();
-        v_flex()
-            .size_full()
-            .gap_2()
-            .p_2()
-            .child(Input::new(&self.search).id("files-search").xsmall())
-            .child(
-                h_flex()
-                    .w_full()
-                    .px_2()
-                    .text_xs()
-                    .text_color(cx.theme().muted_foreground)
-                    .child(div().flex_1().child("Name"))
-                    .child(div().w(px(75.)).child("Size"))
-                    .child(div().w(px(55.)).child("Mode")),
-            )
-            .child(div().flex_1().min_h_0().child(list))
-            .child(
-                div()
-                    .text_xs()
-                    .text_color(cx.theme().muted_foreground)
-                    .child(format!("{count} items · {} selected", self.selected.len())),
-            )
-            .into_any_element()
-    }
-    fn render_preview(&self, cx: &mut Context<Self>) -> AnyElement {
-        let Some(preview) = &self.preview else {
-            return div()
-                .size_full()
-                .flex()
-                .items_center()
-                .justify_center()
-                .text_color(cx.theme().muted_foreground)
-                .child("Select a file to preview")
-                .into_any_element();
-        };
-        let entry = &preview.entry;
-        let mut body = v_flex().size_full().gap_3().p_3()
-            .child(copyable_text("file-path",entry.path.clone()))
-            .child(h_flex().w_full().gap_2()
-                .child(Button::new("edit-file").xsmall().ghost().label("Edit").disabled(!preview.editable() || self.busy || self.editor.is_some()).on_click(cx.listener(|v,_,w,cx| v.edit(w,cx))))
-                .when(self.editor.is_some(),|bar| bar.child(Button::new("save-file").xsmall().primary().label("Review & save").disabled(self.busy || !self.dirty(cx)).on_click(cx.listener(|v,_,w,cx| v.save(w,cx))))
-                    .child(Button::new("discard-file").xsmall().ghost().label("Discard").disabled(self.busy).on_click(cx.listener(|v,_,_,cx| { v.editor = None; cx.notify(); }))))
-                .child(Button::new("download-preview").xsmall().ghost().label("Download…").disabled(self.busy).on_click(cx.listener(|v,_,w,cx| { v.selected.clear(); v.download(w,cx); }))))
-            .child(copyable_text("file-metadata",format!("{} · {} · mode {} · UID:GID {} · modified {}",entry.kind,size(entry.size),entry.permissions,entry.owner,modified(entry.modified))))
-            .when(!entry.writable,|body| body.child(copyable_text("file-readonly","Read-only mount or file permissions. Editing is disabled.")))
-            .when(preview.truncated,|body| body.child(copyable_text("file-truncated","Preview limited to 256 KiB. Download for the complete file; truncated previews cannot be edited.")));
-        if let Some(link) = &entry.link {
-            let target = if link.starts_with('/') {
-                files::path(link)
-            } else {
-                files::path(&format!(
-                    "{}/{}",
-                    entry.path.rsplit_once('/').map_or("/", |p| p.0),
-                    link
-                ))
-            };
-            body = body
-                .child(copyable_text(
-                    "symlink-target",
-                    format!("Symlink target: {link}"),
-                ))
-                .child(
-                    Button::new("open-link-target")
-                        .small()
-                        .ghost()
-                        .label("Open target")
-                        .disabled(self.busy || target.is_err())
-                        .on_click(cx.listener(move |v, _, w, cx| {
-                            if let Ok(path) = &target {
-                                v.start(Work::Preview(path.clone()), w, cx);
-                            }
-                        })),
-                );
-        }
-        let content = if let Some(editor) = &self.editor {
-            Textarea::new(editor).readonly(self.busy).into_any_element()
-        } else if let Some(text) = &preview.text {
-            div()
-                .font_family("monospace")
-                .whitespace_nowrap()
-                .child(copyable_text("file-content", text.clone()))
-                .into_any_element()
-        } else {
-            copyable_text("file-binary","Binary or special file. Text preview is unavailable; download preserves its original bytes.").into_any_element()
-        };
-        body.child(
-            div()
-                .id("file-preview-scroll")
-                .flex_1()
-                .min_h_0()
-                .overflow_scroll()
-                .child(content),
-        )
-        .into_any_element()
-    }
 }
+
 fn modified(seconds: i64) -> String {
     beacon_columns::Timestamp::from_second(seconds)
         .map(|t| t.to_string())
@@ -1000,233 +783,6 @@ fn size(bytes: u64) -> String {
         format!("{:.1} KiB", bytes as f64 / 1024.)
     } else {
         format!("{bytes} B")
-    }
-}
-impl Render for FilesView {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let writable =
-            self.listing.as_ref().is_some_and(|l| l.writable) && !self.busy && !self.dirty(cx);
-        let targets = self.targets();
-        let may_modify = writable && !targets.is_empty() && targets.iter().all(|e| e.writable);
-        let directory = self
-            .listing
-            .as_ref()
-            .map(|l| l.path.clone())
-            .unwrap_or_else(|| "/".into());
-        let parent = files::path(&format!("{directory}/.."));
-        let breadcrumbs = directory
-            .split('/')
-            .filter(|s| !s.is_empty())
-            .scan(String::new(), |path, part| {
-                path.push('/');
-                path.push_str(part);
-                Some((part.to_string(), path.clone()))
-            })
-            .collect::<Vec<_>>();
-        v_flex()
-            .size_full()
-            .min_size_0()
-            .bg(cx.theme().background)
-            .child(
-                h_flex()
-                    .w_full()
-                    .px_3()
-                    .py_2()
-                    .gap_2()
-                    .text_sm()
-                    .border_b_1()
-                    .border_color(cx.theme().border)
-                    .child(copyable_text(
-                        "files-pod",
-                        format!(
-                            "{} / {}",
-                            self.object.metadata.namespace.as_deref().unwrap_or(""),
-                            self.object.metadata.name.as_deref().unwrap_or("")
-                        ),
-                    ))
-                    .child(div().flex_1())
-                    .child(
-                        div().w(px(240.)).child(
-                            Select::new(&self.picker)
-                                .xsmall()
-                                .search_placeholder("Search running containers")
-                                .title_prefix("Container: ")
-                                .disabled(
-                                    self.containers.is_empty() || self.busy || self.dirty(cx),
-                                ),
-                        ),
-                    ),
-            )
-            .child(
-                h_flex()
-                    .w_full()
-                    .px_3()
-                    .py_2()
-                    .gap_2()
-                    .flex_wrap()
-                    .child(
-                        Button::new("files-up")
-                            .xsmall()
-                            .ghost()
-                            .label("Up")
-                            .disabled(self.busy || self.dirty(cx) || directory == "/")
-                            .on_click(cx.listener(move |v, _, w, cx| {
-                                if let Ok(path) = &parent {
-                                    v.load(path.clone(), w, cx);
-                                }
-                            })),
-                    )
-                    .child(div().flex_1().child(Input::new(&self.path).xsmall()))
-                    .child(
-                        Button::new("files-go")
-                            .xsmall()
-                            .ghost()
-                            .label("Go")
-                            .disabled(self.busy || self.dirty(cx))
-                            .on_click(cx.listener(|v, _, w, cx| {
-                                v.load(v.path.read(cx).value().to_string(), w, cx)
-                            })),
-                    )
-                    .child(
-                        Button::new("files-refresh")
-                            .xsmall()
-                            .ghost()
-                            .label("Refresh")
-                            .disabled(self.busy || self.dirty(cx))
-                            .on_click(cx.listener(|v, _, w, cx| {
-                                let path = v
-                                    .listing
-                                    .as_ref()
-                                    .map_or_else(|| "/".into(), |l| l.path.clone());
-                                v.load(path, w, cx);
-                            })),
-                    )
-                    .child(
-                        Button::new("files-upload")
-                            .xsmall()
-                            .ghost()
-                            .label("Upload…")
-                            .disabled(!writable)
-                            .on_click(cx.listener(|v, _, w, cx| v.upload(w, cx))),
-                    )
-                    .child(
-                        Button::new("files-download")
-                            .xsmall()
-                            .ghost()
-                            .label("Download…")
-                            .disabled(self.busy || targets.is_empty())
-                            .on_click(cx.listener(|v, _, w, cx| v.download(w, cx))),
-                    )
-                    .child(
-                        Button::new("files-mkdir")
-                            .xsmall()
-                            .ghost()
-                            .label("New folder")
-                            .disabled(!writable)
-                            .on_click(cx.listener(|v, _, w, cx| v.mkdir(w, cx))),
-                    )
-                    .child(
-                        Button::new("files-rename")
-                            .xsmall()
-                            .ghost()
-                            .label("Rename")
-                            .disabled(!may_modify || targets.len() != 1)
-                            .on_click(cx.listener(|v, _, w, cx| v.rename(w, cx))),
-                    )
-                    .child(
-                        Button::new("files-delete")
-                            .xsmall()
-                            .ghost()
-                            .label("Delete…")
-                            .disabled(!may_modify)
-                            .on_click(cx.listener(|v, _, w, cx| v.delete(w, cx))),
-                    ),
-            )
-            .child(
-                h_flex()
-                    .w_full()
-                    .px_3()
-                    .pb_2()
-                    .gap_1()
-                    .child(
-                        Button::new("files-root")
-                            .xsmall()
-                            .ghost()
-                            .label("/")
-                            .disabled(self.busy || self.dirty(cx))
-                            .on_click(cx.listener(|v, _, w, cx| v.load("/".into(), w, cx))),
-                    )
-                    .children(
-                        breadcrumbs
-                            .into_iter()
-                            .enumerate()
-                            .map(|(i, (name, path))| {
-                                Button::new(("breadcrumb", i))
-                                    .xsmall()
-                                    .ghost()
-                                    .label(name)
-                                    .disabled(self.busy || self.dirty(cx))
-                                    .on_click(
-                                        cx.listener(move |v, _, w, cx| v.load(path.clone(), w, cx)),
-                                    )
-                            }),
-                    ),
-            )
-            .when(self.busy, |body| {
-                body.child(
-                    h_flex()
-                        .px_3()
-                        .py_1()
-                        .gap_2()
-                        .child(copyable_text(
-                            "file-progress",
-                            if self.transfer {
-                                format!(
-                                    "Transferring · {}",
-                                    size(self.progress.load(Ordering::Relaxed))
-                                )
-                            } else {
-                                "Working…".into()
-                            },
-                        ))
-                        .child(
-                            Button::new("files-cancel")
-                                .xsmall()
-                                .ghost()
-                                .label("Cancel")
-                                .on_click(cx.listener(|v, _, _, cx| v.cancel(cx))),
-                        ),
-                )
-            })
-            .when_some(self.message.clone(), |body, message| {
-                body.child(
-                    div()
-                        .px_3()
-                        .py_1()
-                        .child(copyable_text("files-message", message)),
-                )
-            })
-            .child(
-                div().flex_1().min_size_0().child(
-                    h_resizable("files-split")
-                        .with_state(&self.split)
-                        .child(
-                            resizable_panel()
-                                .size(px(440.))
-                                .size_range(px(220.)..px(10000.))
-                                .child(self.render_list(cx)),
-                        )
-                        .child(
-                            resizable_panel().size_range(px(260.)..px(10000.)).child(
-                                div()
-                                    .size_full()
-                                    .border_l_1()
-                                    .border_color(cx.theme().border)
-                                    .child(self.render_preview(cx)),
-                            ),
-                        ),
-                ),
-            )
     }
 }
 
@@ -1379,9 +935,41 @@ mod integration_tests {
     };
     use gpui_kit::test::TestWindowExt as _;
 
+    struct Pane {
+        view: Entity<FilesView>,
+        width: Pixels,
+    }
+    impl Render for Pane {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            div()
+                .size_full()
+                .child(div().w(self.width).h_full().child(self.view.clone()))
+        }
+    }
+
+    fn draw(cx: &mut TestAppContext, window: AnyWindowHandle) {
+        for _ in 0..3 {
+            cx.run_until_parked();
+            cx.update_window(window, |_, w, cx| w.render_frame(cx))
+                .unwrap();
+        }
+    }
+
     fn setup(
         cx: &mut TestAppContext,
     ) -> (FileFixture, Fixture, AnyWindowHandle, Entity<FilesView>) {
+        let (files, fixture, window, view, _) = setup_pane(cx);
+        (files, fixture, window, view)
+    }
+    fn setup_pane(
+        cx: &mut TestAppContext,
+    ) -> (
+        FileFixture,
+        Fixture,
+        AnyWindowHandle,
+        Entity<FilesView>,
+        Entity<Pane>,
+    ) {
         let files = FileFixture::new();
         std::fs::write(files.root.join("a.txt"), "before\n").unwrap();
         std::fs::write(files.root.join("b.bin"), [0, 255, 128, 1]).unwrap();
@@ -1400,16 +988,31 @@ mod integration_tests {
             (fixture, session)
         });
         let object = Arc::new(serde_json::from_value(pod).unwrap());
-        let (window, view) = cx.update(|cx| {
-            gpui_kit::open_window(WindowOptions::default(), cx, |w, cx| {
-                w.set_view_retention(false);
-                cx.new(|cx| FilesView::new(session, object, w, cx))
-            })
+        let (window, pane) = cx.update(|cx| {
+            gpui_kit::open_window(
+                WindowOptions {
+                    window_bounds: Some(WindowBounds::Windowed(Bounds {
+                        origin: Default::default(),
+                        size: gpui_kit::size(px(1500.), px(800.)),
+                    })),
+                    ..Default::default()
+                },
+                cx,
+                |w, cx| {
+                    w.set_view_retention(false);
+                    let view = cx.new(|cx| FilesView::new(session, object, w, cx));
+                    cx.new(|_| Pane {
+                        view,
+                        width: px(1100.),
+                    })
+                },
+            )
             .unwrap()
         });
+        let view = pane.read_with(cx, |pane, _| pane.view.clone());
         support::settle(cx, |cx| view.read_with(cx, |v, _| !v.busy));
         view.read_with(cx, |v, _| assert!(v.listing.is_some(), "{:?}", v.message));
-        (files, fixture, window, view)
+        (files, fixture, window, view, pane)
     }
     fn open_first(cx: &mut TestAppContext, window: AnyWindowHandle, view: &Entity<FilesView>) {
         cx.update_window(window, |_, w, cx| {
@@ -1419,6 +1022,162 @@ mod integration_tests {
         .unwrap();
         support::settle(cx, |cx| view.read_with(cx, |v, _| !v.busy));
         view.read_with(cx, |v, _| assert!(v.preview.is_some(), "{:?}", v.message));
+    }
+
+    #[::core::prelude::v1::test]
+    fn file_manager_fits_split_panes_and_preview_can_restore_the_full_list() {
+        let cx = &mut support::context();
+        let (files, _fixture, window, view, pane) = setup_pane(cx);
+        for width in [1200., 900., 700., 620., 520., 519., 420., 280.] {
+            pane.update(cx, |pane, cx| {
+                pane.width = px(width);
+                cx.notify();
+            });
+            draw(cx, window);
+            cx.update_window(window, |_, w, _| {
+                let root = w.find("pod-files-view").bounds();
+                let bar = w.find("files-toolbar").bounds();
+                assert!(bar.size.height <= px(48.));
+                assert_eq!(
+                    w.find("files-list-pane").bounds().size.width,
+                    root.size.width
+                );
+                let path = w.find("files-path-input").bounds();
+                assert!(path.size.width >= px(80.));
+                for id in [
+                    "files-up",
+                    "files-go",
+                    "files-refresh",
+                    "files-upload",
+                    "files-download",
+                    "files-mkdir",
+                    "files-rename",
+                    "files-delete",
+                    "files-more",
+                ] {
+                    if let Some(control) = w.try_find(id) {
+                        assert!(
+                            bar.contains(&control.bounds().center()),
+                            "{id} overflowed at {width}px"
+                        );
+                        assert!(
+                            control.bounds().right() <= bar.right(),
+                            "{id} overflowed at {width}px"
+                        );
+                    }
+                }
+            })
+            .unwrap();
+        }
+        // Narrow panes retain all operations in a keyboard-accessible menu.
+        cx.update_window(window, |_, w, cx| w.click("files-more", cx))
+            .unwrap();
+        support::render_until(cx, window, |w| {
+            gpui_kit::base::test_support::snapshots(w)
+                .iter()
+                .any(|e| e.role() == Some(Role::MenuItem) && e.label() == Some("New folder"))
+        });
+        cx.update_window(window, |_, w, cx| {
+            let item = gpui_kit::base::test_support::snapshots(w)
+                .into_iter()
+                .find(|e| e.role() == Some(Role::MenuItem) && e.label() == Some("New folder"))
+                .unwrap();
+            w.click(item.path().last().unwrap().clone(), cx);
+        })
+        .unwrap();
+        support::render_until(cx, window, |w| {
+            w.try_find("file-prompt-confirm")
+                .is_some_and(|b| b.visible())
+        });
+        cx.update_window(window, |_, w, cx| w.click("file-prompt-cancel", cx))
+            .unwrap();
+        assert_eq!(files.root.read_dir().unwrap().count(), 2);
+        pane.update(cx, |pane, cx| {
+            pane.width = px(1100.);
+            cx.notify();
+        });
+        draw(cx, window);
+        open_first(cx, window, &view);
+        draw(cx, window);
+        cx.update_window(window, |_, w, cx| {
+            let list = w.find("files-list-pane").bounds();
+            let preview = w.find("files-preview-pane").bounds();
+            assert!(list.right() <= preview.origin.x);
+            assert!(list.size.width >= px(300.) && preview.size.width >= px(300.));
+            assert!(w.try_find("file-metadata").is_none());
+            w.click("files-details-toggle", cx);
+            w.render_frame(cx);
+            assert!(w.find("file-metadata").visible());
+        })
+        .unwrap();
+        pane.update(cx, |pane, cx| {
+            pane.width = px(420.);
+            cx.notify();
+        });
+        draw(cx, window);
+        cx.update_window(window, |_, w, cx| {
+            assert!(w.try_find("files-list-pane").is_none());
+            assert_eq!(w.find("files-preview-pane").bounds().size.width, px(420.));
+            w.click("files-close-preview", cx);
+        })
+        .unwrap();
+        draw(cx, window);
+        cx.update_window(window, |_, w, _| {
+            assert!(w.try_find("files-preview-pane").is_none());
+            assert_eq!(w.find("files-list-pane").bounds().size.width, px(420.));
+        })
+        .unwrap();
+    }
+
+    #[::core::prelude::v1::test]
+    fn file_search_selects_only_matches_and_shows_an_empty_state() {
+        let cx = &mut support::context();
+        let (files, _fixture, window, view) = setup(cx);
+        draw(cx, window);
+        cx.update_window(window, |_, w, cx| {
+            view.read(cx).search.read(cx).focus_handle(cx).focus(w, cx);
+            w.input("a.txt", cx);
+        })
+        .unwrap();
+        draw(cx, window);
+        cx.update_window(window, |_, w, cx| w.click("files-select-all", cx))
+            .unwrap();
+        view.read_with(cx, |v, _| {
+            assert_eq!(
+                v.selected,
+                BTreeSet::from([files
+                    .root
+                    .canonicalize()
+                    .unwrap()
+                    .join("a.txt")
+                    .to_string_lossy()
+                    .into_owned(),])
+            );
+            assert!(v.preview.is_none());
+        });
+        cx.update_window(window, |_, w, cx| {
+            w.click("files-clear-selection", cx);
+            view.read(cx).search.read(cx).focus_handle(cx).focus(w, cx);
+            w.press(
+                if cfg!(target_os = "macos") {
+                    "cmd-a"
+                } else {
+                    "ctrl-a"
+                },
+                cx,
+            );
+            w.input("missing-file", cx);
+        })
+        .unwrap();
+        draw(cx, window);
+        cx.update_window(window, |_, w, _| {
+            assert!(w.find("files-empty-state").visible())
+        })
+        .unwrap();
+        view.read_with(cx, |v, _| {
+            assert!(v.visible.is_empty());
+            assert!(v.selected.is_empty());
+        });
     }
     #[::core::prelude::v1::test]
     fn actual_file_editor_requires_diff_and_preserves_cancelled_drafts() {
@@ -1463,6 +1222,15 @@ mod integration_tests {
             .unwrap();
         cx.run_until_parked();
         view.read_with(cx, |v, cx| assert!(v.dirty(cx)));
+        cx.update_window(window, |_, w, cx| {
+            w.render_frame(cx);
+            w.click("files-close-preview", cx);
+        })
+        .unwrap();
+        view.read_with(cx, |v, cx| {
+            assert!(v.preview.is_some());
+            assert!(v.dirty(cx));
+        });
         cx.update_window(window, |_, w, cx| {
             w.render_frame(cx);
             w.click("save-file", cx);
