@@ -24,6 +24,7 @@ use beacon_kube::{
 };
 use gpui_kit::base::{Tab as TabItem, Tabs};
 use gpui_kit::component::button::{Button, ButtonVariants as _};
+use gpui_kit::component::dialog::DialogButtonProps;
 use gpui_kit::component::input::Input;
 use gpui_kit::component::menu::{ContextMenuExt as _, DropdownMenu as _, PopupMenuItem};
 use gpui_kit::component::popover::Popover;
@@ -90,7 +91,7 @@ pub fn init(log_directory: PathBuf, cx: &mut App) {
     crate::shortcuts::init(cx);
     cx.on_action(|_: &OpenShortcuts, cx| crate::shortcuts::open(cx));
     cx.on_action(|_: &OpenAppLogs, cx| app_logs::open(cx));
-    cx.on_action(|_: &Quit, cx| cx.quit());
+    cx.on_action(|_: &Quit, cx| cx.defer(request_app_quit));
 
     #[cfg(target_os = "macos")]
     cx.set_menus([
@@ -144,6 +145,23 @@ pub fn init(log_directory: PathBuf, cx: &mut App) {
             Some("BeaconWorkspace && !Sheet && !PopupMenu"),
         ),
     ]);
+}
+
+/// Menu and global shortcut requests also confirm in the main workspace,
+/// even when a separate settings or logs window currently holds focus.
+fn request_app_quit(cx: &mut App) {
+    let target = cx
+        .global::<WorkspaceWindows>()
+        .windows
+        .values()
+        .find(|entry| entry.main)
+        .map(|entry| (entry.handle, entry.view.clone()));
+    if let Some((handle, view)) = target {
+        let _ = handle.update(cx, |_, window, cx| {
+            window.activate_window();
+            let _ = view.update(cx, |view, cx| view.request_quit(window, cx));
+        });
+    }
 }
 
 pub(crate) struct UpdateBlockers {
@@ -674,6 +692,7 @@ impl BeaconApp {
             // Resource dialogs can own streams and terminals outside a tab.
             // Drop them when their workspace connection is removed.
             window.close_all_dialogs(cx);
+            self.quit_prompt_open = false;
         }
         for index in indices {
             if let Some(session) = &session {
@@ -1391,27 +1410,37 @@ impl BeaconApp {
     /// Keep the window and its sessions alive until an explicit confirmation.
     /// Repeated close requests share the same outstanding prompt.
     fn request_quit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.quit_prompt_open {
+        if self.quit_prompt_open && window.has_active_dialog(cx) {
             return;
         }
         self.quit_prompt_open = true;
-        let answer = window.prompt(
-            PromptLevel::Warning,
-            "Quit Beacon?",
-            Some("All Beacon windows will close. Active cluster connections, shells and port forwards will stop."),
-            &[PromptButton::cancel("Cancel"), PromptButton::ok("Quit")],
-            cx,
-        );
-        cx.spawn_in(window, async move |view, cx| {
-            let confirmed = matches!(answer.await, Ok(1));
-            let _ = view.update_in(cx, |view, _, cx| {
-                view.quit_prompt_open = false;
-                if confirmed {
-                    cx.quit();
-                }
-            });
-        })
-        .detach();
+        let view = cx.weak_entity();
+        window.open_alert_dialog(cx, move |dialog, _, _| {
+            let closed = view.clone();
+            dialog
+                .title("Quit Beacon?")
+                .width(px(440.))
+                .button_props(
+                    DialogButtonProps::default()
+                        .cancel_text("Cancel")
+                        .show_cancel(true)
+                        .ok_text("Quit"),
+                )
+                .on_ok(|_, _, cx| {
+                    cx.defer(|cx| cx.quit());
+                    true
+                })
+                .on_close(move |_, _, cx| {
+                    let _ = closed.update(cx, |view, cx| {
+                        view.quit_prompt_open = false;
+                        cx.notify();
+                    });
+                })
+                .child(
+                    div().id("quit-confirmation").test_support().text_sm().child("All Beacon windows will close. Active cluster connections, shells and port forwards will stop. Unsaved edits will be discarded."),
+                )
+        });
+        cx.notify();
     }
 
     /// Another tab on the cluster in front, so it can be narrowed to something
@@ -2758,6 +2787,124 @@ mod rendering_tests {
     use super::*;
     use crate::feature_test_support as support;
     use gpui_kit::test::TestWindowExt as _;
+
+    #[::core::prelude::v1::test]
+    fn closing_the_empty_main_window_requires_confirmation_and_cancel_preserves_it() {
+        let cx = &mut support::context();
+        let directory = tempfile::tempdir().unwrap();
+        support::workspace(cx, directory.path());
+        let (window, app) = cx.update(|cx| {
+            gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
+                window.set_view_retention(false);
+                cx.new(|cx| {
+                    let mut app = BeaconApp::new(window, cx);
+                    app.contexts = Ok(Contexts::default());
+                    app
+                })
+            })
+            .unwrap()
+        });
+        let shortcut = if cfg!(target_os = "macos") {
+            "cmd-w"
+        } else {
+            "ctrl-w"
+        };
+        cx.update_window(window, |_, window, cx| {
+            window.render_frame(cx);
+            window.press(shortcut, cx);
+            window.render_frame(cx);
+            assert!(window.has_active_dialog(cx));
+            assert!(window.find("quit-confirmation").visible());
+        })
+        .unwrap();
+        assert!(app.read_with(cx, |app, _| app.quit_prompt_open));
+        let mut native = VisualTestContext::from_window(window, cx);
+        assert!(!native.simulate_close());
+        cx.update_window(window, |_, window, cx| {
+            window.render_frame(cx);
+            assert_eq!(window.find_all("quit-confirmation").len(), 1);
+            window.press("escape", cx);
+            window.render_frame(cx);
+            assert!(!window.has_active_dialog(cx));
+        })
+        .unwrap();
+        assert!(!app.read_with(cx, |app, _| app.quit_prompt_open));
+        assert!(!native.simulate_close());
+        cx.update_window(window, |_, window, cx| {
+            window.render_frame(cx);
+            assert!(window.has_active_dialog(cx));
+            window.click("cancel", cx);
+            window.render_frame(cx);
+            assert!(!window.has_active_dialog(cx));
+        })
+        .unwrap();
+        assert!(!app.read_with(cx, |app, _| app.quit_prompt_open));
+        assert!(cx.windows().contains(&window));
+    }
+
+    #[::core::prelude::v1::test]
+    fn global_quit_from_another_window_keeps_tabs_and_sessions_until_confirmed() {
+        let cx = &mut support::context();
+        let directory = tempfile::tempdir().unwrap();
+        support::workspace(cx, directory.path());
+        let (_fixture, session) = support::fixture(cx, "quit-fixture", vec![]);
+        let (window, app) = cx.update(|cx| {
+            gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
+                window.set_view_retention(false);
+                cx.new(|cx| {
+                    let mut app = BeaconApp::new(window, cx);
+                    app.contexts = Ok(Contexts::default());
+                    app.connections.update(cx, |state, _| {
+                        state.sessions.insert(session.id().clone(), session.clone());
+                    });
+                    app.go_to_kind(
+                        session.id().clone(),
+                        Arc::new(support::kind("", "Pod", "pods")),
+                        BTreeSet::from(["default".to_owned()]),
+                        window,
+                        cx,
+                    );
+                    app
+                })
+            })
+            .unwrap()
+        });
+        let original = app.read_with(cx, |app, _| app.view(0).unwrap().entity_id());
+        let auxiliary = support::window(cx);
+        cx.update_window(auxiliary, |_, window, cx| window.render_frame(cx))
+            .unwrap();
+        cx.dispatch_action(auxiliary, Quit);
+        cx.run_until_parked();
+        cx.update_window(window, |_, window, cx| {
+            window.render_frame(cx);
+            assert!(window.has_active_dialog(cx));
+            assert!(window.find("quit-confirmation").visible());
+            window.click("cancel", cx);
+            window.render_frame(cx);
+        })
+        .unwrap();
+        app.read_with(cx, |app, cx| {
+            assert_eq!(app.tabs.len(), 1);
+            assert_eq!(app.view(0).unwrap().entity_id(), original);
+            assert!(app.connections.read(cx).sessions.contains_key(session.id()));
+            assert!(!app.quit_prompt_open);
+        });
+        cx.update_window(window, |_, window, cx| {
+            app.update(cx, |app, cx| app.focus.focus(window, cx));
+            window.render_frame(cx);
+            window.press(
+                if cfg!(target_os = "macos") {
+                    "cmd-w"
+                } else {
+                    "ctrl-w"
+                },
+                cx,
+            );
+        })
+        .unwrap();
+        assert!(app.read_with(cx, |app, _| app.tabs.is_empty() && !app.quit_prompt_open));
+        assert!(cx.windows().contains(&window));
+    }
 
     #[::core::prelude::v1::test]
     fn trailing_tab_buttons_are_equal_squares_on_the_same_baseline() {

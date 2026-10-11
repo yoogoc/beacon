@@ -10,6 +10,7 @@
 
 use std::{collections::BTreeSet, sync::Arc, time::Duration};
 
+use crate::selection::checkbox;
 use beacon_columns::ColumnSet;
 use beacon_kube::{
     Applied, ClusterSession, DeleteTarget, Delta, Forward, Health, Kind, ObjectRef, Operation,
@@ -17,7 +18,6 @@ use beacon_kube::{
 };
 use gpui_kit::component::WindowExt as _;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::checkbox::Checkbox;
 use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::component::menu::PopupMenuItem;
 use gpui_kit::component::popover::Popover;
@@ -2016,6 +2016,7 @@ impl ClusterView {
         let opening = view.clone();
 
         Popover::new("namespace-picker")
+            .p_1p5()
             .open(self.namespace_menu_open)
             .track_focus(&input.read(cx).focus_handle(cx))
             .on_open_change(move |open, window, cx| {
@@ -2060,8 +2061,9 @@ impl ClusterView {
 
                     let box_view = toggling.clone();
                     let toggled = name.clone();
-                    let tick = Checkbox::new(SharedString::from(format!("ns-tick-{name}")))
+                    let tick = checkbox(SharedString::from(format!("ns-tick-{name}")))
                         .checked(ticked)
+                        .accessibility_label(format!("Include namespace {name}"))
                         .tooltip("Add or remove this namespace")
                         .on_click(move |_, window, cx| {
                             let toggled = toggled.to_string();
@@ -2074,7 +2076,14 @@ impl ClusterView {
                     let only = name.clone();
                     let label = div()
                         .id(SharedString::from(format!("ns-only-{name}")))
+                        .role(Role::Button)
+                        .aria_label(format!("Only namespace {name}"))
+                        .test_support()
                         .flex_1()
+                        .min_w_0()
+                        .h_full()
+                        .flex()
+                        .items_center()
                         .truncate()
                         .cursor_pointer()
                         .child(name.clone())
@@ -2088,24 +2097,25 @@ impl ClusterView {
                         });
 
                     h_flex()
+                        .id(SharedString::from(format!("namespace-option-{name}")))
+                        .test_support()
                         .w_full()
-                        .gap_2()
+                        .h(toolbar::picker_row_height(cx))
+                        .flex_shrink_0()
+                        .gap_1()
+                        .px_1()
+                        .rounded(px(4.))
+                        .text_size(cx.theme().font_size * 0.8125)
+                        .line_height(relative(1.))
+                        .when(ticked, |row| row.bg(cx.theme().muted.opacity(0.65)))
+                        .hover(|row| row.bg(cx.theme().muted))
                         .items_center()
                         .child(tick)
                         .child(label)
                 });
 
                 let all_view = toggling.clone();
-                let all = div()
-                    .id("ns-all")
-                    .w_full()
-                    .cursor_pointer()
-                    .font_weight(if everything {
-                        FontWeight::MEDIUM
-                    } else {
-                        FontWeight::NORMAL
-                    })
-                    .child(ALL_NAMESPACES)
+                let all = toolbar::picker_choice("ns-all", ALL_NAMESPACES, everything, cx)
                     .on_click(move |_, window, cx| {
                         let _ = all_view.update(cx, |view, cx| {
                             view.set_namespace(None, window, cx);
@@ -2115,36 +2125,25 @@ impl ClusterView {
                     });
 
                 v_flex()
-                    .w(px(260.))
+                    .w(px(244.))
                     // Bounded *and* allowed to shrink. A flex child's automatic
                     // minimum size is its content, which beats `max_h` -- so
                     // without `min_h_0` a long list ignores the cap, grows past
                     // the menu and is simply clipped, with no way to scroll to
                     // the rest of it.
                     .min_h_0()
-                    .max_h(px(420.))
-                    .gap_1()
-                    .child(
-                        Input::new(&input)
-                            .id("namespace-search")
-                            .small()
-                            .cleanable(true)
-                            .prefix(Icon::new(IconName::Search).small()),
-                    )
+                    .max_h(px(360.))
+                    .gap_0p5()
+                    .text_color(cx.theme().foreground)
+                    .child(toolbar::picker_search("namespace-search", &input, cx))
                     .child(all)
-                    .child(
-                        div()
-                            .text_xs()
-                            .text_color(muted)
-                            .child("Tick to add, click a name for just that one"),
-                    )
                     .child(
                         div()
                             .id("namespace-list")
                             .min_h_0()
                             .flex_1()
                             .overflow_y_scroll()
-                            .child(v_flex().gap_1p5().children(rows)),
+                            .child(v_flex().gap_0p5().children(rows)),
                     )
                     .when(names.is_empty(), |this| {
                         this.child(
@@ -2155,6 +2154,18 @@ impl ClusterView {
                                 .child("No matching namespaces"),
                         )
                     })
+                    .child(
+                        div()
+                            .mt_1()
+                            .px_2()
+                            .pt_2()
+                            .pb_1()
+                            .border_t_1()
+                            .border_color(cx.theme().border)
+                            .text_size(cx.theme().font_size * 0.6875)
+                            .text_color(muted)
+                            .child("Tick for multiple · Click a name for one"),
+                    )
             })
     }
 
@@ -2276,7 +2287,8 @@ impl ClusterView {
                     let key = key.clone();
                     let value = value.clone();
                     let label = format!("{key}={value}");
-                    Checkbox::new(SharedString::from(format!("label-choice-{label}")))
+                    checkbox(SharedString::from(format!("label-choice-{label}")))
+                        .w_full().h(toolbar::picker_row_height(cx)).px_2()
                         .checked(selector.has_equality(&key, &value))
                         .label(label.clone())
                         .accessibility_label(label)
@@ -2301,15 +2313,14 @@ impl ClusterView {
                         .child("Use =, ==, !=, in, notin, key or !key. Commas require all conditions. Press Enter to apply."))
                     .children(error.clone().map(|error| div().text_xs().text_color(cx.theme().tone(Tone::Critical))
                         .child(crate::copyable_text::copyable_text("label-filter-error", error))))
-                    .child(Input::new(&search_input).id("label-options-search").small().cleanable(true)
-                        .prefix(Icon::new(IconName::Search).small()))
+                    .child(toolbar::picker_search("label-options-search", &search_input, cx))
                     .child(div().text_xs().text_color(cx.theme().muted_foreground)
                         .child(if values.is_empty() { "No labels in this scope. You can still enter a selector.".to_string() }
                             else if matching.is_empty() { "No matching labels.".to_string() }
                             else if matching.len() > 200 { format!("Showing 200 of {} matching labels. Refine your search to find more.", matching.len()) }
                             else { "Select labels below to apply them together.".to_string() }))
                     .child(div().id("label-filter-values").min_h_0().flex_1().overflow_y_scroll()
-                        .child(v_flex().gap_1p5().children(rows)))
+                        .child(v_flex().gap_0p5().children(rows)))
             })
     }
 
@@ -2336,6 +2347,7 @@ impl ClusterView {
         let choosing = opening.clone();
 
         Popover::new(SharedString::from(format!("filter-{field:?}")))
+            .p_1p5()
             .open(self.filter_menu_open == Some(field))
             .track_focus(&input.read(cx).focus_handle(cx))
             .on_open_change(move |open, window, cx| {
@@ -2385,58 +2397,48 @@ impl ClusterView {
                         let name = value.as_deref().unwrap_or("All");
                         let is_selected = selected == value;
                         let view = choosing.clone();
-                        div()
-                            .id(SharedString::from(format!("filter-{field:?}-{name}")))
-                            .role(Role::Button)
-                            .aria_label(name.to_string())
-                            .test_support()
-                            .w_full()
-                            .px_2()
-                            .py_1()
-                            .truncate()
-                            .cursor_pointer()
-                            .font_weight(if is_selected {
-                                FontWeight::MEDIUM
-                            } else {
-                                FontWeight::NORMAL
-                            })
-                            .child(name.to_string())
-                            .on_click(move |_, _, cx| {
-                                let value = value.clone();
-                                let _ = view.update(cx, |view, cx| {
-                                    view.table.update(cx, |state, cx| {
-                                        if state.delegate_mut().set_field_filter(field, value) {
-                                            state.scroll_to_row(0, cx);
-                                            cx.notify();
-                                        }
-                                    });
-                                    view.filter_menu_open = None;
-                                    cx.notify();
+                        toolbar::picker_choice(
+                            SharedString::from(format!("filter-{field:?}-{name}")),
+                            name.to_string(),
+                            is_selected,
+                            cx,
+                        )
+                        .on_click(move |_, _, cx| {
+                            let value = value.clone();
+                            let _ = view.update(cx, |view, cx| {
+                                view.table.update(cx, |state, cx| {
+                                    if state.delegate_mut().set_field_filter(field, value) {
+                                        state.scroll_to_row(0, cx);
+                                        cx.notify();
+                                    }
                                 });
-                            })
+                                view.filter_menu_open = None;
+                                cx.notify();
+                            });
+                        })
                     });
 
                 v_flex()
-                    .w(px(300.))
+                    .w(px(240.))
                     .min_h_0()
                     .max_h(px(360.))
                     .gap_1()
                     .text_sm()
                     .text_color(cx.theme().foreground)
-                    .child(
-                        Input::new(&input)
-                            .id(SharedString::from(format!("filter-search-{field:?}")))
-                            .small()
-                            .cleanable(true)
-                            .prefix(Icon::new(IconName::Search).small()),
-                    )
+                    .child(toolbar::picker_search(
+                        SharedString::from(format!("filter-search-{field:?}")),
+                        &input,
+                        cx,
+                    ))
                     .child(
                         div()
                             .id(SharedString::from(format!("filter-list-{field:?}")))
+                            .role(Role::ListBox)
+                            .aria_label(format!("{} options", field.label()))
                             .min_h_0()
                             .flex_1()
                             .overflow_y_scroll()
-                            .child(v_flex().children(choices)),
+                            .child(v_flex().gap_0p5().children(choices)),
                     )
                     .when(matching.is_empty(), |this| {
                         this.child(
@@ -2485,17 +2487,12 @@ impl Render for ClusterView {
         // `TableState` renders itself; it is the virtualised table, not a
         // delegate that something else draws.
         let table = div()
+            .id("resource-list-pane")
+            .test_support()
             .relative()
             .size_full()
             .overflow_hidden()
-            .child(
-                div()
-                    .size_full()
-                    .when(self.mode == Mode::Objects && self.kind.is_some(), |table| {
-                        table.pb(px(64.))
-                    })
-                    .child(self.table.clone()),
-            )
+            .child(self.table.clone())
             .children(self.render_create_button(cx))
             .into_any_element();
 

@@ -189,7 +189,7 @@ impl Render for Shortcuts {
 
 fn describe(name: &str, scope: &str) -> (String, String) {
     let description = match name {
-        "Quit" => "Quit Beacon and close its windows.",
+        "Quit" => "Ask for confirmation before quitting Beacon and closing its windows.",
         "TogglePalette" => {
             "Find resources, switch namespaces or clusters, and run commands using @, #, ctx and >."
         }

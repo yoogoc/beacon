@@ -1,4 +1,5 @@
 //! A standalone, movable workspace tab for a pinned Pod/container filesystem.
+use crate::selection::checkbox;
 use crate::{bridge::Bridge, copyable_text::copyable_text, yaml_review};
 use beacon_kube::{
     ClusterSession, DynamicObject,
@@ -7,7 +8,6 @@ use beacon_kube::{
 use gpui_kit::assets::IconName;
 use gpui_kit::base::TestSupportExt as _;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::checkbox::Checkbox;
 use gpui_kit::component::input::{Input, InputEvent, InputState, Textarea, TextareaState};
 use gpui_kit::component::menu::{ContextMenuExt as _, PopupMenuItem};
 use gpui_kit::component::resizable::{ResizableState, h_resizable, resizable_panel};
@@ -802,7 +802,7 @@ impl FilesView {
                         })
                         .hover(|row| row.bg(cx.theme().muted.opacity(0.6)))
                         .child(
-                            Checkbox::new(SharedString::from(format!("select-file-{index}")))
+                            checkbox(SharedString::from(format!("select-file-{index}")))
                                 .checked(checked)
                                 .accessibility_label(format!("Select {}", entry.name()))
                                 .on_click(move |_, _, cx| {

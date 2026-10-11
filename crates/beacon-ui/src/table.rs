@@ -10,6 +10,7 @@
 //! It happens once per incoming batch -- which the watch already limits to one
 //! per frame -- and never per row.
 
+use crate::selection::checkbox;
 use beacon_columns::{
     Cell, CellValue, ColumnDef, ColumnSet, ColumnSource, ColumnWidth, PathKind, Timestamp, Usage,
 };
@@ -18,13 +19,10 @@ use beacon_kube::{
     DeleteTarget, Delta, DeltaBatch, DynamicObject, Metrics, ObjectRef, ResourceStore, data,
 };
 use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::checkbox::Checkbox;
 use gpui_kit::component::menu::{DropdownMenu as _, PopupMenu, PopupMenuItem};
 use gpui_kit::component::table::{Column, ColumnSort, TableDelegate, TableState};
 use gpui_kit::component::tooltip::Tooltip;
-use gpui_kit::component::{
-    ActiveTheme as _, Disableable as _, IconName, Sizable as _, h_flex, v_flex,
-};
+use gpui_kit::component::{ActiveTheme as _, IconName, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use nucleo_matcher::{
@@ -1172,7 +1170,7 @@ impl TableDelegate for ResourceTable {
             .justify_center()
             .on_click(|_, _, cx| cx.stop_propagation())
             .child(
-                Checkbox::new("select-all-resources")
+                checkbox("select-all-resources")
                     .checked(self.all_visible_selected())
                     .disabled(self.rows.is_empty())
                     .accessibility_label("Select all visible resources")
@@ -1259,7 +1257,7 @@ impl TableDelegate for ResourceTable {
                 .justify_center()
                 .on_click(|_, _, cx| cx.stop_propagation())
                 .child(
-                    Checkbox::new(SharedString::from(format!(
+                    checkbox(SharedString::from(format!(
                         "select-{}-{}",
                         key.namespace.as_deref().unwrap_or(""),
                         key.name

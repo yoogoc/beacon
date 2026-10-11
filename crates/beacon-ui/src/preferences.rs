@@ -1,4 +1,5 @@
 //! Application and cluster settings, presented in independent native windows.
+use crate::selection::radio;
 use crate::settings::{self, Appearance, ClusterIcon, ClusterSettings, CustomTheme};
 use beacon_kube::{
     ClusterId,
@@ -11,7 +12,6 @@ use gpui_kit::component::{
     button::{Button, ButtonVariants as _},
     input::{Input, InputEvent, InputState},
     menu::{DropdownMenu as _, PopupMenuItem},
-    radio::Radio,
     switch::Switch,
 };
 use gpui_kit::prelude::FluentBuilder as _;
@@ -940,7 +940,7 @@ impl PreferencesView {
             .filter(|(choice, _, _)| cluster || *choice != ProxyChoice::Inherit)
             .enumerate()
             .map(|(index, (choice, label, description))| {
-                Radio::new(("proxy-choice", index))
+                radio(("proxy-choice", index))
                     .w_full()
                     .p_3()
                     .border_b_1()
@@ -1707,7 +1707,7 @@ impl PreferencesView {
         ]
         .into_iter()
         .map(|(source, label, description)| {
-            Radio::new(("metrics-source", source as usize))
+            radio(("metrics-source", source as usize))
                 .w_full()
                 .p_3()
                 .border_b_1()

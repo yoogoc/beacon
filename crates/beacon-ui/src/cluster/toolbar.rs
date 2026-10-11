@@ -71,6 +71,74 @@ pub(super) fn field_icon(field: Field) -> Glyph {
     }
 }
 
+/// Search is a compact menu header, separated from the choices by a fine line.
+pub(super) fn picker_search(
+    id: impl Into<ElementId>,
+    input: &Entity<InputState>,
+    cx: &App,
+) -> impl IntoElement {
+    div()
+        .id(("picker-search-frame", input.entity_id()))
+        .px_1()
+        .pb_1()
+        .mb_1()
+        .border_b_1()
+        .border_color(cx.theme().border)
+        .child(
+            Input::new(input)
+                .id(id)
+                .small()
+                .text_size(cx.theme().font_size * 0.8125)
+                .appearance(false)
+                .focus_bordered(false)
+                .cleanable(true)
+                .prefix(Icon::new(IconName::Search).size(px(14.))),
+        )
+}
+
+pub(super) fn picker_choice(
+    id: impl Into<ElementId>,
+    label: impl Into<SharedString>,
+    selected: bool,
+    cx: &App,
+) -> impl IntoElement + StatefulInteractiveElement + 'static {
+    let label = label.into();
+    h_flex()
+        .id(id)
+        .role(Role::ListBoxOption)
+        .aria_label(label.clone())
+        .aria_selected(selected)
+        .test_support()
+        .w_full()
+        .h(picker_row_height(cx))
+        .flex_shrink_0()
+        .px_2()
+        .gap_2()
+        .rounded(px(4.))
+        .cursor_pointer()
+        .text_size(cx.theme().font_size * 0.8125)
+        .line_height(relative(1.))
+        .text_color(cx.theme().foreground)
+        .font_weight(if selected {
+            FontWeight::MEDIUM
+        } else {
+            FontWeight::NORMAL
+        })
+        .when(selected, |row| row.bg(cx.theme().muted.opacity(0.65)))
+        .hover(|row| row.bg(cx.theme().muted))
+        .child(div().flex_1().min_w_0().truncate().child(label))
+        .child(
+            div()
+                .w_4()
+                .flex_shrink_0()
+                .children(selected.then(|| Icon::new(IconName::Check).size(px(12.)))),
+        )
+}
+
+pub(super) fn picker_row_height(cx: &App) -> Pixels {
+    (cx.theme().font_size * 1.75).max(px(28.))
+}
+
 impl ClusterView {
     pub(super) fn render_create_button(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         self.kind
@@ -79,9 +147,12 @@ impl ClusterView {
             .map(|kind| {
                 let allowed = kind.supports("create");
                 div()
+                    .id("create-resource-overlay")
+                    .test_support()
                     .absolute()
-                    .bottom(px(12.))
-                    .right(px(16.))
+                    .bottom(px(20.))
+                    .right(px(24.))
+                    .occlude()
                     .child(
                         Button::new("create-resource")
                             .primary()
@@ -149,6 +220,14 @@ impl ClusterView {
         let content = opening.clone();
         Popover::new("resource-toolbar-more")
             .open(self.toolbar_open)
+            // Nested popups extend beyond this surface. Let the child handle
+            // outside clicks while it is open, so its rows remain clickable.
+            .overlay_closable(
+                !self.namespace_menu_open
+                    && !self.label_menu_open
+                    && self.filter_menu_open.is_none()
+                    && !self.list_settings.is_open(),
+            )
             .on_open_change(move |open, _, cx| {
                 let _ = opening.update(cx, |view, cx| {
                     view.toolbar_open = *open;
@@ -447,6 +526,79 @@ mod integration_tests {
     }
 
     #[::core::prelude::v1::test]
+    fn create_button_floats_over_rows_and_stays_fixed_when_the_table_scrolls() {
+        let cx = &mut support::context();
+        let directory = tempfile::tempdir().unwrap();
+        support::workspace(cx, directory.path());
+        let (_fixture, session) = support::fixture(
+            cx,
+            "floating-create",
+            (0..80).map(|index| json!({"apiVersion":"v1","kind":"Secret","metadata":{"name":format!("demo-{index:02}"),"namespace":"default","uid":index.to_string(),"resourceVersion":"1"},"type":"Opaque"})).collect(),
+        );
+        let mut kind = support::kind("", "Secret", "secrets");
+        kind.verbs.push("create".into());
+        let (window, view) = cx.update(|cx| {
+            gpui_kit::open_window(
+                WindowOptions {
+                    window_bounds: Some(WindowBounds::Windowed(Bounds {
+                        origin: Default::default(),
+                        size: size(px(1200.), px(500.)),
+                    })),
+                    ..Default::default()
+                },
+                cx,
+                |window, cx| {
+                    window.set_view_retention(false);
+                    cx.new(|cx| {
+                        ClusterView::new(
+                            session,
+                            Some("default".into()),
+                            Some(Arc::new(kind)),
+                            None,
+                            false,
+                            window,
+                            cx,
+                        )
+                    })
+                },
+            )
+            .unwrap()
+        });
+        support::settle(cx, |cx| {
+            view.read_with(cx, |view, cx| view.counts(cx).0 == 80)
+        });
+        draw(cx, window);
+        let before = cx
+            .update_window(window, |_, window, _| {
+                let button = window.find("create-resource").bounds();
+                let pane = window.find("resource-list-pane").bounds();
+                assert_eq!(pane.bottom() - button.bottom(), px(20.));
+                assert_eq!(pane.right() - button.right(), px(24.));
+                assert!(
+                    gpui_kit::base::test_support::snapshots(window)
+                        .into_iter()
+                        .any(|row| row.role() == Some(Role::Row)
+                            && row.bounds().contains(&button.center())),
+                    "FAB reserved blank space below the table instead of overlaying a row"
+                );
+                button
+            })
+            .unwrap();
+        view.update(cx, |view, cx| {
+            view.table
+                .update(cx, |table, cx| table.scroll_to_row(45, cx))
+        });
+        draw(cx, window);
+        cx.update_window(window, |_, window, cx| {
+            assert_eq!(window.find("create-resource").bounds(), before);
+            window.click("create-resource", cx);
+        })
+        .unwrap();
+        assert!(view.read_with(cx, |view, _| view.creation.is_some()
+            && view.detail.is_none()));
+    }
+
+    #[::core::prelude::v1::test]
     fn toolbar_stays_in_one_row_within_resized_panes_and_create_opens_the_same_dialog() {
         let cx = &mut support::context();
         let directory = tempfile::tempdir().unwrap();
@@ -702,6 +854,16 @@ mod integration_tests {
             window.click("resource-toolbar-more-trigger", cx);
             window.render_frame(cx);
             window.click("filter-trigger-SecretType", cx);
+            window.render_frame(cx);
+            let all = window.find("filter-SecretType-All");
+            assert_eq!(all.role(), Some(Role::ListBoxOption));
+            assert_eq!(all.selected(), Some(true));
+            assert_eq!(
+                window
+                    .find("filter-SecretType-kubernetes.io/tls")
+                    .selected(),
+                Some(false)
+            );
         })
         .unwrap();
         assert!(view.read_with(cx, |view, _| view.toolbar_open
@@ -729,6 +891,23 @@ mod integration_tests {
         assert_eq!(view.read_with(cx, |view, cx| view.counts(cx)), (1, 2));
         draw(cx, window);
         cx.update_window(window, |_, window, cx| {
+            window.click("filter-trigger-SecretType", cx);
+            window.render_frame(cx);
+            assert_eq!(
+                window
+                    .find("filter-SecretType-kubernetes.io/tls")
+                    .selected(),
+                Some(true)
+            );
+            assert_eq!(window.find("filter-SecretType-All").selected(), Some(false));
+            window.click("filter-SecretType-kubernetes.io/tls", cx);
+        })
+        .unwrap();
+        assert_eq!(
+            view.read_with(cx, |view, _| (view.toolbar_open, view.filter_menu_open)),
+            (true, None)
+        );
+        cx.update_window(window, |_, window, cx| {
             window.click("resource-columns-trigger", cx);
             window.render_frame(cx);
         })
@@ -741,5 +920,93 @@ mod integration_tests {
             window.click("reset-resource-columns", cx)
         })
         .unwrap();
+    }
+
+    #[::core::prelude::v1::test]
+    fn namespace_menu_keeps_single_and_multiple_selection_distinct_and_searchable() {
+        let cx = &mut support::context();
+        let directory = tempfile::tempdir().unwrap();
+        support::workspace(cx, directory.path());
+        let (fixture, session) = support::fixture(
+            cx,
+            "namespace-menu",
+            vec![
+                json!({"apiVersion":"v1","kind":"Namespace","metadata":{"name":"default","uid":"default","resourceVersion":"1"}}),
+                json!({"apiVersion":"v1","kind":"Namespace","metadata":{"name":"argo","uid":"argo","resourceVersion":"1"}}),
+                json!({"apiVersion":"v1","kind":"Secret","metadata":{"name":"demo","namespace":"default","uid":"demo","resourceVersion":"1"},"type":"Opaque"}),
+            ],
+        );
+        let (window, view) = cx.update(|cx| {
+            gpui_kit::open_window(
+                WindowOptions {
+                    window_bounds: Some(WindowBounds::Windowed(Bounds {
+                        origin: Default::default(),
+                        size: size(px(1200.), px(720.)),
+                    })),
+                    ..Default::default()
+                },
+                cx,
+                |window, cx| {
+                    window.set_view_retention(false);
+                    cx.new(|cx| {
+                        ClusterView::new(
+                            session,
+                            Some("default".into()),
+                            Some(Arc::new(support::kind("", "Secret", "secrets"))),
+                            None,
+                            false,
+                            window,
+                            cx,
+                        )
+                    })
+                },
+            )
+            .unwrap()
+        });
+        support::settle(cx, |cx| {
+            view.read_with(cx, |view, _| view.namespace_names.len() == 2)
+        });
+        draw(cx, window);
+        cx.update_window(window, |_, window, cx| {
+            window.click("namespace-picker-trigger", cx);
+            assert_eq!(window.find("ns-tick-default").checked(), Some(true));
+            assert_eq!(window.find("ns-all").selected(), Some(false));
+            window.click("ns-tick-argo", cx);
+            assert_eq!(window.find("ns-tick-argo").checked(), Some(true));
+            assert_eq!(window.find("ns-tick-default").checked(), Some(true));
+        })
+        .unwrap();
+        assert!(view.read_with(cx, |view, _| view.namespace_menu_open
+            && view.scoped_to.len() == 2));
+        cx.update_window(window, |_, window, cx| {
+            window.click("ns-only-default", cx);
+        })
+        .unwrap();
+        assert!(view.read_with(cx, |view, _| !view.namespace_menu_open
+            && view.scoped_to == std::collections::BTreeSet::from(["default".into()])));
+        cx.update_window(window, |_, window, cx| {
+            window.click("namespace-picker-trigger", cx);
+            window.click("ns-all", cx);
+        })
+        .unwrap();
+        assert!(view.read_with(cx, |view, _| view.scoped_to.is_empty()
+            && !view.namespace_menu_open));
+        cx.update_window(window, |_, window, cx| {
+            window.click("namespace-picker-trigger", cx);
+            view.update(cx, |view, cx| {
+                view.picker_search
+                    .update(cx, |input, cx| input.set_value("argo", window, cx));
+            });
+            window.render_frame(cx);
+            assert!(window.find("ns-only-argo").visible());
+            assert!(window.try_find("ns-only-default").is_none());
+            assert_eq!(window.find("ns-all").selected(), Some(true));
+        })
+        .unwrap();
+        assert!(fixture.requests.lock().unwrap().iter().all(|(request, _)| {
+            !request.starts_with("POST /api/v1/")
+                && !request.starts_with("PATCH")
+                && !request.starts_with("DELETE")
+        }));
     }
 }

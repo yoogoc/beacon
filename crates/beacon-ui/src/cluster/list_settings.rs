@@ -23,6 +23,10 @@ impl ListSettings {
         self.presets_open = false;
         self.error = None;
     }
+
+    pub(super) fn is_open(&self) -> bool {
+        self.columns_open || self.presets_open
+    }
 }
 
 impl ClusterView {
@@ -178,7 +182,7 @@ impl ClusterView {
         let input = self.picker_search.clone();
         let weak = cx.entity().downgrade();
         let opening = weak.clone();
-        Popover::new("resource-columns").open(self.list_settings.columns_open)
+        Popover::new("resource-columns").p_1p5().open(self.list_settings.columns_open)
             .on_open_change(move |open, window, cx| {
                 let _ = opening.update(cx, |view, cx| view.open_list_menu(true, *open, window, cx));
             })
@@ -191,15 +195,16 @@ impl ClusterView {
                 let rows: Vec<_> = choices.iter().filter(|(_, name, _, _)| search.matches(name)).map(|(id, name, visible, required)| {
                     let weak = weak.clone();
                     let id = id.clone();
-                    Checkbox::new(SharedString::from(format!("visible-column-{id}")))
+                    checkbox(SharedString::from(format!("visible-column-{id}")))
+                        .w_full().h(toolbar::picker_row_height(cx)).px_2()
                         .label(name.clone()).checked(*visible).disabled(*required)
                         .on_click(move |_, _, cx| { let _ = weak.update(cx, |view, cx| view.toggle_list_column(&id, cx)); })
                 }).collect();
-                v_flex().w(px(280.)).max_h(px(420.)).min_h_0().gap_3()
-                    .child(div().text_sm().font_weight(FontWeight::MEDIUM).child("Visible columns"))
-                    .child(Input::new(&input).small())
+                v_flex().w(px(260.)).max_h(px(420.)).min_h_0().gap_2()
+                    .child(div().px_2().pt_1().text_xs().text_color(cx.theme().muted_foreground).child("Visible columns"))
+                    .child(toolbar::picker_search("resource-column-search", &input, cx))
                     .child(div().id("resource-column-options").min_h_0().overflow_y_scroll()
-                        .child(v_flex().gap_3().children(rows)))
+                        .child(v_flex().gap_0p5().children(rows)))
                     .child(div().text_xs().text_color(cx.theme().muted_foreground)
                         .child("Drag headers to reorder. Resize column edges. Changes save automatically."))
                     .child(h_flex().child(Button::new("reset-resource-columns").small().ghost().label("Restore defaults")
@@ -247,7 +252,7 @@ impl ClusterView {
                 }).collect();
                 v_flex().w(px(360.)).max_h(px(460.)).min_h_0().gap_3()
                     .child(div().text_sm().font_weight(FontWeight::MEDIUM).child("Saved filters"))
-                    .child(Input::new(&input).small())
+                    .child(toolbar::picker_search("saved-filter-search", &input, cx))
                     .when(rows.is_empty(), |menu| menu.child(div().text_sm().text_color(cx.theme().muted_foreground).child("No matching saved filters")))
                     .child(div().id("saved-filter-options").min_h_0().overflow_y_scroll().child(v_flex().gap_1().children(rows)))
                     .child(div().text_xs().text_color(cx.theme().muted_foreground)
