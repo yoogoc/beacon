@@ -1,4 +1,5 @@
 //! Application and cluster settings, presented in independent native windows.
+mod theme_page;
 mod update_page;
 
 use crate::selection::radio;
@@ -230,7 +231,7 @@ impl Section {
     fn description(self) -> &'static str {
         match self {
             Self::Appearance => "Make Beacon feel at home.",
-            Self::Themes => "Fine-tune typography and colors, with a live preview.",
+            Self::Themes => "Choose a base, make it yours, then save and apply.",
             Self::Network => "Choose how Beacon connects to clusters and checks for updates.",
             Self::Updates => "Manage your version and update preferences.",
             Self::Identity => "Give this cluster a familiar name and icon.",
@@ -312,6 +313,7 @@ struct ThemeEditor {
     light_preview: gpui_kit::component::Theme,
     dark_preview: gpui_kit::component::Theme,
     preview: gpui_kit::component::Theme,
+    controls: theme_page::ThemeControls,
 }
 struct ClusterEditor {
     id: ClusterId,
@@ -360,15 +362,35 @@ impl PreferencesView {
                 let custom = if let Appearance::Custom(name) = &preferences.appearance {
                     preferences.themes.get(name).cloned().unwrap_or_default()
                 } else {
+                    let mut name = "My theme".to_string();
+                    let mut number = 2;
+                    while preferences.themes.contains_key(&name) {
+                        name = format!("My theme {number}");
+                        number += 1;
+                    }
                     CustomTheme {
+                        name,
                         dark: preferences.appearance == Appearance::Dark,
                         ..Default::default()
                     }
                 };
+                let preview = settings::preview_theme(&preferences.appearance, &custom, cx);
+                let controls = theme_page::ThemeControls::new(
+                    &custom,
+                    &preview,
+                    if let Appearance::Custom(name) = &preferences.appearance {
+                        Some(name.clone())
+                    } else {
+                        None
+                    },
+                    window,
+                    cx,
+                );
                 let editor = ThemeEditor {
                     light_preview: settings::preview_theme(&Appearance::Light, &custom, cx),
                     dark_preview: settings::preview_theme(&Appearance::Dark, &custom, cx),
-                    preview: settings::preview_theme(&preferences.appearance, &custom, cx),
+                    preview,
+                    controls,
                     appearance: preferences.appearance.clone(),
                     name: input("Theme name", custom.name.clone(), false, window, cx),
                     font: input("Font family", custom.font_family.clone(), false, window, cx),
@@ -446,9 +468,12 @@ impl PreferencesView {
         let focus = cx.focus_handle();
         focus.focus(window, cx);
         let fonts = matches!(&page, Page::Application(_)).then(|| font_families(cx));
-        let font_ready = fonts
-            .as_ref()
-            .map(|fonts| cx.observe(fonts, |_, _, cx| cx.notify()));
+        let font_ready = fonts.as_ref().map(|fonts| {
+            cx.observe_in(fonts, window, |view, _, window, cx| {
+                view.sync_font_choices(window, cx);
+                cx.notify();
+            })
+        });
         let updates = settings::store(cx).read(cx).preferences.updates.clone();
         let update_subscription =
             crate::updates::maybe_store(cx).map(|store| cx.observe(&store, |_, _, cx| cx.notify()));
@@ -467,25 +492,41 @@ impl PreferencesView {
                 &c.node_memory,
             ],
         };
-        let input_subscriptions = inputs
+        let mut input_subscriptions: Vec<_> = inputs
             .into_iter()
             .chain([&proxy.url])
             .map(|input| {
-                cx.subscribe(input, |view, _, event: &InputEvent, cx| {
-                    if matches!(event, InputEvent::Change) {
-                        if view.section == Section::Themes
-                            && let Page::Application(t) = &mut view.page
-                        {
-                            t.appearance = Appearance::Custom(t.custom.name.clone());
+                cx.subscribe_in(
+                    input,
+                    window,
+                    |view, changed, event: &InputEvent, window, cx| {
+                        if matches!(event, InputEvent::Change) {
+                            if changed.entity_id() != view.proxy.url.entity_id()
+                                && let Page::Application(t) = &mut view.page
+                            {
+                                t.controls.dirty = true;
+                                if view.section == Section::Themes {
+                                    t.appearance = Appearance::Custom(t.custom.name.clone());
+                                }
+                            }
+                            view.dirty = true;
+                            view.message = None;
+                            if matches!(&view.page, Page::Application(t) if changed.entity_id() == t.color.entity_id()) {
+                                // Valid hex edits update the draft immediately; an incomplete
+                                // value keeps the last valid preview until it can be saved.
+                                let _ = view.sync_color(cx);
+                            }
+                            view.refresh_theme_preview(cx);
+                            view.sync_theme_pickers(window, cx);
+                            cx.notify();
                         }
-                        view.dirty = true;
-                        view.message = None;
-                        view.refresh_theme_preview(cx);
-                        cx.notify();
-                    }
-                })
+                    },
+                )
             })
             .collect();
+        if let Page::Application(t) = &page {
+            input_subscriptions.extend(t.controls.subscriptions(window, cx));
+        }
         let section = if matches!(page, Page::Application(_)) {
             Section::Appearance
         } else {
@@ -550,12 +591,23 @@ impl PreferencesView {
         } else {
             t.appearance.clone()
         };
+        if self.section != Section::Themes
+            && let Appearance::Custom(name) = &appearance
+            && *name != custom.name
+            && let Some(saved) = settings::store(cx).read(cx).preferences.themes.get(name)
+        {
+            custom = saved.clone();
+        }
         t.preview = settings::preview_theme(&appearance, &custom, cx);
     }
     fn select_section(&mut self, section: Section, window: &mut Window, cx: &mut Context<Self>) {
         self.focus.focus(window, cx);
         self.section = section;
         self.refresh_theme_preview(cx);
+        self.sync_theme_pickers(window, cx);
+        if section == Section::Themes {
+            self.sync_font_choices(window, cx);
+        }
         cx.notify();
     }
     fn sync_color(&mut self, cx: &App) -> Result<(), String> {
@@ -574,40 +626,52 @@ impl PreferencesView {
     }
     fn read_theme(&mut self, cx: &App) -> Result<Option<CustomTheme>, String> {
         if let Page::Application(t) = &self.page
-            && matches!(t.appearance, Appearance::Custom(_))
+            && let Appearance::Custom(name) = &t.appearance
         {
-            self.sync_color(cx)?;
-        }
-        if let Page::Application(t) = &self.page
-            && matches!(t.appearance, Appearance::Custom(_))
-        {
-            let mut custom = t.custom.clone();
-            custom.name = value(&t.name, cx).trim().into();
-            custom.font_family = value(&t.font, cx).trim().into();
-            custom.font_size = value(&t.size, cx)
-                .parse()
-                .map_err(|_| "Invalid font size.")?;
-            custom.mono_font_family = value(&t.mono, cx).trim().into();
-            custom.mono_font_size = value(&t.mono_size, cx)
-                .parse()
-                .map_err(|_| "Invalid monospace font size.")?;
-            custom.validate()?;
-            let installed = self
-                .fonts
-                .as_ref()
-                .and_then(|fonts| fonts.read(cx).names.as_ref())
-                .ok_or("Fonts are loading. Try saving again in a moment.")?;
-            for font in [&custom.font_family, &custom.mono_font_family] {
-                if font != ".SystemUIFont" && !installed.iter().any(|f| f == font) {
-                    return Err(format!(
-                        "Font '{font}' is not installed. Choose a font from the menu."
-                    ));
-                }
+            // A separately saved copy is an editor draft, not the selected
+            // appearance. Saving Network must preserve the theme in use.
+            if *name != t.custom.name {
+                return Ok(settings::store(cx)
+                    .read(cx)
+                    .preferences
+                    .themes
+                    .get(name)
+                    .cloned());
             }
-            Ok(Some(custom))
+            self.read_custom_theme(cx).map(Some)
         } else {
             Ok(None)
         }
+    }
+    fn read_custom_theme(&mut self, cx: &App) -> Result<CustomTheme, String> {
+        self.sync_color(cx)?;
+        let Page::Application(t) = &self.page else {
+            return Err("Custom themes are available in application settings.".into());
+        };
+        let mut custom = t.custom.clone();
+        custom.name = value(&t.name, cx).trim().into();
+        custom.font_family = value(&t.font, cx).trim().into();
+        custom.font_size = value(&t.size, cx)
+            .parse()
+            .map_err(|_| "Invalid font size.")?;
+        custom.mono_font_family = value(&t.mono, cx).trim().into();
+        custom.mono_font_size = value(&t.mono_size, cx)
+            .parse()
+            .map_err(|_| "Invalid monospace font size.")?;
+        custom.validate()?;
+        let installed = self
+            .fonts
+            .as_ref()
+            .and_then(|fonts| fonts.read(cx).names.as_ref())
+            .ok_or("Fonts are loading. Try saving again in a moment.")?;
+        for font in [&custom.font_family, &custom.mono_font_family] {
+            if font != ".SystemUIFont" && !installed.iter().any(|f| f == font) {
+                return Err(format!(
+                    "Font '{font}' is not installed. Choose a font from the menu."
+                ));
+            }
+        }
+        Ok(custom)
     }
     fn prometheus(c: &ClusterEditor, cx: &App) -> Prometheus {
         Prometheus {
@@ -669,6 +733,12 @@ impl PreferencesView {
             }
             settings::save(preferences, window, cx)?;
             self.dirty = false;
+            if let Page::Application(t) = &mut self.page {
+                t.controls.dirty = false;
+                if matches!(t.appearance, Appearance::Custom(_)) {
+                    t.controls.saved_name = Some(value(&t.name, cx).trim().into());
+                }
+            }
             if reconnect && let Some(target) = target {
                 settings::store(cx).update(cx, |_, cx| cx.emit(settings::Changed(Some(target))));
             }
@@ -793,41 +863,7 @@ impl PreferencesView {
             .into_any_element()
     }
     fn select_theme(&mut self, name: String, window: &mut Window, cx: &mut Context<Self>) {
-        let custom = settings::store(cx)
-            .read(cx)
-            .preferences
-            .themes
-            .get(&name)
-            .cloned();
-        if let (Some(custom), Page::Application(t)) = (custom, &mut self.page) {
-            t.appearance = Appearance::Custom(name);
-            t.name
-                .update(cx, |s, cx| s.set_value(custom.name.clone(), window, cx));
-            t.font.update(cx, |s, cx| {
-                s.set_value(custom.font_family.clone(), window, cx)
-            });
-            t.size.update(cx, |s, cx| {
-                s.set_value(custom.font_size.to_string(), window, cx)
-            });
-            t.mono.update(cx, |s, cx| {
-                s.set_value(custom.mono_font_family.clone(), window, cx)
-            });
-            t.mono_size.update(cx, |s, cx| {
-                s.set_value(custom.mono_font_size.to_string(), window, cx)
-            });
-            t.color.update(cx, |s, cx| {
-                s.set_value(
-                    custom.colors.get(&t.role).cloned().unwrap_or_default(),
-                    window,
-                    cx,
-                )
-            });
-            t.custom = custom;
-            self.dirty = true;
-            self.refresh_theme_preview(cx);
-            self.message = None;
-            cx.notify();
-        }
+        self.request_theme(Some(name), window, cx);
     }
     fn choose_icon(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let choosing = cx.prompt_for_paths(PathPromptOptions {
@@ -995,7 +1031,7 @@ impl PreferencesView {
         }
         cx.notify();
     }
-    fn saved_theme_picker(&self, t: &ThemeEditor, cx: &mut Context<Self>) -> AnyElement {
+    fn saved_theme_picker(&self, t: &ThemeEditor, cx: &Context<Self>) -> AnyElement {
         let names: Vec<_> = settings::store(cx)
             .read(cx)
             .preferences
@@ -1011,6 +1047,11 @@ impl PreferencesView {
             .disabled(empty)
             .label(if empty {
                 "No saved themes".to_owned()
+            } else if self.section == Section::Themes {
+                t.controls
+                    .saved_name
+                    .clone()
+                    .unwrap_or_else(|| "Saved themes".into())
             } else if let Appearance::Custom(name) = &t.appearance {
                 name.clone()
             } else {
@@ -1296,171 +1337,6 @@ impl PreferencesView {
             .into_any_element()
     }
 
-    fn theme_form(&self, t: &ThemeEditor, cx: &mut Context<Self>) -> AnyElement {
-        let bases = [(false, "Light base"), (true, "Dark base")]
-            .into_iter()
-            .map(|(dark, label)| {
-                Button::new(label)
-                    .outline()
-                    .selected(t.custom.dark == dark)
-                    .label(label)
-                    .on_click(cx.listener(move |view, _, _, cx| {
-                        if let Page::Application(t) = &mut view.page {
-                            t.custom.dark = dark;
-                            t.appearance = Appearance::Custom(t.custom.name.clone());
-                        }
-                        view.dirty = true;
-                        view.refresh_theme_preview(cx);
-                        cx.notify();
-                    }))
-            });
-        let roles = settings::color_roles();
-        let weak = cx.entity().downgrade();
-        let colors = Button::new("theme-color-role")
-            .outline()
-            .w_full()
-            .label(t.role.clone())
-            .dropdown_menu(move |mut menu, _, _| {
-                for role in roles {
-                    let role = role.clone();
-                    let weak = weak.clone();
-                    menu = menu.item(PopupMenuItem::new(role.clone()).on_click(
-                        move |_, window, cx| {
-                            let _ = weak
-                                .update(cx, |view, cx| view.select_color(role.clone(), window, cx));
-                        },
-                    ));
-                }
-                menu
-            });
-        let swatch =
-            gpui_kit::component::try_parse_color(&value(&t.color, cx)).unwrap_or(cx.theme().muted);
-        v_flex().gap_5().w_full()
-            .child(field("Theme name", &t.name))
-            .child(hint("Save with a new name to create another theme. Themes are stored locally.", cx))
-            .child(setting_row("Base theme", "Use the base colors for any unset fields.", h_flex().gap_2().children(bases), cx))
-            .child(v_flex().gap_3().child(heading("Typography"))
-                .child(h_flex().gap_3().items_end().child(field("Interface font", &t.font))
-                    .child(div().w(px(100.)).flex_shrink_0().child(field("Size · px", &t.size))))
-                .child(h_flex().gap_3().items_end().child(field("Monospace font", &t.mono))
-                    .child(div().w(px(100.)).flex_shrink_0().child(field("Size · px", &t.mono_size))))
-                .child(self.font_picker(cx)))
-            .child(v_flex().gap_3().child(heading("Colors"))
-                .child(hint("Choose any UI color, including button text, background, hover and active states. Empty values inherit the base theme.", cx))
-                .child(colors)
-                .child(h_flex().gap_3().items_end()
-                    .child(field("Hex color · #RGB, #RRGGBB or #RRGGBBAA", &t.color))
-                    .child(div().size(px(32.)).flex_shrink_0().rounded_md().border_1().border_color(cx.theme().border).bg(swatch))
-                    .child(Button::new("set-theme-color").outline().label("Set color")
-                        .on_click(cx.listener(|view, _, _, cx| {
-                            if let Page::Application(t) = &mut view.page { t.appearance = Appearance::Custom(t.custom.name.clone()); }
-                            view.message = Some(match view.sync_color(cx) {
-                                Ok(()) => { view.dirty = true; (false, "Color added to this theme. Save to apply it.".into()) },
-                                Err(error) => (true, error),
-                            });
-                            view.refresh_theme_preview(cx);
-                            cx.notify();
-                        }))))
-                .child(v_flex().gap_2().children(t.custom.colors.iter().map(|(role, color)| {
-                    h_flex().gap_2().items_center().py_2().border_b_1().border_color(cx.theme().border).text_sm()
-                        .child(div().size(px(16.)).flex_shrink_0().rounded_sm().bg(gpui_kit::component::try_parse_color(color).unwrap_or(cx.theme().muted)))
-                        .child(div().flex_1().min_w_0().child(role.clone()))
-                        .child(div().text_color(cx.theme().muted_foreground).child(color.clone()))
-                }))))
-            .child(heading("Preview"))
-            .child(self.theme_preview(t))
-            .into_any_element()
-    }
-
-    fn select_color(&mut self, role: String, window: &mut Window, cx: &mut Context<Self>) {
-        if let Err(error) = self.sync_color(cx) {
-            self.message = Some((true, error));
-            cx.notify();
-            return;
-        }
-        if let Page::Application(t) = &mut self.page {
-            let color = t.custom.colors.get(&role).cloned().unwrap_or_default();
-            t.role = role;
-            t.color.update(cx, |s, cx| s.set_value(color, window, cx));
-        }
-        self.refresh_theme_preview(cx);
-        cx.notify();
-    }
-    fn font_picker(&self, cx: &mut Context<Self>) -> AnyElement {
-        let fonts = self
-            .fonts
-            .as_ref()
-            .and_then(|fonts| fonts.read(cx).names.clone());
-        let loading = fonts.is_none();
-        let weak = cx.entity().downgrade();
-        let mono_weak = weak.clone();
-        let mono_fonts = fonts.clone();
-        h_flex()
-            .gap_2()
-            .child(
-                Button::new("text-font-menu")
-                    .ghost()
-                    .disabled(loading)
-                    .label(if loading {
-                        "Loading fonts…"
-                    } else {
-                        "Choose text font"
-                    })
-                    .dropdown_menu(move |mut menu, _, _| {
-                        for font in fonts.as_deref().unwrap_or_default() {
-                            let font = font.clone();
-                            let weak = weak.clone();
-                            menu = menu.item(PopupMenuItem::new(font.clone()).on_click(
-                                move |_, window, cx| {
-                                    let _ = weak.update(cx, |view, cx| {
-                                        if let Page::Application(t) = &mut view.page {
-                                            t.font.update(cx, |s, cx| {
-                                                s.set_value(font.clone(), window, cx)
-                                            });
-                                            t.appearance =
-                                                Appearance::Custom(t.custom.name.clone());
-                                        }
-                                        view.dirty = true;
-                                        view.refresh_theme_preview(cx);
-                                        cx.notify();
-                                    });
-                                },
-                            ));
-                        }
-                        menu
-                    }),
-            )
-            .child(
-                Button::new("mono-font-menu")
-                    .ghost()
-                    .disabled(loading)
-                    .label("Choose monospace font")
-                    .dropdown_menu(move |mut menu, _, _| {
-                        for font in mono_fonts.as_deref().unwrap_or_default() {
-                            let font = font.clone();
-                            let weak = mono_weak.clone();
-                            menu = menu.item(PopupMenuItem::new(font.clone()).on_click(
-                                move |_, window, cx| {
-                                    let _ = weak.update(cx, |view, cx| {
-                                        if let Page::Application(t) = &mut view.page {
-                                            t.mono.update(cx, |s, cx| {
-                                                s.set_value(font.clone(), window, cx)
-                                            });
-                                            t.appearance =
-                                                Appearance::Custom(t.custom.name.clone());
-                                        }
-                                        view.dirty = true;
-                                        view.refresh_theme_preview(cx);
-                                        cx.notify();
-                                    });
-                                },
-                            ));
-                        }
-                        menu
-                    }),
-            )
-            .into_any_element()
-    }
     fn identity_form(
         &self,
         c: &ClusterEditor,
@@ -1756,7 +1632,9 @@ impl Render for PreferencesView {
         };
         let directory = settings::store(cx).read(cx).directory.clone();
         let cluster = matches!(self.page, Page::Cluster(_));
-        let status = if self.dirty && self.section == Section::Updates {
+        let status = if self.section == Section::Themes {
+            "Preview only · Apply to use this theme across all windows"
+        } else if self.dirty && self.section == Section::Updates {
             "Other settings have unsaved changes"
         } else if self.dirty {
             "Unsaved changes"
@@ -1865,25 +1743,40 @@ impl Render for PreferencesView {
                                 h_flex()
                                     .flex_shrink_0()
                                     .gap_2()
-                                    .when(!cluster && self.section != Section::Updates, |bar| {
-                                        bar.child(
-                                            Button::new("open-settings-folder")
-                                                .ghost()
-                                                .icon(IconName::FolderOpen)
-                                                .label("Config folder")
-                                                .tooltip(directory.display().to_string())
-                                                .on_click(cx.listener(move |view, _, _, cx| {
-                                                    match std::fs::create_dir_all(&directory) {
-                                                        Ok(()) => cx.open_with_system(&directory),
-                                                        Err(error) => {
-                                                            view.message =
-                                                                Some((true, error.to_string()));
-                                                            cx.notify();
-                                                        }
-                                                    }
-                                                })),
-                                        )
-                                    })
+                                    .when(
+                                        !cluster
+                                            && !matches!(
+                                                self.section,
+                                                Section::Updates | Section::Themes
+                                            ),
+                                        |bar| {
+                                            bar.child(
+                                                Button::new("open-settings-folder")
+                                                    .ghost()
+                                                    .icon(IconName::FolderOpen)
+                                                    .label("Config folder")
+                                                    .tooltip(directory.display().to_string())
+                                                    .on_click(cx.listener(
+                                                        move |view, _, _, cx| {
+                                                            match std::fs::create_dir_all(
+                                                                &directory,
+                                                            ) {
+                                                                Ok(()) => {
+                                                                    cx.open_with_system(&directory)
+                                                                }
+                                                                Err(error) => {
+                                                                    view.message = Some((
+                                                                        true,
+                                                                        error.to_string(),
+                                                                    ));
+                                                                    cx.notify();
+                                                                }
+                                                            }
+                                                        },
+                                                    )),
+                                            )
+                                        },
+                                    )
                                     .when(cluster, |bar| {
                                         bar.child(
                                             Button::new("save-reconnect")
@@ -1894,20 +1787,44 @@ impl Render for PreferencesView {
                                                 })),
                                         )
                                     })
-                                    .when(self.section != Section::Updates || self.dirty, |bar| {
+                                    .when(self.section == Section::Themes, |bar| {
                                         bar.child(
-                                            Button::new("save-preferences")
-                                                .primary()
-                                                .label(if self.section == Section::Updates {
-                                                    "Save other settings"
-                                                } else {
-                                                    "Save changes"
-                                                })
+                                            Button::new("save-theme")
+                                                .outline()
+                                                .label(self.theme_save_label(cx))
                                                 .on_click(cx.listener(|view, _, window, cx| {
-                                                    view.save(false, window, cx)
+                                                    view.save_custom_theme(false, window, cx)
                                                 })),
                                         )
-                                    }),
+                                        .child(
+                                            Button::new("apply-theme")
+                                                .primary()
+                                                .label(self.theme_apply_label())
+                                                .on_click(cx.listener(|view, _, window, cx| {
+                                                    view.save_custom_theme(true, window, cx)
+                                                })),
+                                        )
+                                    })
+                                    .when(
+                                        self.section != Section::Themes
+                                            && (self.section != Section::Updates || self.dirty),
+                                        |bar| {
+                                            bar.child(
+                                                Button::new("save-preferences")
+                                                    .primary()
+                                                    .label(if self.section == Section::Updates {
+                                                        "Save other settings"
+                                                    } else {
+                                                        "Save changes"
+                                                    })
+                                                    .on_click(cx.listener(
+                                                        |view, _, window, cx| {
+                                                            view.save(false, window, cx)
+                                                        },
+                                                    )),
+                                            )
+                                        },
+                                    ),
                             ),
                     ),
             )
