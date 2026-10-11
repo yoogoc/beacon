@@ -14,11 +14,15 @@ pub(super) enum Layout {
 }
 
 impl Layout {
-    fn for_width(width: Pixels, fields: usize, selected: bool) -> Self {
-        // PVC has several facets; selection also adds two bulk actions. Keep
+    fn for_width(width: Pixels, fields: usize, selected: usize) -> Self {
+        // PVC has several facets; selection also adds bulk actions. Keep
         // those reachable in a menu rather than squeezing the name search.
         let extra = fields.saturating_sub(1) as f32;
-        let bulk = if selected { 220. } else { 0. };
+        let bulk = match selected {
+            0 => 0.,
+            2 => 320.,
+            _ => 220.,
+        };
         let width = f32::from(width) - bulk;
         if width >= 1200. + extra * 140. {
             Self::Full
@@ -342,6 +346,21 @@ impl ClusterView {
                                 cx.notify();
                             })),
                     )
+                    .when(selected == 2, |menu| {
+                        menu.child(
+                            Button::new("compare-selected")
+                                .small()
+                                .outline()
+                                .icon(Icon::new(Glyph::Columns3))
+                                .label("Compare")
+                                .accessibility_label("Compare selected resources")
+                                .tooltip("Compare the two selected resources")
+                                .on_click(cx.listener(|view, _, window, cx| {
+                                    view.toolbar_open = false;
+                                    view.compare_selected(window, cx);
+                                })),
+                        )
+                    })
                     .child(
                         Button::new("delete-selected")
                             .small()
@@ -427,8 +446,11 @@ impl ClusterView {
             .as_ref()
             .map(|kind| Field::for_kind(kind).len())
             .unwrap_or(0);
-        let selected =
-            self.mode == Mode::Objects && self.table.read(cx).delegate().selected_count() > 0;
+        let selected = if self.mode == Mode::Objects {
+            self.table.read(cx).delegate().selected_count()
+        } else {
+            0
+        };
         h_flex()
             .id("resource-toolbar")
             .role(Role::Toolbar)

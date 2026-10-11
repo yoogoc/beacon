@@ -426,7 +426,14 @@ impl ResourceTable {
         let compare_view = view.clone();
         let compare_target = target.clone();
         menu = menu.item(
-            PopupMenuItem::new("Compare resource…").on_click(move |_, window, cx| {
+            PopupMenuItem::new(
+                if self.selected_count() == 2 && self.checked.contains_key(&target) {
+                    "Compare selected resources"
+                } else {
+                    "Compare resource…"
+                },
+            )
+            .on_click(move |_, window, cx| {
                 let _ = compare_view
                     .update(cx, |view, cx| view.compare_for(&compare_target, window, cx));
             }),

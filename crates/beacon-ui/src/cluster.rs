@@ -518,7 +518,37 @@ impl ClusterView {
             self.kind.clone(),
             self.table.read(cx).delegate().object(target).cloned(),
         ) {
-            crate::resource_compare::open(self.session.clone(), kind, object, window, cx);
+            let selected = self.table.read(cx).delegate().selected_targets();
+            let other = (selected.len() == 2
+                && selected
+                    .iter()
+                    .any(|selected| &selected.reference == target))
+            .then(|| {
+                selected
+                    .iter()
+                    .find(|selected| &selected.reference != target)
+            })
+            .flatten()
+            .map(|selected| selected.reference.clone());
+            if other.is_some() {
+                crate::resource_compare::open_target(
+                    self.session.clone(),
+                    kind,
+                    object,
+                    other,
+                    window,
+                    cx,
+                );
+            } else {
+                crate::resource_compare::open(self.session.clone(), kind, object, window, cx);
+            }
+        }
+    }
+
+    pub(crate) fn compare_selected(&self, window: &mut Window, cx: &mut Context<Self>) {
+        let selected = self.table.read(cx).delegate().selected_targets();
+        if selected.len() == 2 {
+            self.compare_for(&selected[0].reference, window, cx);
         }
     }
 
