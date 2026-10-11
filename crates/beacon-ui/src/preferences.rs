@@ -1,4 +1,6 @@
 //! Application and cluster settings, presented in independent native windows.
+mod update_page;
+
 use crate::selection::radio;
 use crate::settings::{self, Appearance, ClusterIcon, ClusterSettings, CustomTheme};
 use beacon_kube::{
@@ -230,7 +232,7 @@ impl Section {
             Self::Appearance => "Make Beacon feel at home.",
             Self::Themes => "Fine-tune typography and colors, with a live preview.",
             Self::Network => "Choose how Beacon connects to clusters and checks for updates.",
-            Self::Updates => "Keep Beacon up to date on your preferred release channel.",
+            Self::Updates => "Manage your version and update preferences.",
             Self::Identity => "Give this cluster a familiar name and icon.",
             Self::Connection => "Configure the proxy used when connecting to this cluster.",
             Self::Metrics => "Choose where pod and node usage metrics come from.",
@@ -339,6 +341,8 @@ struct PreferencesView {
     fonts: Option<Entity<FontFamilies>>,
     _font_ready: Option<Subscription>,
     updates: beacon_updater::Preferences,
+    updates_width: Rc<std::cell::Cell<Pixels>>,
+    update_notes_expanded: bool,
     _updates: Option<Subscription>,
     section: Section,
     queries_expanded: bool,
@@ -494,6 +498,8 @@ impl PreferencesView {
         let connection_subscription = cx.observe(&connections, |_, _, cx| cx.notify());
         Self {
             updates,
+            updates_width: Rc::new(std::cell::Cell::new(window.bounds().size.width - px(228.))),
+            update_notes_expanded: false,
             _updates: update_subscription,
             focus,
             page,
@@ -984,155 +990,11 @@ impl PreferencesView {
         if let Err(error) = settings::save(preferences, window, cx) {
             self.updates = settings::store(cx).read(cx).preferences.updates.clone();
             self.message = Some((true, error));
+        } else {
+            self.message = None;
         }
         cx.notify();
     }
-    fn updates_form(&self, cx: &mut Context<Self>) -> AnyElement {
-        use crate::updates::Status;
-        use beacon_updater::Channel;
-        let Some(store) = crate::updates::maybe_store(cx) else {
-            return div().into_any_element();
-        };
-        let updater = store.read(cx);
-        let can_install = updater.installation.can_install();
-        let (message, release) = match &updater.status {
-            Status::Idle => ("Updates have not been checked yet.".into(), None),
-            Status::Checking => ("Checking for updates…".into(), None),
-            Status::Current => ("You are up to date.".into(), None),
-            Status::Available(r) => (
-                format!(
-                    "Beacon {} is available · {:.1} MB",
-                    r.version,
-                    r.asset.size as f64 / 1_000_000.
-                ),
-                Some(r),
-            ),
-            Status::Downloading {
-                release,
-                received,
-                total,
-            } => (
-                format!(
-                    "Downloading Beacon {} · {:.1} / {:.1} MB · {}%",
-                    release.version,
-                    *received as f64 / 1_000_000.,
-                    *total as f64 / 1_000_000.,
-                    received.saturating_mul(100) / (*total).max(1)
-                ),
-                Some(release),
-            ),
-            Status::Ready(download) => (
-                format!(
-                    "Beacon {} is ready to install. Signature verified.",
-                    download.release.version
-                ),
-                Some(&download.release),
-            ),
-            Status::Installing => ("Preparing update and restart…".into(), None),
-            Status::Failed { message, release } => (message.clone(), release.as_ref()),
-        };
-        let busy = matches!(
-            updater.status,
-            Status::Checking | Status::Downloading { .. } | Status::Installing
-        );
-        let ready = matches!(updater.status, Status::Ready(_));
-        let download = matches!(
-            updater.status,
-            Status::Available(_)
-                | Status::Failed {
-                    release: Some(_),
-                    ..
-                }
-        );
-        let check_button = Button::new("check-updates")
-            .outline()
-            .icon(IconName::RefreshCw)
-            .label("Check for updates")
-            .disabled(busy || ready)
-            .on_click(|_, _, cx| crate::updates::store(cx).update(cx, |view, cx| view.check(cx)));
-        let mut form = v_flex().gap_3()
-            .child(h_flex().gap_3().p_4().rounded_lg().bg(cx.theme().muted).items_center()
-                .child(Icon::new(IconName::RadioTower).size_6().text_color(cx.theme().primary))
-                .child(v_flex().flex_1().gap_1()
-                    .child(div().font_weight(FontWeight::MEDIUM).child(format!("Beacon {}", env!("CARGO_PKG_VERSION"))))
-                    .child(hint(if self.updates.channel == Channel::Stable { "Stable release" } else { "Development release" }, cx)))
-                .child(check_button))
-            .child(setting_row("Check automatically", "Check for new releases in the background.",
-                Switch::new("auto-check-updates").accessibility_label("Automatically check for updates").checked(self.updates.auto_check)
-                    .on_click(cx.listener(|view, checked, window, cx| { view.updates.auto_check = *checked; view.save_updates(window, cx); })), cx))
-            .child(setting_row("Download automatically", "Ask before restarting to install an update.",
-                Switch::new("auto-download-updates").accessibility_label("Automatically download updates").checked(self.updates.auto_download).disabled(!can_install)
-                    .on_click(cx.listener(|view, checked, window, cx| { view.updates.auto_download = *checked; view.save_updates(window, cx); })), cx))
-            .child(hint("Checks run once at startup and every 24 hours when enabled. Checks and downloads use the system proxy by default, or the saved global proxy override. Installation always requires restart confirmation.", cx))
-            .child(setting_row("Release channel", "Choose which releases you receive.", h_flex().gap_2().children([(Channel::Stable, "Stable"), (Channel::Development, "Development")].into_iter().map(|(channel, label)| {
-                Button::new(label).outline().small().selected(self.updates.channel == channel).label(label).disabled(matches!(updater.status, Status::Installing))
-                    .on_click(cx.listener(move |view, _, window, cx| { view.updates.channel = channel; view.save_updates(window, cx); }))
-            })), cx))
-            .when(self.updates.channel == Channel::Development, |form| form.child(hint("Development releases may contain unfinished changes. Beacon will never automatically downgrade to an older version.", cx)))
-            .child(div().text_sm().text_color(if matches!(updater.status, Status::Failed { .. }) { cx.theme().danger } else { cx.theme().foreground })
-                .child(crate::copyable_text::copyable_text("update-status", message)))
-            .when_some(updater.receipt.clone(), |form, receipt| form.child(crate::copyable_text::copyable_text("update-install-result", receipt)))
-            .child(h_flex().gap_2().flex_wrap()
-                .when(busy && !matches!(updater.status, Status::Installing), |bar| bar.child(Button::new("cancel-update").ghost().label("Cancel")
-                    .on_click(|_, _, cx| crate::updates::store(cx).update(cx, |view, cx| view.cancel(cx)))))
-                .when(download && can_install, |bar| bar.child(Button::new("download-update").primary().label(if matches!(updater.status, Status::Failed { .. }) { "Retry download" } else { "Download update" })
-                    .on_click(|_, _, cx| crate::updates::store(cx).update(cx, |view, cx| view.download(cx)))))
-                .when(ready, |bar| bar.child(Button::new("install-update").primary().label("Restart and install")
-                    .on_click(|_, window, cx| crate::updates::store(cx).update(cx, |view, cx| view.restart(window, cx)))))
-                .when_some(release.map(|r| r.page.to_string()), |bar, url| bar.child(Button::new("update-release-page").ghost().label("View release")
-                    .on_click(move |_, _, cx| cx.open_url(&url)))));
-        if let Status::Downloading {
-            received, total, ..
-        } = &updater.status
-        {
-            let fraction = (*received as f32 / (*total).max(1) as f32).clamp(0., 1.);
-            form = form.child(
-                div()
-                    .w_full()
-                    .h(px(4.))
-                    .rounded_full()
-                    .bg(cx.theme().muted)
-                    .child(
-                        div()
-                            .h_full()
-                            .w(relative(fraction))
-                            .rounded_full()
-                            .bg(cx.theme().primary),
-                    ),
-            );
-        }
-        if let Some(checked) = updater.last_checked {
-            let seconds = checked.elapsed().map_or(0, |elapsed| elapsed.as_secs());
-            form = form.child(hint(
-                &if seconds < 60 {
-                    "Last checked just now.".into()
-                } else {
-                    format!("Last checked {} minute(s) ago.", seconds / 60)
-                },
-                cx,
-            ));
-        }
-        if let Some(release) = release {
-            form = form.child(div().text_sm().child(crate::copyable_text::copyable_text(
-                "update-release-notes",
-                release.notes.chars().take(8192).collect::<String>(),
-            )));
-            if !can_install {
-                let url = release.asset.url.to_string();
-                form = form.child(
-                    Button::new("get-update-package")
-                        .primary()
-                        .label("Get update package")
-                        .on_click(move |_, _, cx| cx.open_url(&url)),
-                );
-            }
-        }
-        if !can_install {
-            form = form.child(hint("This installation is managed externally. Download the package and install it with your package manager; automatic replacement is available for installed macOS/Windows apps and Linux AppImage.", cx));
-        }
-        form.into_any_element()
-    }
-
     fn saved_theme_picker(&self, t: &ThemeEditor, cx: &mut Context<Self>) -> AnyElement {
         let names: Vec<_> = settings::store(cx)
             .read(cx)
@@ -1894,7 +1756,9 @@ impl Render for PreferencesView {
         };
         let directory = settings::store(cx).read(cx).directory.clone();
         let cluster = matches!(self.page, Page::Cluster(_));
-        let status = if self.dirty {
+        let status = if self.dirty && self.section == Section::Updates {
+            "Other settings have unsaved changes"
+        } else if self.dirty {
             "Unsaved changes"
         } else {
             match self.section {
@@ -2001,7 +1865,7 @@ impl Render for PreferencesView {
                                 h_flex()
                                     .flex_shrink_0()
                                     .gap_2()
-                                    .when(!cluster, |bar| {
+                                    .when(!cluster && self.section != Section::Updates, |bar| {
                                         bar.child(
                                             Button::new("open-settings-folder")
                                                 .ghost()
@@ -2030,14 +1894,20 @@ impl Render for PreferencesView {
                                                 })),
                                         )
                                     })
-                                    .child(
-                                        Button::new("save-preferences")
-                                            .primary()
-                                            .label("Save changes")
-                                            .on_click(cx.listener(|view, _, window, cx| {
-                                                view.save(false, window, cx)
-                                            })),
-                                    ),
+                                    .when(self.section != Section::Updates || self.dirty, |bar| {
+                                        bar.child(
+                                            Button::new("save-preferences")
+                                                .primary()
+                                                .label(if self.section == Section::Updates {
+                                                    "Save other settings"
+                                                } else {
+                                                    "Save changes"
+                                                })
+                                                .on_click(cx.listener(|view, _, window, cx| {
+                                                    view.save(false, window, cx)
+                                                })),
+                                        )
+                                    }),
                             ),
                     ),
             )
@@ -2092,7 +1962,7 @@ mod update_tests {
             crate::Bridge::init(cx).unwrap();
             crate::updates::init(cx);
         });
-        let (window, _) = cx.update(|cx| {
+        let (window, view) = cx.update(|cx| {
             gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
                 window.set_view_retention(false);
                 cx.new(|cx| PreferencesView::new(None, window, cx))
@@ -2101,7 +1971,7 @@ mod update_tests {
         });
         let draw = |cx: &mut TestAppContext| {
             cx.update_window(window, |_, window, cx| {
-                window.draw(cx).clear(cx);
+                window.render_frame(cx);
             })
             .unwrap();
         };
@@ -2113,11 +1983,13 @@ mod update_tests {
         cx.update_window(window, |_, window, _| {
             assert!(window.find("check-updates").visible());
             assert!(window.find("auto-check-updates").visible());
+            assert!(window.try_find("save-preferences").is_none());
+            assert!(window.try_find("open-settings-folder").is_none());
         })
         .unwrap();
         let release = Release {
             version: "0.2.8".parse().unwrap(),
-            notes: "Release notes".into(),
+            notes: "Release notes\n".repeat(200),
             page: "https://github.com/yoogoc/beacon/releases/tag/v0.2.8"
                 .parse()
                 .unwrap(),
@@ -2142,9 +2014,53 @@ mod update_tests {
         });
         draw(cx);
         cx.update_window(window, |_, window, _| {
-            assert!(window.find("download-update").visible())
+            assert!(window.find("download-update").visible());
+            assert!(window.try_find("update-notes-scroll").is_none());
         })
         .unwrap();
+        cx.update_window(window, |_, window, cx| {
+            window.click("update-notes-disclosure", cx);
+            let notes = window.find("update-notes-scroll");
+            assert!(notes.visible());
+            assert!(notes.bounds().size.height <= px(220.));
+            window.click("update-notes-disclosure", cx);
+            assert!(window.try_find("update-notes-scroll").is_none());
+        })
+        .unwrap();
+        for appearance in [Appearance::Light, Appearance::Dark] {
+            cx.update(|cx| {
+                settings::store(cx).update(cx, |state, _| {
+                    state.preferences.appearance = appearance;
+                });
+                settings::apply(None, cx);
+            });
+            for width in [650., 880., 1100.] {
+                cx.update_window(window, |_, window, cx| {
+                    window.resize(size(px(width), px(1000.)));
+                    window.render_frame(cx);
+                    window.render_frame(cx);
+                    let card = window.find("update-status-card").bounds();
+                    for id in [
+                        "download-update",
+                        "check-updates",
+                        "update-notes-disclosure",
+                        "update-release-page",
+                    ] {
+                        let button = window.find(id);
+                        assert!(button.visible(), "{id} at {width}");
+                        assert!(
+                            card.contains(&button.bounds().center()),
+                            "{id} is outside its card at {width}"
+                        );
+                        assert!(
+                            button.bounds().right() <= card.right(),
+                            "{id} overflows at {width}"
+                        );
+                    }
+                })
+                .unwrap();
+            }
+        }
         for received in [0, 512, 1024] {
             cx.update(|cx| {
                 crate::updates::store(cx).update(cx, |updater, cx| {
@@ -2158,22 +2074,46 @@ mod update_tests {
             });
             draw(cx);
             cx.update_window(window, |_, window, _| {
-                assert!(window.find("cancel-update").visible())
+                assert!(window.find("cancel-update").visible());
+                let progress = window.find("update-download-progress");
+                assert_eq!(progress.role(), Some(Role::ProgressIndicator));
+                assert!(progress.bounds().size.width > px(0.));
             })
             .unwrap();
         }
+        let failure = "Signature verification failed\n".repeat(12);
         cx.update(|cx| {
             crate::updates::store(cx).update(cx, |updater, cx| {
                 updater.status = Status::Failed {
-                    message: "Signature verification failed".into(),
+                    message: failure.clone(),
                     release: Some(release.clone()),
                 };
                 cx.notify();
             })
         });
         draw(cx);
-        cx.update_window(window, |_, window, _| {
-            assert!(window.find("download-update").visible())
+        cx.update_window(window, |_, window, cx| {
+            assert!(window.find("download-update").visible());
+            assert!(window.find("update-error-row").visible());
+            assert!(window.find("update-error-scroll").bounds().size.height <= px(120.));
+            window.click_with_options(
+                "update-error-scroll",
+                gpui_kit::test::ClickOptions::new()
+                    .with_button(MouseButton::Right)
+                    .with_offset(point(px(5.), px(10.))),
+                cx,
+            );
+        })
+        .unwrap();
+        cx.run_until_parked();
+        draw(cx);
+        cx.update_window(window, |_, window, cx| {
+            let copy = gpui_kit::base::test_support::snapshots(window)
+                .into_iter()
+                .find(|item| item.role() == Some(Role::MenuItem) && item.label() == Some("Copy"))
+                .unwrap();
+            window.click(copy.path().last().unwrap().clone(), cx);
+            assert_eq!(cx.read_from_clipboard().unwrap().text().unwrap(), failure);
         })
         .unwrap();
         cx.update(|cx| {
@@ -2184,8 +2124,61 @@ mod update_tests {
             })
         });
         draw(cx);
+        cx.update_window(window, |_, window, cx| {
+            assert!(window.find("get-update-package").visible());
+            window.click("auto-download-updates", cx);
+            assert!(!view.read(cx).updates.auto_download);
+            assert!(
+                !settings::store(cx)
+                    .read(cx)
+                    .preferences
+                    .updates
+                    .auto_download
+            );
+        })
+        .unwrap();
+        cx.update(|cx| {
+            crate::updates::store(cx).update(cx, |updater, cx| {
+                updater.status = Status::Installing;
+                cx.notify();
+            });
+        });
+        draw(cx);
         cx.update_window(window, |_, window, _| {
-            assert!(window.find("get-update-package").visible())
+            assert!(window.find("install-update").visible());
+            assert!(window.try_find("cancel-update").is_none());
+        })
+        .unwrap();
+        cx.update(|cx| {
+            crate::updates::store(cx).update(cx, |updater, cx| {
+                updater.status = Status::Idle;
+                cx.notify();
+            });
+        });
+        draw(cx);
+        cx.update_window(window, |_, window, cx| {
+            window.click("Development", cx);
+            assert_eq!(
+                settings::store(cx).read(cx).preferences.updates.channel,
+                beacon_updater::Channel::Development
+            );
+            assert!(!view.read(cx).dirty);
+            assert!(directory.path().join("settings.json").exists());
+            window.click("auto-check-updates", cx);
+            assert!(view.read(cx).updates.auto_check);
+            let saved: settings::Preferences = serde_json::from_slice(
+                &std::fs::read(directory.path().join("settings.json")).unwrap(),
+            )
+            .unwrap();
+            assert!(saved.updates.auto_check);
+            window.click("auto-check-updates", cx);
+            assert!(!view.read(cx).updates.auto_check);
+            view.update(cx, |view, cx| {
+                view.dirty = true;
+                cx.notify();
+            });
+            window.render_frame(cx);
+            assert!(window.find("save-preferences").visible());
         })
         .unwrap();
     }
