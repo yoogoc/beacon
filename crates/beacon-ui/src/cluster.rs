@@ -70,6 +70,7 @@ const METRICS_INTERVAL: Duration = Duration::from_secs(10);
 /// in the same sidebar, because that is where somebody looks for them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Mode {
+    Overview,
     Objects,
     Releases,
     Forwards,
@@ -78,6 +79,7 @@ pub enum Mode {
 impl Mode {
     pub fn label(&self) -> &'static str {
         match self {
+            Self::Overview => "Overview",
             Self::Objects => "Objects",
             Self::Releases => "Helm Releases",
             Self::Forwards => "Port Forwards",
@@ -167,6 +169,7 @@ pub struct ClusterView {
     bulk_deleting: bool,
     mode: Mode,
     releases: Releases,
+    overview: Option<Entity<crate::cluster_overview::OverviewView>>,
 
     /// Whether this view's tab is the one on screen.
     ///
@@ -207,6 +210,10 @@ pub(crate) struct ResourceRequested {
 }
 
 impl EventEmitter<ResourceRequested> for ClusterView {}
+pub(crate) struct OverviewRequested {
+    pub new_tab: bool,
+}
+impl EventEmitter<OverviewRequested> for ClusterView {}
 impl EventEmitter<crate::pod_files::FilesRequested> for ClusterView {}
 
 impl ClusterView {
@@ -342,6 +349,7 @@ impl ClusterView {
             bulk_deleting: false,
             mode: Mode::Objects,
             releases: Releases::Unopened,
+            overview: None,
             visible: true,
             _health: Task::ready(()),
             _namespaces: Task::ready(()),
@@ -404,7 +412,13 @@ impl ClusterView {
         }
         self.visible = visible;
 
-        if visible && !self.is_idle() {
+        if let Some(overview) = &self.overview {
+            overview.update(cx, |view, cx| {
+                view.set_visible(visible && self.mode == Mode::Overview, window, cx)
+            });
+        }
+
+        if visible && !self.is_idle() && self.mode != Mode::Overview {
             self.start_clock(cx);
             self.watch_metrics(window, cx);
         } else {
@@ -661,6 +675,32 @@ impl ClusterView {
             return;
         }
         self.mode = mode;
+        if mode == Mode::Overview && self.overview.is_none() {
+            let overview = cx.new(|cx| {
+                crate::cluster_overview::OverviewView::new(self.session.clone(), window, cx)
+            });
+            self._subscriptions.push(cx.subscribe(
+                &overview,
+                |_, _, event: &crate::cluster_overview::Navigate, cx| {
+                    cx.emit(ResourceRequested {
+                        kind: event.kind.clone(),
+                        scope: BTreeSet::new(),
+                        new_tab: false,
+                        target: event.target.clone(),
+                    });
+                },
+            ));
+            self.overview = Some(overview);
+        }
+        if let Some(overview) = &self.overview {
+            overview.update(cx, |view, cx| {
+                view.set_visible(self.visible && mode == Mode::Overview, window, cx)
+            });
+        }
+        if mode == Mode::Overview {
+            self._clock = Task::ready(());
+            self._metrics = Task::ready(());
+        }
         if mode == Mode::Releases {
             self.load_releases(window, cx);
         }
@@ -1123,6 +1163,12 @@ impl ClusterView {
     /// wrong is Escape killing the panel out from under somebody in vim, and
     /// asking the panel directly is something a reader can check.
     pub fn close_detail(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.mode == Mode::Overview {
+            if let Some(overview) = &self.overview {
+                overview.update(cx, |view, cx| view.close_detail(cx));
+            }
+            return;
+        }
         if let Some(creation) = &self.creation {
             if !creation.read(cx).is_running() {
                 self.creation = None;
@@ -1201,6 +1247,9 @@ impl ClusterView {
         }
         tracing::info!(kind = %kind.display_name(), "showing");
         self.mode = Mode::Objects;
+        if let Some(overview) = &self.overview {
+            overview.update(cx, |view, cx| view.set_visible(false, window, cx));
+        }
         self.kind = Some(kind);
         self.toolbar_open = false;
         self.list_settings.close();
@@ -1704,7 +1753,11 @@ impl ClusterView {
     /// A normal selection activates the existing tab for a kind or opens one;
     /// the context menu always asks the window to open a separate tab.
     pub(crate) fn sidebar_items(&mut self, cx: &mut Context<Self>) -> Vec<SidebarMenuItem> {
-        let current = self.kind.as_ref().map(|kind| kind.gvk());
+        let current = self
+            .kind
+            .as_ref()
+            .filter(|_| self.mode == Mode::Objects)
+            .map(|kind| kind.gvk());
 
         // A query replaces the sections with a flat ranked list: with a hundred
         // kinds, the answer to "where is it" should not be "in one of seven
@@ -1825,7 +1878,23 @@ impl ClusterView {
         // Keep the common sections directly under the cluster, as in a tree.
         // Only extensions get an extra heading, so the distinction is visible
         // without making Workloads and Config three levels deep.
-        let mut items = menu(cluster_sections);
+        let overview_menu_view = cx.entity().downgrade();
+        let mut items = vec![
+            SidebarMenuItem::new("Overview")
+                .icon(Icon::new(IconName::LayoutDashboard))
+                .active(self.mode == Mode::Overview)
+                .on_click(cx.listener(|_, _, _, cx| cx.emit(OverviewRequested { new_tab: false })))
+                .context_menu(move |menu, _, _| {
+                    let view = overview_menu_view.clone();
+                    menu.item(
+                        PopupMenuItem::new("Open in new tab").on_click(move |_, _, cx| {
+                            let _ = view
+                                .update(cx, |_, cx| cx.emit(OverviewRequested { new_tab: true }));
+                        }),
+                    )
+                }),
+        ];
+        items.extend(menu(cluster_sections));
         if !custom_sections.is_empty() {
             items.push(
                 SidebarMenuItem::new("Custom resources")
@@ -1839,7 +1908,7 @@ impl ClusterView {
             SidebarMenuItem::new("Cluster tools")
                 .icon(crate::icons::tools())
                 .click_to_toggle(true)
-                .default_open(mode != Mode::Objects)
+                .default_open(matches!(mode, Mode::Releases | Mode::Forwards))
                 .children(tools),
         );
         items
@@ -2485,6 +2554,12 @@ impl ClusterView {
 
 impl Render for ClusterView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if self.mode == Mode::Overview {
+            return div()
+                .size_full()
+                .children(self.overview.clone())
+                .into_any_element();
+        }
         if self.toolbar_open && self.toolbar_layout.get() != toolbar::Layout::Overflow {
             self.toolbar_open = false;
             self.namespace_menu_open = false;
@@ -2527,6 +2602,7 @@ impl Render for ClusterView {
             .into_any_element();
 
         let table = match self.mode {
+            Mode::Overview => unreachable!("Overview has its own content"),
             Mode::Objects => table,
             Mode::Releases => self.render_releases(cx),
             Mode::Forwards => self.render_forwards(cx),

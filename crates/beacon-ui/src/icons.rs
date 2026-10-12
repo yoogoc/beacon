@@ -40,6 +40,11 @@ gpui_kit::assets::icon_assets!(
         ClipboardPaste,
         Unlink,
         PanelLeft,
+        LayoutDashboard,
+        Server,
+        Box,
+        Cpu,
+        MemoryStick,
     ]
 );
 

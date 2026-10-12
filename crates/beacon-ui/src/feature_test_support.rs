@@ -48,7 +48,7 @@ pub(crate) fn kind(group: &str, name: &str, plural: &str) -> Kind {
             &GroupVersionKind::gvk(group, "v1", name),
             plural,
         ),
-        namespaced: name != "Namespace",
+        namespaced: !matches!(name, "Namespace" | "Node"),
         verbs: vec!["get".into(), "list".into(), "watch".into(), "patch".into()],
     }
 }
@@ -62,6 +62,10 @@ pub(crate) fn fixture(
         let fixture = Fixture::start(objects).await;
         let kinds = vec![
             kind("", "Pod", "pods"),
+            kind("", "Node", "nodes"),
+            kind("", "Event", "events"),
+            kind("apps", "StatefulSet", "statefulsets"),
+            kind("apps", "DaemonSet", "daemonsets"),
             kind("", "Service", "services"),
             kind("networking.k8s.io", "Ingress", "ingresses"),
             kind("discovery.k8s.io", "EndpointSlice", "endpointslices"),

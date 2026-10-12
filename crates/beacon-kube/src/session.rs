@@ -480,6 +480,35 @@ impl ClusterSession {
         }
     }
 
+    /// The dashboard reports missing metrics explicitly, unlike quiet table columns.
+    pub async fn metrics_report(&self) -> metrics::Report {
+        match &self.connection.metrics {
+            crate::connection::MetricsSource::Kubernetes => {
+                metrics::fetch_report(&self.client).await
+            }
+            crate::connection::MetricsSource::Disabled => metrics::Report {
+                error: Some("Metrics are disabled in cluster settings.".into()),
+                ..Default::default()
+            },
+            crate::connection::MetricsSource::Prometheus(config) => {
+                match metrics::fetch_prometheus(&self.connection.proxy, config).await {
+                    Ok(metrics) => metrics::Report {
+                        metrics,
+                        error: None,
+                    },
+                    Err(error) => metrics::Report {
+                        error: Some(error),
+                        ..Default::default()
+                    },
+                }
+            }
+        }
+    }
+
+    pub fn connection_options(&self) -> &crate::connection::ConnectionOptions {
+        &self.connection
+    }
+
     /// Helm releases, newest revision of each.
     pub async fn helm_releases(self: Arc<Self>, namespace: Option<String>) -> Result<Vec<Release>> {
         helm::list(&self.client, namespace.as_deref()).await

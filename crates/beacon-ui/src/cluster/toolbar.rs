@@ -429,6 +429,7 @@ impl ClusterView {
             other => other.label().to_string(),
         };
         let count = match self.mode {
+            Mode::Overview => String::new(),
             Mode::Objects if self.table.read(cx).delegate().is_loading() => String::new(),
             Mode::Objects if shown == total => total.to_string(),
             Mode::Objects => format!("{shown} of {total}"),

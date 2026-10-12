@@ -10,7 +10,7 @@
 //! wrong is the difference between 123 megabytes and 129 megabytes, or between
 //! a core and a nanocore.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use kube::{
     Api,
@@ -65,6 +65,9 @@ impl Usage {
 pub struct Metrics {
     /// Keyed by `namespace/name` for pods, and by bare name for nodes.
     usage: HashMap<String, Usage>,
+    // A missing Prometheus series must not become a zero in the dashboard.
+    cpu: HashSet<String>,
+    memory: HashSet<String>,
 }
 
 impl Metrics {
@@ -83,6 +86,18 @@ impl Metrics {
     pub fn len(&self) -> usize {
         self.usage.len()
     }
+
+    pub fn complete_node(&self, name: &str) -> Option<Usage> {
+        (self.cpu.contains(name) && self.memory.contains(name))
+            .then(|| self.get(None, name))
+            .flatten()
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct Report {
+    pub metrics: Metrics,
+    pub error: Option<String>,
 }
 
 fn resource(kind: &str, plural: &str) -> ApiResource {
@@ -97,16 +112,27 @@ fn resource(kind: &str, plural: &str) -> ApiResource {
 /// Never fails loudly: a cluster without metrics-server returns empty, which
 /// is what the columns show.
 pub async fn fetch(client: &kube::Client) -> Metrics {
-    let mut usage = HashMap::new();
+    fetch_report(client).await.metrics
+}
 
-    match list(client, resource("PodMetrics", "pods")).await {
+pub async fn fetch_report(client: &kube::Client) -> Report {
+    let mut metrics = Metrics::default();
+    let mut errors = Vec::new();
+    let (pods, nodes) = tokio::join!(
+        list(client, resource("PodMetrics", "pods")),
+        list(client, resource("NodeMetrics", "nodes")),
+    );
+
+    match pods {
         Ok(items) => {
             for item in items {
                 let Some(name) = item.metadata.name.as_deref() else {
                     continue;
                 };
                 let namespace = item.metadata.namespace.as_deref().unwrap_or_default();
-                usage.insert(format!("{namespace}/{name}"), pod_usage(&item.data));
+                metrics
+                    .usage
+                    .insert(format!("{namespace}/{name}"), pod_usage(&item.data));
             }
         }
         Err(error) => {
@@ -114,21 +140,37 @@ pub async fn fetch(client: &kube::Client) -> Metrics {
         }
     }
 
-    match list(client, resource("NodeMetrics", "nodes")).await {
+    match nodes {
         Ok(items) => {
             for item in items {
                 let Some(name) = item.metadata.name.clone() else {
                     continue;
                 };
-                usage.insert(name, read_usage(item.data.get("usage")));
+                for (field, present) in [("cpu", &mut metrics.cpu), ("memory", &mut metrics.memory)]
+                {
+                    if item.data["usage"][field]
+                        .as_str()
+                        .and_then(parse_quantity)
+                        .is_some_and(|v| v.is_finite() && v >= 0.)
+                    {
+                        present.insert(name.clone());
+                    }
+                }
+                metrics
+                    .usage
+                    .insert(name, read_usage(item.data.get("usage")));
             }
         }
         Err(error) => {
             tracing::debug!(%error, "no node metrics");
+            errors.push(format!("Node metrics: {}", error.user_message()));
         }
     }
 
-    Metrics { usage }
+    Report {
+        metrics,
+        error: (!errors.is_empty()).then(|| errors.join("\n")),
+    }
 }
 
 async fn list(client: &kube::Client, resource: ApiResource) -> Result<Vec<DynamicObject>> {
@@ -346,6 +388,7 @@ mod tests {
                     },
                 ),
             ]),
+            ..Default::default()
         };
 
         assert_eq!(metrics.get(Some("argo"), "api").unwrap().cpu_millis, 5);
@@ -451,6 +494,11 @@ fn merge_vector(
         else {
             continue;
         };
+        if cpu {
+            metrics.cpu.insert(key.clone());
+        } else {
+            metrics.memory.insert(key.clone());
+        }
         let usage = metrics.usage.entry(key).or_default();
         if cpu {
             usage.cpu_millis = usage
@@ -500,6 +548,18 @@ mod prometheus_tests {
             })
         );
         assert_eq!(metrics.get(None, "worker").unwrap().cpu_millis, 1500);
+        assert!(
+            metrics.complete_node("worker").is_none(),
+            "a CPU-only vector is not zero memory"
+        );
+        merge_vector(
+            &mut metrics,
+            &vector(json!({"node":"worker"}), "1024"),
+            false,
+            false,
+        )
+        .unwrap();
+        assert_eq!(metrics.complete_node("worker").unwrap().memory_bytes, 1024);
         assert!(
             merge_vector(
                 &mut metrics,

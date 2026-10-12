@@ -13,6 +13,7 @@ mod argo_node;
 pub mod bridge;
 pub mod catalog;
 pub mod cluster;
+mod cluster_overview;
 mod connections;
 mod context_sidebar;
 mod copyable_text;

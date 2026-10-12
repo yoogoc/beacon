@@ -47,6 +47,7 @@ It uses your existing kubeconfig and cluster permissions, discovering both built
 | Feature | What you can do |
 | --- | --- |
 | **Cluster workspace** | Switch contexts from the sidebar and keep multiple clusters connected. Recognize EKS names, set aliases and custom icons, disconnect, and reconnect. |
+| **Cluster overview** | Inspect health, CPU / memory / Pod capacity, requests and declared limits, node summaries, and recent warning events. Use session samples with Kubernetes Metrics API or 30m / 1h / 6h history with Prometheus; open node and event details in a side overlay. |
 | **Resources and CRDs** | Follow live Watch updates, use kubectl-style columns for built-in resources, and read CRD `additionalPrinterColumns` dynamically. |
 | **Nodes** | See taint counts, hover to inspect each taint, and view EKS node group membership. |
 | **Search and filters** | Fuzzy search, sorting, and namespace multi-select. Filter Pod / Deployment status, Service type, Ingress class, PVC attributes, Secret type, and CRD scope. |

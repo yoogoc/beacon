@@ -39,7 +39,7 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
 use crate::app_logs;
-use crate::cluster::{ClusterView, Mode, NavigationChanged, ResourceRequested};
+use crate::cluster::{ClusterView, Mode, NavigationChanged, OverviewRequested, ResourceRequested};
 use crate::connections::{Connections, SharedConnections};
 use crate::copyable_text::{copy_item, copyable_text};
 use crate::palette::{self, Choice, Palette, PaletteEvent};
@@ -262,6 +262,7 @@ struct Tab {
     _navigation: Option<Subscription>,
     _resource_requests: Option<Subscription>,
     _files_requests: Option<Subscription>,
+    _overview_requests: Option<Subscription>,
     files_object: Option<Arc<beacon_kube::DynamicObject>>,
 }
 
@@ -601,6 +602,7 @@ impl BeaconApp {
             _navigation: None,
             _resource_requests: None,
             _files_requests: None,
+            _overview_requests: None,
             files_object: None,
         });
         self.layout.insert(id, self.layout.focused, None);
@@ -678,6 +680,50 @@ impl BeaconApp {
                     self.open_kind(cluster, Some(kind), Some(scope), window, cx);
                 }
             }
+        }
+    }
+
+    fn go_to_overview(
+        &mut self,
+        cluster: ClusterId,
+        new_tab: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !new_tab {
+            let matches = |tab: &Tab| {
+                tab.cluster == cluster
+                    && self.layout.owner(tab.id) == Some(self.layout.focused)
+                    && match &tab.state {
+                        TabState::Connected(view) => view.read(cx).navigation().2 == Mode::Overview,
+                        _ => tab.initial_mode == Mode::Overview,
+                    }
+            };
+            if let Some(index) = self
+                .tabs
+                .get(self.active)
+                .filter(|tab| matches(tab))
+                .map(|_| self.active)
+                .or_else(|| self.tabs.iter().rposition(matches))
+            {
+                self.activate(index, window, cx);
+                return;
+            }
+            if self
+                .tabs
+                .get(self.active)
+                .is_some_and(|tab| tab.cluster == cluster)
+                && let Some(view) = self.cluster().filter(|view| view.read(cx).is_idle())
+            {
+                self.tabs[self.active].initial_mode = Mode::Overview;
+                view.update(cx, |view, cx| view.show_mode(Mode::Overview, window, cx));
+                return;
+            }
+        }
+        self.open_kind(cluster, None, Some(BTreeSet::new()), window, cx);
+        self.tabs[self.active].initial_mode = Mode::Overview;
+        if let Some(view) = self.cluster() {
+            view.update(cx, |view, cx| view.show_mode(Mode::Overview, window, cx));
         }
     }
 
@@ -798,6 +844,7 @@ impl BeaconApp {
             tab._navigation = None;
             tab._resource_requests = None;
             tab._files_requests = None;
+            tab._overview_requests = None;
             tab.state = if disconnected {
                 TabState::Disconnected
             } else if let Some(error) = &error {
@@ -923,6 +970,7 @@ impl BeaconApp {
             _navigation: None,
             _resource_requests: None,
             _files_requests: None,
+            _overview_requests: None,
             files_object: Some(object),
         });
         self.layout.insert(id, self.layout.focused, None);
@@ -944,7 +992,8 @@ impl BeaconApp {
         let resource_requests = cx.subscribe_in(
             &view,
             window,
-            move |app, _, event: &ResourceRequested, window, cx| {
+            move |app, source, event: &ResourceRequested, window, cx| {
+                let from_overview = source.read(cx).navigation().2 == Mode::Overview;
                 if let Some(index) = app.index_of(id) {
                     app.activate(index, window, cx);
                 }
@@ -969,7 +1018,20 @@ impl BeaconApp {
                     && let Some(view) = app.cluster()
                 {
                     view.update(cx, |view, cx| view.reveal_owner(target.clone(), window, cx));
+                } else if from_overview && let Some(view) = app.cluster() {
+                    view.update(cx, |view, cx| view.set_namespace(None, window, cx));
                 }
+            },
+        );
+        let overview_cluster = self.tabs[index].cluster.clone();
+        let overview_requests = cx.subscribe_in(
+            &view,
+            window,
+            move |app, _, event: &OverviewRequested, window, cx| {
+                if let Some(index) = app.index_of(id) {
+                    app.activate(index, window, cx);
+                }
+                app.go_to_overview(overview_cluster.clone(), event.new_tab, window, cx);
             },
         );
         let files_requests = cx.subscribe_in(
@@ -982,6 +1044,7 @@ impl BeaconApp {
         self.tabs[index]._files_requests = Some(files_requests);
         self.tabs[index]._navigation = Some(navigation);
         self.tabs[index]._resource_requests = Some(resource_requests);
+        self.tabs[index]._overview_requests = Some(overview_requests);
         cx.notify();
     }
 
@@ -1035,6 +1098,7 @@ impl BeaconApp {
         tab._navigation = None;
         tab._resource_requests = None;
         tab._files_requests = None;
+        tab._overview_requests = None;
         self.layout.remove(id);
         self.focus.focus(window, cx);
         self.sync_layout(window, cx);
@@ -3047,6 +3111,94 @@ mod rendering_tests {
     use super::*;
     use crate::feature_test_support as support;
     use gpui_kit::test::TestWindowExt as _;
+
+    #[::core::prelude::v1::test]
+    fn overview_is_explicit_reuses_its_tab_and_resource_navigation_preserves_it() {
+        let cx = &mut support::context();
+        let directory = tempfile::tempdir().unwrap();
+        support::workspace(cx, directory.path());
+        let (fixture, session) = support::fixture(cx, "overview-navigation", vec![]);
+        let (window, app) = cx.update(|cx| {
+            gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
+                window.set_view_retention(false);
+                cx.new(|cx| {
+                    let mut app = BeaconApp::new(window, cx);
+                    app.connections.update(cx, |state, _| {
+                        state.sessions.insert(session.id().clone(), session.clone());
+                    });
+                    app.open(session.id().clone(), window, cx);
+                    assert!(app.cluster().unwrap().read(cx).is_idle());
+                    assert_eq!(app.tabs.len(), 1);
+                    app.go_to_overview(session.id().clone(), false, window, cx);
+                    app
+                })
+            })
+            .unwrap()
+        });
+        support::render_until(cx, window, |window| {
+            window.find("overview-stat-Nodes").visible()
+        });
+        cx.update_window(window, |_, window, cx| {
+            window.click("overview-stat-Nodes", cx);
+        })
+        .unwrap();
+        support::settle(cx, |cx| app.read_with(cx, |app, _| app.tabs.len() == 2));
+        cx.update_window(window, |_, window, cx| {
+            app.update(cx, |app, cx| {
+                assert_eq!(app.tabs.len(), 2);
+                assert_eq!(
+                    app.cluster()
+                        .unwrap()
+                        .read(cx)
+                        .kind()
+                        .unwrap()
+                        .resource
+                        .kind,
+                    "Node"
+                );
+                app.go_to_overview(session.id().clone(), false, window, cx);
+                assert_eq!(app.tabs.len(), 2);
+                let overview = app.cluster().unwrap();
+                assert_eq!(overview.read(cx).navigation().2, Mode::Overview);
+                app.go_to_overview(session.id().clone(), true, window, cx);
+                assert_eq!(app.tabs.len(), 3);
+                let id = app.tabs[app.active].id;
+                let tab = app.take_tab(id, window, cx).unwrap();
+                app.receive_tab(tab, app.layout.focused, None, None, window, cx);
+                assert_eq!(app.tabs.len(), 3);
+                assert_eq!(
+                    app.cluster().unwrap().read(cx).navigation().2,
+                    Mode::Overview
+                );
+                app.disconnect(session.id(), window, cx);
+            });
+        })
+        .unwrap();
+        support::settle(cx, |cx| {
+            app.read_with(cx, |app, _| {
+                app.tabs
+                    .iter()
+                    .all(|tab| matches!(tab.state, TabState::Disconnected))
+            })
+        });
+        app.read_with(cx, |app, _| {
+            assert_eq!(
+                app.tabs
+                    .iter()
+                    .filter(|tab| tab.initial_mode == Mode::Overview)
+                    .count(),
+                2
+            )
+        });
+        assert!(
+            !fixture
+                .requests
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|(line, _)| line.starts_with("PATCH") || line.starts_with("DELETE"))
+        );
+    }
 
     #[::core::prelude::v1::test]
     fn context_sources_layouts_update_all_windows_and_groups_collapse_without_connecting() {

@@ -12,6 +12,7 @@ pub struct Fixture {
     pub requests: Arc<Mutex<Vec<(String, Value)>>>,
     objects: Arc<Mutex<Vec<Value>>>,
     refuse_exec: Arc<std::sync::atomic::AtomicBool>,
+    denied: Arc<Mutex<std::collections::HashSet<String>>>,
     events: broadcast::Sender<Value>,
     task: tokio::task::JoinHandle<()>,
 }
@@ -30,6 +31,8 @@ impl Fixture {
         let store = objects.clone();
         let refuse_exec = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let exec_policy = refuse_exec.clone();
+        let denied = Arc::new(Mutex::new(std::collections::HashSet::new()));
+        let denied_resources = denied.clone();
         let recorded = requests.clone();
         let changes = events.clone();
         let task = tokio::spawn(async move {
@@ -38,8 +41,8 @@ impl Fixture {
                 tokio::select! {
                     accepted = listener.accept() => {
                         let Ok((stream,_)) = accepted else { break; };
-                        let store = store.clone(); let recorded = recorded.clone(); let changes = changes.clone(); let exec_policy = exec_policy.clone();
-                        connections.spawn(async move { serve(stream,store,recorded,changes,exec_policy).await; });
+                        let store = store.clone(); let recorded = recorded.clone(); let changes = changes.clone(); let exec_policy = exec_policy.clone(); let denied_resources = denied_resources.clone();
+                        connections.spawn(async move { serve(stream,store,recorded,changes,exec_policy,denied_resources).await; });
                     }
                     _ = connections.join_next(), if !connections.is_empty() => {}
                 }
@@ -50,6 +53,7 @@ impl Fixture {
             requests,
             objects,
             refuse_exec,
+            denied,
             events,
             task,
         }
@@ -57,6 +61,9 @@ impl Fixture {
     pub fn refuse_exec(&self) {
         self.refuse_exec
             .store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+    pub fn deny(&self, resource: &str) {
+        self.denied.lock().unwrap().insert(resource.to_owned());
     }
     pub fn put(&self, object: Value) {
         let mut objects = self.objects.lock().unwrap();
@@ -100,6 +107,7 @@ async fn serve(
     requests: Arc<Mutex<Vec<(String, Value)>>>,
     events: broadcast::Sender<Value>,
     refuse_exec: Arc<std::sync::atomic::AtomicBool>,
+    denied: Arc<Mutex<std::collections::HashSet<String>>>,
 ) {
     let mut header = Vec::new();
     while !header.ends_with(b"\r\n\r\n") {
@@ -153,8 +161,18 @@ async fn serve(
     };
     let resource = parts.get(index).copied().unwrap_or("");
     let name = parts.get(index + 1).copied();
+    if denied.lock().unwrap().contains(resource) {
+        response(&mut stream, "403 Forbidden", json!({"kind":"Status","apiVersion":"v1","status":"Failure","reason":"Forbidden","message":format!("Fixture refuses {resource}"),"code":403}).to_string(), "application/json").await;
+        return;
+    }
     let kind = match resource {
+        "pods" if parts.get(1) == Some(&"metrics.k8s.io") => "PodMetrics",
+        "nodes" if parts.get(1) == Some(&"metrics.k8s.io") => "NodeMetrics",
         "pods" => "Pod",
+        "nodes" => "Node",
+        "events" => "Event",
+        "daemonsets" => "DaemonSet",
+        "statefulsets" => "StatefulSet",
         "services" => "Service",
         "endpointslices" => "EndpointSlice",
         "ingresses" => "Ingress",
