@@ -104,6 +104,11 @@ Beacon 读取 `KUBECONFIG`，未设置时读取 `~/.kube/config`。如需指定�
 KUBECONFIG=/path/to/kubeconfig cargo run --locked
 ```
 
+在 **Settings → Kubeconfigs** 中可添加多个本地文件、扫描目录或粘贴 YAML。
+添加前先预览并选择 context，来源设置自动保存；引用原文件保持原位，粘贴的配置
+以私有文件保存在 Beacon 的配置目录。在 **Settings → Workspace** 中可选择可折叠的来源
+分组或带来源标签的平铺列表。多个有效来源时显示归属，同一目录内重名的 context 通过文件名区分。
+
 首次启动后：
 
 1. 点击左侧集群名称进行连接。

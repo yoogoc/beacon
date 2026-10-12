@@ -105,6 +105,14 @@ Beacon reads `KUBECONFIG`, falling back to `~/.kube/config`. To select a configu
 KUBECONFIG=/path/to/kubeconfig cargo run --locked
 ```
 
+In **Settings → Kubeconfigs**, add multiple local files, watch a folder,
+or import pasted YAML. Preview and select contexts before adding them. Source
+changes save automatically; linked files stay in place, and pasted configurations
+are stored privately in Beacon's configuration folder. In **Settings → Workspace**,
+choose collapsible source groups or a flat list with source labels. Source indicators
+appear when contexts come from multiple sources; folder file names distinguish
+matching contexts within the same source.
+
 On your first launch:
 
 1. Click a cluster name in the sidebar to connect.

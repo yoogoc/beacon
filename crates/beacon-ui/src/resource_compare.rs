@@ -56,7 +56,7 @@ impl SelectItem for ClusterChoice {
 type Picker = Entity<SelectState<SearchableVec<String>>>;
 
 fn cluster_name(session: &ClusterSession, cx: &App) -> String {
-    crate::settings::store(cx)
+    let name = crate::settings::store(cx)
         .read(cx)
         .preferences
         .clusters
@@ -65,7 +65,12 @@ fn cluster_name(session: &ClusterSession, cx: &App) -> String {
         .map_or_else(
             || session.id().display_name().to_string(),
             |settings| settings.alias.clone(),
-        )
+        );
+    crate::sources::store(cx)
+        .read(cx)
+        .labels
+        .get(session.id())
+        .map_or(name.clone(), |source| format!("{name} · {source}"))
 }
 fn picker(choices: Vec<String>, selected: &str, window: &mut Window, cx: &mut App) -> Picker {
     cx.new(|cx| {

@@ -1,9 +1,12 @@
 //! Application and cluster settings, presented in independent native windows.
 mod theme_page;
 mod update_page;
+mod workspace_page;
 
 use crate::selection::radio;
-use crate::settings::{self, Appearance, ClusterIcon, ClusterSettings, CustomTheme};
+use crate::settings::{
+    self, Appearance, ClusterIcon, ClusterSettings, ContextDisplay, CustomTheme,
+};
 use beacon_kube::{
     ClusterId,
     connection::{MetricsSource, Prometheus, Proxy},
@@ -72,10 +75,16 @@ pub(crate) fn init(cx: &mut App) {
 pub(crate) fn application(cx: &mut App) {
     open(None, cx);
 }
+pub(crate) fn sources(cx: &mut App) {
+    open_section(None, Some(Section::Sources), cx);
+}
 pub(crate) fn cluster(id: ClusterId, cx: &mut App) {
     open(Some(id), cx);
 }
 fn open(id: Option<ClusterId>, cx: &mut App) {
+    open_section(id, None, cx);
+}
+fn open_section(id: Option<ClusterId>, section: Option<Section>, cx: &mut App) {
     cx.defer(move |cx| {
         let handle = match &id {
             Some(id) => cx.global::<Windows>().clusters.get(id.as_str()).copied(),
@@ -83,7 +92,14 @@ fn open(id: Option<ClusterId>, cx: &mut App) {
         };
         if let Some(handle) = handle
             && handle
-                .update(cx, |_, window, _| window.activate_window())
+                .update(cx, |root, window, cx| {
+                    if let Some(section) = section
+                        && let Ok(view) = root.view().clone().downcast::<PreferencesView>()
+                    {
+                        view.update(cx, |view, cx| view.select_section(section, window, cx));
+                    }
+                    window.activate_window();
+                })
                 .is_ok()
         {
             return;
@@ -99,7 +115,13 @@ fn open(id: Option<ClusterId>, cx: &mut App) {
         };
         let target = id.clone();
         match cx.open_window(options, move |window, cx| {
-            let view = cx.new(|cx| PreferencesView::new(target, window, cx));
+            let view = cx.new(|cx| {
+                let mut view = PreferencesView::new(target, window, cx);
+                if let Some(section) = section {
+                    view.select_section(section, window, cx);
+                }
+                view
+            });
             window.set_window_title(&view.read(cx).title());
             window.activate_window();
             cx.new(|cx| Root::new(view, window, cx))
@@ -184,24 +206,35 @@ fn setting_row(label: &str, description: &str, control: impl IntoElement, cx: &A
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Section {
     Appearance,
+    Workspace,
     Themes,
     Network,
     Updates,
+    Sources,
     Identity,
     Connection,
     Metrics,
     Yaml,
 }
 impl Section {
-    const APPLICATION: [Self; 4] = [Self::Appearance, Self::Themes, Self::Network, Self::Updates];
+    const APPLICATION: [Self; 6] = [
+        Self::Appearance,
+        Self::Workspace,
+        Self::Themes,
+        Self::Network,
+        Self::Sources,
+        Self::Updates,
+    ];
     const CLUSTER: [Self; 4] = [Self::Identity, Self::Connection, Self::Metrics, Self::Yaml];
 
     fn id(self) -> &'static str {
         match self {
             Self::Appearance => "settings-appearance",
+            Self::Workspace => "settings-workspace",
             Self::Themes => "settings-themes",
             Self::Network => "settings-network",
             Self::Updates => "settings-updates",
+            Self::Sources => "settings-sources",
             Self::Identity => "settings-identity",
             Self::Connection => "settings-connection",
             Self::Metrics => "settings-metrics",
@@ -211,9 +244,11 @@ impl Section {
     fn label(self) -> &'static str {
         match self {
             Self::Appearance => "Appearance",
+            Self::Workspace => "Workspace",
             Self::Themes => "Custom themes",
             Self::Network => "Network",
             Self::Updates => "Updates",
+            Self::Sources => "Kubeconfigs",
             Self::Identity => "Identity",
             Self::Connection => "Connection",
             Self::Metrics => "Metrics",
@@ -225,15 +260,18 @@ impl Section {
             Self::Identity => "Cluster identity",
             Self::Network => "Global proxy",
             Self::Metrics => "Metrics source",
+            Self::Sources => "Kubeconfig sources",
             _ => self.label(),
         }
     }
     fn description(self) -> &'static str {
         match self {
             Self::Appearance => "Make Beacon feel at home.",
+            Self::Workspace => "Choose how cluster contexts appear in the sidebar.",
             Self::Themes => "Choose a base, make it yours, then save and apply.",
             Self::Network => "Choose how Beacon connects to clusters and checks for updates.",
             Self::Updates => "Manage your version and update preferences.",
+            Self::Sources => "Manage where your available clusters come from.",
             Self::Identity => "Give this cluster a familiar name and icon.",
             Self::Connection => "Configure the proxy used when connecting to this cluster.",
             Self::Metrics => "Choose where pod and node usage metrics come from.",
@@ -243,9 +281,11 @@ impl Section {
     fn icon(self) -> IconName {
         match self {
             Self::Appearance => IconName::Palette,
+            Self::Workspace => IconName::PanelLeft,
             Self::Themes => IconName::Paintbrush,
             Self::Network => IconName::Network,
             Self::Updates => IconName::Download,
+            Self::Sources => IconName::Files,
             Self::Identity => IconName::ShipWheel,
             Self::Connection => IconName::Unplug,
             Self::Metrics => IconName::ChartNoAxesCombined,
@@ -343,6 +383,7 @@ struct PreferencesView {
     fonts: Option<Entity<FontFamilies>>,
     _font_ready: Option<Subscription>,
     updates: beacon_updater::Preferences,
+    context_display: ContextDisplay,
     updates_width: Rc<std::cell::Cell<Pixels>>,
     update_notes_expanded: bool,
     _updates: Option<Subscription>,
@@ -351,6 +392,7 @@ struct PreferencesView {
     dirty: bool,
     _inputs: Vec<Subscription>,
     _connections: Subscription,
+    sources: Option<Entity<crate::sources::SourcesView>>,
 }
 impl PreferencesView {
     fn new(id: Option<ClusterId>, window: &mut Window, cx: &mut Context<Self>) -> Self {
@@ -539,6 +581,7 @@ impl PreferencesView {
         let connection_subscription = cx.observe(&connections, |_, _, cx| cx.notify());
         Self {
             updates,
+            context_display: preferences.context_display,
             updates_width: Rc::new(std::cell::Cell::new(window.bounds().size.width - px(228.))),
             update_notes_expanded: false,
             _updates: update_subscription,
@@ -555,6 +598,7 @@ impl PreferencesView {
             dirty: false,
             _inputs: input_subscriptions,
             _connections: connection_subscription,
+            sources: None,
         }
     }
     fn title(&self) -> String {
@@ -603,6 +647,9 @@ impl PreferencesView {
     fn select_section(&mut self, section: Section, window: &mut Window, cx: &mut Context<Self>) {
         self.focus.focus(window, cx);
         self.section = section;
+        if section == Section::Sources && self.sources.is_none() {
+            self.sources = Some(cx.new(|cx| crate::sources::SourcesView::new(window, cx)));
+        }
         self.refresh_theme_preview(cx);
         self.sync_theme_pickers(window, cx);
         if section == Section::Themes {
@@ -698,6 +745,7 @@ impl PreferencesView {
             let mut target = None;
             match &self.page {
                 Page::Application(t) => {
+                    preferences.context_display = self.context_display;
                     preferences.updates = self.updates.clone();
                     preferences.proxy = proxy.unwrap_or_default();
                     preferences.appearance = if let Some(theme) = theme {
@@ -1430,7 +1478,7 @@ impl PreferencesView {
             .child(v_flex().gap_1().p_3().rounded_lg().bg(cx.theme().muted)
                 .child(hint("Kubeconfig context", cx))
                 .child(div().font_family(cx.theme().mono_font_family.clone()).text_size(cx.theme().mono_font_size)
-                    .child(crate::copyable_text::copyable_text("cluster-context", c.id.to_string()))))
+                    .child(crate::copyable_text::copyable_text("cluster-context", c.id.context_name().to_string()))))
             .into_any_element()
     }
 
@@ -1494,10 +1542,10 @@ impl PreferencesView {
             Page::Application(_) => (Icon::new(IconName::RadioTower), "Preferences".to_owned()),
             Page::Cluster(c) => (settings::icon(&c.icon), c.id.display_name().to_owned()),
         };
-        let sections = if cluster {
-            Section::CLUSTER
+        let sections: &[Section] = if cluster {
+            &Section::CLUSTER
         } else {
-            Section::APPLICATION
+            &Section::APPLICATION
         };
         v_flex()
             .w(px(180.))
@@ -1561,7 +1609,7 @@ impl PreferencesView {
                                 "APPLICATION"
                             }),
                     )
-                    .children(sections.into_iter().map(|section| {
+                    .children(sections.iter().copied().map(|section| {
                         let selected = self.section == section;
                         NavigationButton::new(section.id())
                             .selected(selected)
@@ -1623,8 +1671,12 @@ impl Render for PreferencesView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let body = match (&self.page, self.section) {
             (Page::Application(t), Section::Appearance) => self.appearance_form(t, cx),
+            (Page::Application(_), Section::Workspace) => self.context_display_form(window, cx),
             (Page::Application(t), Section::Themes) => self.theme_form(t, cx),
             (Page::Application(_), Section::Updates) => self.updates_form(cx),
+            (Page::Application(_), Section::Sources) => {
+                self.sources.as_ref().unwrap().clone().into_any_element()
+            }
             (Page::Cluster(c), Section::Identity) => self.identity_form(c, window, cx),
             (Page::Cluster(c), Section::Metrics) => self.metrics_form(c, cx),
             (Page::Cluster(c), Section::Yaml) => self.yaml_folding_form(c, cx),
@@ -1634,7 +1686,7 @@ impl Render for PreferencesView {
         let cluster = matches!(self.page, Page::Cluster(_));
         let status = if self.section == Section::Themes {
             "Preview only · Apply to use this theme across all windows"
-        } else if self.dirty && self.section == Section::Updates {
+        } else if self.dirty && matches!(self.section, Section::Updates | Section::Sources) {
             "Other settings have unsaved changes"
         } else if self.dirty {
             "Unsaved changes"
@@ -1644,6 +1696,7 @@ impl Render for PreferencesView {
                 Section::Identity => "Changes apply across cluster views after saving",
                 Section::Connection | Section::Metrics => "Connection changes require a reconnect",
                 Section::Updates => "Update preferences save automatically",
+                Section::Sources => "Source changes save automatically · Connections stay open",
                 _ => "Changes apply across all windows after saving",
             }
         };
@@ -1747,7 +1800,9 @@ impl Render for PreferencesView {
                                         !cluster
                                             && !matches!(
                                                 self.section,
-                                                Section::Updates | Section::Themes
+                                                Section::Updates
+                                                    | Section::Themes
+                                                    | Section::Sources
                                             ),
                                         |bar| {
                                             bar.child(
@@ -1807,16 +1862,24 @@ impl Render for PreferencesView {
                                     })
                                     .when(
                                         self.section != Section::Themes
-                                            && (self.section != Section::Updates || self.dirty),
+                                            && (!matches!(
+                                                self.section,
+                                                Section::Updates | Section::Sources
+                                            ) || self.dirty),
                                         |bar| {
                                             bar.child(
                                                 Button::new("save-preferences")
                                                     .primary()
-                                                    .label(if self.section == Section::Updates {
-                                                        "Save other settings"
-                                                    } else {
-                                                        "Save changes"
-                                                    })
+                                                    .label(
+                                                        if matches!(
+                                                            self.section,
+                                                            Section::Updates | Section::Sources
+                                                        ) {
+                                                            "Save other settings"
+                                                        } else {
+                                                            "Save changes"
+                                                        },
+                                                    )
                                                     .on_click(cx.listener(
                                                         |view, _, window, cx| {
                                                             view.save(false, window, cx)
@@ -2112,6 +2175,60 @@ mod update_tests {
             });
             settings::apply(None, cx);
         });
+    }
+
+    #[::core::prelude::v1::test]
+    fn context_sources_cards_keep_a_draft_and_save_the_selected_layout() {
+        let directory = tempfile::tempdir().unwrap();
+        let cx = &mut TestAppContext::single();
+        setup(cx, directory.path());
+        let (window, view) = cx.update(|cx| {
+            gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
+                window.set_view_retention(false);
+                cx.new(|cx| PreferencesView::new(None, window, cx))
+            })
+            .unwrap()
+        });
+        cx.update_window(window, |_, window, cx| {
+            window.resize(size(px(880.), px(850.)));
+            window.render_frame(cx);
+            window.click("settings-workspace", cx);
+            for width in [650., 880., 1100.] {
+                window.resize(size(px(width), px(1000.)));
+                window.render_frame(cx);
+                window.render_frame(cx);
+                for id in ["context-display-groups", "context-display-labels"] {
+                    let card = window.find(id);
+                    assert!(card.visible());
+                    assert!(
+                        card.bounds().right() <= window.bounds().size.width,
+                        "{id} at width {width}: card={:?}, window={:?}",
+                        card.bounds(),
+                        window.bounds()
+                    );
+                }
+            }
+            window.click("context-display-labels", cx);
+            assert!(view.read(cx).dirty);
+            assert_eq!(
+                settings::store(cx).read(cx).preferences.context_display,
+                ContextDisplay::SourceGroups
+            );
+            window.click("settings-network", cx);
+            window.click("save-preferences", cx);
+            assert!(!view.read(cx).dirty);
+            assert_eq!(
+                settings::store(cx).read(cx).preferences.context_display,
+                ContextDisplay::SourceLabels
+            );
+            let saved: settings::Preferences = serde_json::from_slice(
+                &std::fs::read(directory.path().join("settings.json")).unwrap(),
+            )
+            .unwrap();
+            assert_eq!(saved.context_display, ContextDisplay::SourceLabels);
+            window.remove_window();
+        })
+        .unwrap();
     }
 
     #[::core::prelude::v1::test]

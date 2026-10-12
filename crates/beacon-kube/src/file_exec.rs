@@ -154,7 +154,7 @@ fn command(
     let mut command = tokio::process::Command::new(session.file_program());
     command.args([
         "--context",
-        session.id().as_str(),
+        session.id().context_name(),
         "--namespace",
         &target.namespace,
         "--request-timeout=0",

@@ -142,27 +142,38 @@ impl ClusterSession {
         id: ClusterId,
         connection: crate::connection::ConnectionOptions,
     ) -> Result<Self> {
+        let config =
+            kube::config::Kubeconfig::read().map_err(|error| Error::connect(&id, &error))?;
+        let context = id.context_name().to_string();
+        Self::connect_config(id, context, config, connection).await
+    }
+
+    /// Uses the selected source snapshot for both the API client and kubectl.
+    pub async fn connect_config(
+        id: ClusterId,
+        context: String,
+        mut config_copy: kube::config::Kubeconfig,
+        connection: crate::connection::ConnectionOptions,
+    ) -> Result<Self> {
         connection.validate().map_err(|diagnosis| Error::Connect {
             context: id.to_string(),
             diagnosis,
         })?;
         let options = KubeConfigOptions {
-            context: Some(id.as_str().to_string()),
+            context: Some(context.clone()),
             ..Default::default()
         };
 
-        let mut config_copy =
-            kube::config::Kubeconfig::read().map_err(|error| Error::connect(&id, &error))?;
         connection
             .proxy
-            .prepare_kubeconfig(&mut config_copy, id.as_str())
+            .prepare_kubeconfig(&mut config_copy, &context)
             .map_err(|diagnosis| Error::Connect {
                 context: id.to_string(),
                 diagnosis,
             })?;
         let transport = crate::connection::Transport::new(
             config_copy.clone(),
-            id.as_str(),
+            &context,
             connection.proxy.clone(),
         )
         .map_err(|diagnosis| Error::Connect {
@@ -415,7 +426,7 @@ impl ClusterSession {
     ) -> Result<exec::Output> {
         exec::run_with_transport(
             &self.client,
-            self.id.as_str(),
+            self.id.context_name(),
             &namespace,
             &pod,
             container.as_deref(),

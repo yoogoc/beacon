@@ -30,6 +30,7 @@ pub mod resources;
 pub mod rollout;
 pub mod session;
 pub mod shell_env;
+pub mod sources;
 pub mod store;
 pub mod terminal;
 #[cfg(any(test, feature = "test-support"))]
@@ -58,23 +59,34 @@ pub use watch::{Subscription, WatchKey, WatchSummary};
 
 use std::fmt;
 
-/// Identifies one cluster connection. This is the kubeconfig context name,
-/// which is the only identifier the user actually recognises.
+/// Identifies a connection, including its optional local source scope. The
+/// original context name remains available for API selection and kubectl.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct ClusterId(String);
+pub struct ClusterId(String, Option<String>);
 
 impl ClusterId {
     pub fn new(context_name: impl Into<String>) -> Self {
-        Self(context_name.into())
+        Self(context_name.into(), None)
     }
 
     pub fn as_str(&self) -> &str {
         &self.0
     }
 
+    /// The API/kubectl context, without Beacon's source identity prefix.
+    pub fn context_name(&self) -> &str {
+        self.1.as_deref().unwrap_or(&self.0)
+    }
+    pub fn from_source(source: &str, file: u64, context: &str) -> Self {
+        Self(
+            format!("beacon-source/{source}/{file:016x}/{context}"),
+            Some(context.to_owned()),
+        )
+    }
+
     /// Only the presentation is shortened; Display and as_str retain the context ID.
     pub fn display_name(&self) -> &str {
-        config::EksCluster::parse(&self.0).map_or(self.as_str(), |eks| eks.name)
+        config::EksCluster::parse(self.context_name()).map_or(self.context_name(), |eks| eks.name)
     }
 }
 

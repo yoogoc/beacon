@@ -50,11 +50,30 @@ impl Connections {
             return;
         }
         self.errors.remove(&id);
+        let config = crate::sources::store(cx)
+            .read(cx)
+            .catalog
+            .targets
+            .get(&id)
+            .cloned();
+        let Some(config) = config else {
+            self.errors.insert(id.clone(), "This context is no longer available from an enabled kubeconfig source. Check Kubeconfig sources before reconnecting.".into());
+            cx.emit(Changed(id));
+            cx.notify();
+            return;
+        };
         tracing::info!(context = %id, "connecting shared cluster session");
         let epoch = *self.epochs.entry(id.clone()).or_default();
         let target = id.clone();
-        let connecting = Bridge::global(cx)
-            .run_cancellable(async move { ClusterSession::connect_with(target, options).await });
+        let connecting = Bridge::global(cx).run_cancellable(async move {
+            ClusterSession::connect_config(
+                target,
+                config.context,
+                (*config.config).clone(),
+                options,
+            )
+            .await
+        });
         let task_id = id.clone();
         let task = cx.spawn(async move |this, cx| {
             let result = connecting.result().await;

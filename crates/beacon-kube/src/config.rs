@@ -54,7 +54,7 @@ pub struct ContextEntry {
 impl ContextEntry {
     /// Recognises EKS even when the user gave its context a custom alias.
     pub fn eks(&self) -> Option<EksCluster<'_>> {
-        EksCluster::parse(&self.cluster).or_else(|| EksCluster::parse(self.id.as_str()))
+        EksCluster::parse(&self.cluster).or_else(|| EksCluster::parse(self.id.context_name()))
     }
 
     /// Custom aliases stay as written; ARN context names become cluster names.
@@ -98,6 +98,9 @@ pub struct Contexts {
 }
 
 impl Contexts {
+    pub fn from_entries(entries: Vec<ContextEntry>) -> Self {
+        Self { entries }
+    }
     /// Reads `$KUBECONFIG`, falling back to `~/.kube/config`.
     pub fn load() -> Result<Self> {
         Ok(Self::from_kubeconfig(&Kubeconfig::read()?))

@@ -40,6 +40,13 @@ pub(crate) enum Appearance {
     Dark,
     Custom(String),
 }
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum ContextDisplay {
+    #[default]
+    SourceGroups,
+    SourceLabels,
+}
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub(crate) struct CustomTheme {
@@ -151,11 +158,13 @@ pub(crate) struct ClusterSettings {
 #[serde(default)]
 pub(crate) struct Preferences {
     pub appearance: Appearance,
+    pub context_display: ContextDisplay,
     pub themes: BTreeMap<String, CustomTheme>,
     pub proxy: Proxy,
     pub clusters: BTreeMap<String, ClusterSettings>,
     pub updates: beacon_updater::Preferences,
     pub resources: BTreeMap<String, crate::table_preferences::ResourcePreferences>,
+    pub kubeconfigs: beacon_kube::sources::Preferences,
 }
 impl Preferences {
     pub fn yaml_folding(&self, id: &ClusterId) -> crate::yaml_folding::YamlFolding {
@@ -174,6 +183,7 @@ impl Preferences {
         }
     }
     fn validate(&self) -> Result<(), String> {
+        self.kubeconfigs.validate()?;
         self.proxy.validate()?;
         for resource in self.resources.values() {
             resource.validate()?;
@@ -421,7 +431,8 @@ fn custom_icon_data(path: &Path) -> Option<Arc<[u8]>> {
 #[cfg(test)]
 mod tests {
     use super::{
-        Appearance, ClusterSettings, CustomTheme, Preferences, custom_icon_data, read, write,
+        Appearance, ClusterSettings, ContextDisplay, CustomTheme, Preferences, custom_icon_data,
+        read, write,
     };
     use beacon_kube::{ClusterId, connection::Proxy};
     use gpui_kit::{component::Theme, px, rgb};
@@ -455,9 +466,11 @@ mod tests {
             .insert("button.primary.foreground".into(), "#00FF00".into());
         p.themes.insert(t.name.clone(), t.clone());
         p.appearance = Appearance::Custom(t.name.clone());
+        p.context_display = ContextDisplay::SourceLabels;
         write(dir.path(), &p).unwrap();
         let read = read(dir.path()).unwrap();
         assert_eq!(read.appearance, p.appearance);
+        assert_eq!(read.context_display, ContextDisplay::SourceLabels);
         assert_eq!(read.themes[&t.name].colors, t.colors);
         assert_eq!(
             std::fs::read_dir(dir.path().join("themes"))
@@ -477,6 +490,7 @@ mod tests {
         )
         .unwrap();
         assert!(old.resources.is_empty());
+        assert_eq!(old.context_display, ContextDisplay::SourceGroups);
         let mut preferences = old;
         let saved = ResourcePreferences {
             columns: ColumnLayout {

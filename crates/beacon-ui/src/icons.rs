@@ -35,6 +35,11 @@ gpui_kit::assets::icon_assets!(
         Link,
         FileCode,
         FileArchive,
+        Files,
+        FileKey,
+        ClipboardPaste,
+        Unlink,
+        PanelLeft,
     ]
 );
 

@@ -196,9 +196,6 @@ pub(crate) struct Transport {
 }
 impl Transport {
     pub(crate) fn new(mut config: Kubeconfig, context: &str, proxy: Proxy) -> Result<Self, String> {
-        if matches!(proxy, Proxy::System) {
-            return Ok(Self::default());
-        }
         let cluster_name = config
             .contexts
             .iter()
@@ -212,10 +209,12 @@ impl Transport {
             .find(|c| c.name == cluster_name)
             .and_then(|c| c.cluster.as_mut())
             .ok_or("Cluster is missing from kubeconfig.")?;
-        cluster.proxy_url = match &proxy {
-            Proxy::Custom(url) => Some(url.clone()),
-            _ => None,
-        };
+        if !matches!(proxy, Proxy::System) {
+            cluster.proxy_url = match &proxy {
+                Proxy::Custom(url) => Some(url.clone()),
+                _ => None,
+            };
+        }
         let mut file = tempfile::NamedTempFile::new().map_err(|e| e.to_string())?;
         serde_json::to_writer(&mut file, &config).map_err(|e| e.to_string())?;
         file.flush().map_err(|e| e.to_string())?;
@@ -284,6 +283,18 @@ mod tests {
     fn temporary_kubeconfig_and_child_environment_agree() {
         let config = Kubeconfig::from_yaml("clusters:\n- name: local\n  cluster:\n    server: https://local\n    proxy-url: http://old:8080\ncontexts:\n- name: demo\n  context:\n    cluster: local\n").unwrap();
         let direct = Transport::new(config.clone(), "demo", Proxy::Direct).unwrap();
+        let system = Transport::new(config.clone(), "demo", Proxy::System).unwrap();
+        let snapshot = Kubeconfig::read_from(system.config.as_ref().unwrap().path()).unwrap();
+        assert_eq!(
+            snapshot.clusters[0]
+                .cluster
+                .as_ref()
+                .unwrap()
+                .proxy_url
+                .as_deref(),
+            Some("http://old:8080")
+        );
+        assert!(system.environment().is_empty());
         let read = Kubeconfig::read_from(direct.config.as_ref().unwrap().path()).unwrap();
         assert!(
             read.clusters[0]

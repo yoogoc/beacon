@@ -29,7 +29,7 @@ use gpui_kit::component::input::Input;
 use gpui_kit::component::menu::{ContextMenuExt as _, DropdownMenu as _, PopupMenuItem};
 use gpui_kit::component::popover::Popover;
 use gpui_kit::component::resizable::{ResizableState, h_resizable, resizable_panel, v_resizable};
-use gpui_kit::component::sidebar::{Sidebar, SidebarGroup, SidebarMenu, SidebarMenuItem};
+use gpui_kit::component::sidebar::{Sidebar, SidebarMenu, SidebarMenuItem};
 use gpui_kit::component::spinner::Spinner;
 use gpui_kit::component::tooltip::Tooltip;
 use gpui_kit::component::{
@@ -54,6 +54,7 @@ gpui_kit::actions!(
         OpenAppLogs,
         OpenShortcuts,
         OpenSettings,
+        OpenKubeconfigSources,
         CheckForUpdates,
         Quit,
         NewTab,
@@ -71,6 +72,24 @@ gpui_kit::actions!(
 /// The sidebar carries the cluster names, leaving room for more resource tabs.
 const TAB_WIDTH: Pixels = px(190.);
 
+fn application_menu() -> impl IntoElement {
+    // Block the caption hitbox around the entire popover trigger. Occluding
+    // only its Button hides the parent mouse-down handler that opens the menu.
+    div().id("application-menu-controls").occlude().child(
+        Button::new("view-menu")
+            .ghost()
+            .small()
+            .label("Menu")
+            .dropdown_menu(|menu, _, _| {
+                menu.menu("Settings…", Box::new(OpenSettings))
+                    .menu("Kubeconfig sources…", Box::new(OpenKubeconfigSources))
+                    .menu("Check for updates…", Box::new(CheckForUpdates))
+                    .menu("App logs", Box::new(OpenAppLogs))
+                    .menu("Keyboard shortcuts", Box::new(OpenShortcuts))
+            }),
+    )
+}
+
 /// Installs the keys everything else is reachable from.
 ///
 /// Bound without a context, so they work wherever focus happens to be -- the
@@ -81,9 +100,11 @@ pub fn init(log_directory: PathBuf, cx: &mut App) {
     cx.set_global(SharedConnections(connections));
     cx.set_global(WorkspaceWindows::default());
     crate::settings::init(cx);
+    crate::sources::init(cx);
     crate::preferences::init(cx);
     app_logs::init(log_directory, cx);
     cx.on_action(|_: &OpenSettings, cx| crate::preferences::application(cx));
+    cx.on_action(|_: &OpenKubeconfigSources, cx| crate::preferences::sources(cx));
     cx.on_action(|_: &CheckForUpdates, cx| {
         crate::preferences::application(cx);
         crate::updates::store(cx).update(cx, |view, cx| view.check(cx));
@@ -97,6 +118,7 @@ pub fn init(log_directory: PathBuf, cx: &mut App) {
     cx.set_menus([
         Menu::new("Beacon").items([
             MenuItem::action("Settings…", OpenSettings),
+            MenuItem::action("Kubeconfig sources…", OpenKubeconfigSources),
             MenuItem::action("Check for updates…", CheckForUpdates),
             MenuItem::separator(),
             MenuItem::os_submenu("Services", SystemMenuType::Services),
@@ -328,6 +350,8 @@ pub struct BeaconApp {
     sidebar_collapsed: bool,
     sidebar_split: Entity<ResizableState>,
     contexts: Result<Contexts, String>,
+    source_labels: HashMap<ClusterId, String>,
+    closed_sources: BTreeSet<String>,
     preferences: crate::settings::Preferences,
 
     /// Every cluster connected in this session, shared by every tab on it.
@@ -357,7 +381,9 @@ impl BeaconApp {
     }
 
     fn new_workspace(main_window: bool, window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let contexts = Contexts::load().map_err(|err| err.to_string());
+        let source_store = crate::sources::store(cx);
+        let contexts = Ok(source_store.read(cx).catalog.contexts.clone());
+        let source_labels = source_store.read(cx).catalog.labels();
 
         match &contexts {
             Ok(contexts) => tracing::info!(
@@ -407,6 +433,32 @@ impl BeaconApp {
                 view.sync_connection(&event.0, window, cx);
             },
         );
+        let source_events = cx.subscribe_in(
+            &source_store,
+            window,
+            |view, sources, _: &crate::sources::Changed, _, cx| {
+                let mut entries = sources.read(cx).catalog.contexts.entries().to_vec();
+                let mut labels = sources.read(cx).catalog.labels();
+                // A source can disappear while its sessions remain connected.
+                // Keep those connections reachable for an explicit disconnect.
+                if let Ok(previous) = &view.contexts {
+                    for entry in previous.entries() {
+                        if !entries.iter().any(|current| current.id == entry.id)
+                            && (view.connections.read(cx).sessions.contains_key(&entry.id)
+                                || view.connections.read(cx).connecting(&entry.id))
+                        {
+                            entries.push(entry.clone());
+                            if let Some(label) = view.source_labels.get(&entry.id) {
+                                labels.insert(entry.id.clone(), label.clone());
+                            }
+                        }
+                    }
+                }
+                view.contexts = Ok(Contexts::from_entries(entries));
+                view.source_labels = labels;
+                cx.notify();
+            },
+        );
         let id = cx.entity_id();
         let weak = cx.weak_entity();
         cx.global_mut::<WorkspaceWindows>().windows.insert(
@@ -433,6 +485,8 @@ impl BeaconApp {
             sidebar_collapsed: false,
             sidebar_split: cx.new(|_| ResizableState::default()),
             contexts,
+            source_labels,
+            closed_sources: BTreeSet::new(),
             preferences,
             connections,
             tabs: Vec::new(),
@@ -442,7 +496,12 @@ impl BeaconApp {
             activity_open: None,
             activity_refresh: None,
             quit_prompt_open: false,
-            _subscriptions: vec![palette_events, preferences_events, connection_events],
+            _subscriptions: vec![
+                palette_events,
+                preferences_events,
+                connection_events,
+                source_events,
+            ],
         };
 
         if let Some(updater) = crate::updates::maybe_store(cx) {
@@ -556,6 +615,7 @@ impl BeaconApp {
     /// The resource context menu and ⌘T open new tabs; selecting a cluster
     /// reuses one in the focused pane.
     fn go_to(&mut self, cluster: ClusterId, window: &mut Window, cx: &mut Context<Self>) {
+        self.reveal_source(&cluster, cx);
         if self
             .tabs
             .get(self.active)
@@ -674,6 +734,26 @@ impl BeaconApp {
         let disconnected = state.disconnected.contains(cluster);
         let error = state.errors.get(cluster).cloned();
         let connecting = state.connecting(cluster);
+        if session.is_none()
+            && !connecting
+            && !crate::sources::store(cx)
+                .read(cx)
+                .catalog
+                .targets
+                .contains_key(cluster)
+        {
+            if let Ok(contexts) = &self.contexts {
+                self.contexts = Ok(Contexts::from_entries(
+                    contexts
+                        .entries()
+                        .iter()
+                        .filter(|entry| &entry.id != cluster)
+                        .cloned()
+                        .collect(),
+                ));
+            }
+            self.source_labels.remove(cluster);
+        }
         let indices: Vec<_> = self
             .tabs
             .iter()
@@ -910,6 +990,7 @@ impl BeaconApp {
         let Some(id) = self.tabs.get(index).map(|tab| tab.id) else {
             return;
         };
+        self.reveal_source(&self.tabs[index].cluster.clone(), cx);
         self.layout.select(id);
         self.sync_layout(window, cx);
     }
@@ -1498,13 +1579,24 @@ impl BeaconApp {
             .map(|contexts| contexts.entries().to_vec())
             .unwrap_or_default();
 
-        sources.cluster_aliases = self
-            .preferences
+        sources.cluster_aliases = sources
             .clusters
             .iter()
-            .filter(|(_, c)| !c.alias.is_empty())
-            .map(|(id, c)| (ClusterId::new(id), c.alias.clone()))
+            .filter_map(|entry| {
+                self.preferences
+                    .clusters
+                    .get(entry.id.as_str())
+                    .filter(|c| !c.alias.is_empty())
+                    .map(|c| (entry.id.clone(), c.alias.clone()))
+            })
             .collect();
+        for entry in &sources.clusters {
+            if self.source_labels.contains_key(&entry.id) {
+                sources
+                    .cluster_aliases
+                    .insert(entry.id.clone(), self.cluster_display_name(&entry.id));
+            }
+        }
         self.palette.update(cx, |palette, cx| {
             palette.open(sources, window, cx);
         });
@@ -1677,19 +1769,7 @@ impl BeaconApp {
                         )
                         .child(div().font_weight(FontWeight::SEMIBOLD).child("Beacon"))
                         .when(!cfg!(target_os = "macos"), |bar| {
-                            bar.child(
-                                Button::new("view-menu")
-                                    .occlude()
-                                    .ghost()
-                                    .small()
-                                    .label("Menu")
-                                    .dropdown_menu(|menu, _, _| {
-                                        menu.menu("Settings…", Box::new(OpenSettings))
-                                            .menu("Check for updates…", Box::new(CheckForUpdates))
-                                            .menu("App logs", Box::new(OpenAppLogs))
-                                            .menu("Keyboard shortcuts", Box::new(OpenShortcuts))
-                                    }),
-                            )
+                            bar.child(application_menu())
                         }),
                 )
                 .child(
@@ -1707,7 +1787,7 @@ impl BeaconApp {
         self.contexts.as_ref().ok()?.get(id)
     }
 
-    fn cluster_display_name<'a>(&'a self, id: &'a ClusterId) -> &'a str {
+    fn base_cluster_name<'a>(&'a self, id: &'a ClusterId) -> &'a str {
         if let Some(settings) = self.preferences.clusters.get(id.as_str())
             && !settings.alias.is_empty()
         {
@@ -1716,15 +1796,22 @@ impl BeaconApp {
         self.context_entry(id)
             .map_or_else(|| id.display_name(), ContextEntry::display_name)
     }
+    fn cluster_display_name(&self, id: &ClusterId) -> String {
+        let name = self.base_cluster_name(id);
+        self.source_labels
+            .get(id)
+            .map_or_else(|| name.to_string(), |source| format!("{name} · {source}"))
+    }
 
     fn cluster_description(&self, id: &ClusterId) -> String {
         match self.context_entry(id) {
             Some(entry) => format!(
-                "{}\nContext: {id}\nCluster: {}",
+                "{}\nContext: {}\nCluster: {}",
                 entry.label(),
+                id.context_name(),
                 entry.cluster
             ),
-            None => format!("Context: {id}"),
+            None => format!("Context: {}", id.context_name()),
         }
     }
 
@@ -1744,9 +1831,27 @@ impl BeaconApp {
         }
     }
 
+    fn reveal_source(&mut self, id: &ClusterId, cx: &mut Context<Self>) {
+        let source = crate::sources::store(cx)
+            .read(cx)
+            .catalog
+            .source_for(id)
+            .map_or_else(|| "unavailable".to_string(), |source| source.id.clone());
+        if self.closed_sources.remove(&source) {
+            cx.notify();
+        }
+    }
+
+    fn toggle_source(&mut self, source: String, cx: &mut Context<Self>) {
+        if !self.closed_sources.remove(&source) {
+            self.closed_sources.insert(source);
+        }
+        cx.notify();
+    }
+
     /// The cluster tree belongs to the window, not to a tab. The expanded
     /// cluster borrows only its resource navigation from the active view.
-    fn render_sidebar(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_sidebar(&self, cx: &mut Context<Self>) -> AnyElement {
         let active = self.tabs.get(self.active).map(|tab| tab.cluster.clone());
         let (search, mut resources, searching) = self
             .cluster()
@@ -1771,113 +1876,263 @@ impl BeaconApp {
                     .collect()
             })
             .unwrap_or_default();
-
-        let rows = ids.into_iter().map(|id| {
-            let selected = active.as_ref() == Some(&id);
-            let color = self.cluster_color(&id, cx);
-            let connected = self.connections.read(cx).sessions.contains_key(&id);
-            let target = id.clone();
-            let menu_target = id.clone();
-            let menu_view = cx.entity().downgrade();
-            let can_disconnect = connected
-                || self
-                    .tabs
-                    .iter()
-                    .any(|tab| tab.cluster == id && matches!(tab.state, TabState::Connecting));
-            let is_eks = self
-                .context_entry(&id)
-                .is_some_and(|entry| entry.eks().is_some());
-            let icon = self
-                .preferences
-                .clusters
-                .get(id.as_str())
-                .map(|c| c.icon.clone())
-                .unwrap_or_default();
-            let description = self.cluster_description(&id);
-            let tooltip_id = SharedString::from(format!("cluster-info-{id}"));
-            SidebarMenuItem::new(self.cluster_display_name(&id).to_string())
-                .icon(crate::settings::icon(&icon).text_color(color))
-                .active(selected)
-                .click_to_open(true)
-                .default_open(selected)
-                .children(if selected {
-                    std::mem::take(&mut resources)
-                } else {
-                    Vec::new()
-                })
-                .suffix(move |_, cx| {
-                    let description = description.clone();
-                    h_flex()
-                        .id(tooltip_id.clone())
-                        .gap_2()
-                        .text_color(cx.theme().muted_foreground)
-                        .when(is_eks, |row| row.child(div().text_xs().child("EKS")))
-                        .child(if connected {
-                            div()
-                                .size(px(7.))
-                                .rounded_full()
-                                .bg(cx.theme().tone(Tone::Healthy))
-                                .into_any_element()
-                        } else {
-                            div().child("›").into_any_element()
+        let catalog = crate::sources::store(cx).read(cx).catalog.clone();
+        let multiple_sources = ids
+            .iter()
+            .map(|id| {
+                catalog
+                    .source_for(id)
+                    .map_or("unavailable", |source| source.id.as_str())
+            })
+            .collect::<BTreeSet<_>>()
+            .len()
+            > 1;
+        let source_labels = multiple_sources
+            && self.preferences.context_display == crate::settings::ContextDisplay::SourceLabels;
+        let mut rows = ids
+            .into_iter()
+            .map(|id| {
+                let source_group = catalog
+                    .source_for(&id)
+                    .map(|s| s.id.clone())
+                    .unwrap_or_else(|| "unavailable".into());
+                let selected = active.as_ref() == Some(&id);
+                let color = self.cluster_color(&id, cx);
+                let connected = self.connections.read(cx).sessions.contains_key(&id);
+                let target = id.clone();
+                let menu_target = id.clone();
+                let menu_view = cx.entity().downgrade();
+                let can_disconnect = connected
+                    || self
+                        .tabs
+                        .iter()
+                        .any(|tab| tab.cluster == id && matches!(tab.state, TabState::Connecting));
+                let is_eks = self
+                    .context_entry(&id)
+                    .is_some_and(|entry| entry.eks().is_some());
+                let icon = self
+                    .preferences
+                    .clusters
+                    .get(id.as_str())
+                    .map(|c| c.icon.clone())
+                    .unwrap_or_default();
+                let mut description = self.cluster_description(&id);
+                if let Some(source) = catalog.source_for(&id) {
+                    description.push_str(&format!("\nSource: {}", source.name));
+                    if let Some(context) = source
+                        .contexts
+                        .iter()
+                        .find(|context| context.entry.id == id)
+                    {
+                        description.push_str(&format!(
+                            "\nFile: {}\nAPI Server: {}",
+                            context.file.display(),
+                            context.server
+                        ));
+                    }
+                } else if let Some(source) = self.source_labels.get(&id) {
+                    description.push_str(&format!("\nSource: {source} (unavailable)"));
+                }
+                let source_name = source_labels.then(|| {
+                    catalog
+                        .source_for(&id)
+                        .map(|source| {
+                            if source.id == "system" {
+                                "System".into()
+                            } else {
+                                source.name.clone()
+                            }
                         })
-                        .tooltip(move |window, cx| {
-                            Tooltip::new(description.clone()).build(window, cx)
+                        .or_else(|| self.source_labels.get(&id).cloned())
+                        .unwrap_or_else(|| "Unavailable".into())
+                });
+                let tooltip_id = SharedString::from(format!("cluster-info-{id}"));
+                let file_label = catalog.source_for(&id).and_then(|source| {
+                    source
+                        .contexts
+                        .iter()
+                        .find(|context| context.entry.id == id)
+                        .and_then(|context| {
+                            context
+                                .file
+                                .strip_prefix(std::path::Path::new(&source.location))
+                                .ok()
                         })
-                })
-                .context_menu(move |menu, _, _| {
-                    let target = menu_target.clone();
-                    let view = menu_view.clone();
-                    let reconnect_target = menu_target.clone();
-                    let reconnect_view = menu_view.clone();
-                    let settings_target = menu_target.clone();
-                    menu.item(
-                        PopupMenuItem::new("Cluster settings…").on_click(move |_, _, cx| {
-                            crate::preferences::cluster(settings_target.clone(), cx)
-                        }),
-                    )
-                    .separator()
-                    .item(
-                        PopupMenuItem::new("Disconnect")
-                            .disabled(!can_disconnect)
-                            .on_click(move |_, window, cx| {
-                                let _ =
-                                    view.update(cx, |app, cx| app.disconnect(&target, window, cx));
+                        .filter(|file| !file.as_os_str().is_empty())
+                        .map(|file| file.display().to_string())
+                });
+                let row = SidebarMenuItem::new(self.base_cluster_name(&id).to_string())
+                    .accessibility_label(self.cluster_display_name(&id))
+                    .label_style(div().truncate().style().clone())
+                    .when(source_labels && file_label.is_some(), |row| {
+                        row.min_h(px(44.))
+                    })
+                    .icon(crate::settings::icon(&icon).text_color(color))
+                    .active(selected)
+                    .click_to_open(true)
+                    .default_open(selected)
+                    .children(if selected {
+                        std::mem::take(&mut resources)
+                    } else {
+                        Vec::new()
+                    })
+                    .suffix(move |_, cx| {
+                        let description = description.clone();
+                        h_flex()
+                            .id(tooltip_id.clone())
+                            .gap_2()
+                            .text_color(cx.theme().muted_foreground)
+                            .when_some(source_name.clone(), |row, source| {
+                                row.child(
+                                    v_flex()
+                                        .id(format!("context-source-label-{id}"))
+                                        .test_support()
+                                        .max_w(px(80.))
+                                        .min_w_0()
+                                        .px_1p5()
+                                        .py_0p5()
+                                        .rounded_sm()
+                                        .bg(cx.theme().muted)
+                                        .text_xs()
+                                        .child(div().truncate().child(source))
+                                        .when_some(file_label.clone(), |label, file| {
+                                            label.child(div().truncate().child(file))
+                                        }),
+                                )
+                            })
+                            .when(!source_labels, |row| {
+                                row.when_some(file_label.clone(), |row, file| {
+                                    row.child(div().text_xs().max_w(px(90.)).truncate().child(file))
+                                })
+                            })
+                            .when(is_eks && !source_labels, |row| {
+                                row.child(div().text_xs().child("EKS"))
+                            })
+                            .child(if connected {
+                                div()
+                                    .size(px(7.))
+                                    .rounded_full()
+                                    .bg(cx.theme().tone(Tone::Healthy))
+                                    .into_any_element()
+                            } else {
+                                div().child("›").into_any_element()
+                            })
+                            .tooltip(move |window, cx| {
+                                Tooltip::new(description.clone()).build(window, cx)
+                            })
+                    })
+                    .context_menu(move |menu, _, _| {
+                        let target = menu_target.clone();
+                        let view = menu_view.clone();
+                        let reconnect_target = menu_target.clone();
+                        let reconnect_view = menu_view.clone();
+                        let settings_target = menu_target.clone();
+                        menu.item(PopupMenuItem::new("Cluster settings…").on_click(
+                            move |_, _, cx| {
+                                crate::preferences::cluster(settings_target.clone(), cx)
+                            },
+                        ))
+                        .separator()
+                        .item(
+                            PopupMenuItem::new("Disconnect")
+                                .disabled(!can_disconnect)
+                                .on_click(move |_, window, cx| {
+                                    let _ = view
+                                        .update(cx, |app, cx| app.disconnect(&target, window, cx));
+                                }),
+                        )
+                        .item(
+                            PopupMenuItem::new("Reconnect").on_click(move |_, window, cx| {
+                                let _ = reconnect_view.update(cx, |app, cx| {
+                                    app.reconnect(reconnect_target.clone(), window, cx)
+                                });
                             }),
-                    )
-                    .item(
-                        PopupMenuItem::new("Reconnect").on_click(move |_, window, cx| {
-                            let _ = reconnect_view.update(cx, |app, cx| {
-                                app.reconnect(reconnect_target.clone(), window, cx)
-                            });
-                        }),
-                    )
+                        )
+                    })
+                    .on_click(cx.listener(move |view, _, window, cx| {
+                        view.go_to(target.clone(), window, cx);
+                    }));
+                (source_group, row)
+            })
+            .collect::<Vec<_>>();
+        let grouped = multiple_sources
+            && self.preferences.context_display == crate::settings::ContextDisplay::SourceGroups;
+        let sidebar_id = if searching {
+            "cluster-tree-search"
+        } else {
+            "cluster-tree"
+        };
+        if !grouped {
+            return Sidebar::new(sidebar_id)
+                .collapsible(false)
+                .w_full()
+                .when_some(search, |sidebar, search| {
+                    sidebar.header(Input::new(&search).small())
                 })
-                .on_click(cx.listener(move |view, _, window, cx| {
-                    view.go_to(target.clone(), window, cx);
-                }))
-        });
+                .child(SidebarMenu::new().children(rows.into_iter().map(|(_, row)| row)))
+                .into_any_element();
+        }
+        let mut groups = Vec::new();
+        for source in &catalog.statuses {
+            let mut group_rows = Vec::new();
+            let mut index = 0;
+            while index < rows.len() {
+                if rows[index].0 == source.id {
+                    group_rows.push(rows.remove(index).1);
+                } else {
+                    index += 1;
+                }
+            }
+            if !group_rows.is_empty() {
+                groups.push(crate::context_sidebar::SourceGroup::new(
+                    source.id.clone(),
+                    source.name.clone(),
+                    if matches!(
+                        self.preferences
+                            .kubeconfigs
+                            .sources
+                            .iter()
+                            .find(|entry| entry.id == source.id)
+                            .map(|entry| &entry.kind),
+                        Some(beacon_kube::sources::SourceKind::Directory { .. })
+                    ) {
+                        gpui_kit::assets::IconName::Folder
+                    } else {
+                        gpui_kit::assets::IconName::FileKey
+                    },
+                    self.closed_sources.contains(&source.id),
+                    group_rows,
+                    cx.listener({
+                        let id = source.id.clone();
+                        move |view, _, _, cx| {
+                            view.toggle_source(id.clone(), cx);
+                        }
+                    }),
+                ));
+            }
+        }
+        if !rows.is_empty() {
+            groups.push(crate::context_sidebar::SourceGroup::new(
+                "unavailable".into(),
+                "Source unavailable".into(),
+                gpui_kit::assets::IconName::Unlink,
+                self.closed_sources.contains("unavailable"),
+                rows.into_iter().map(|(_, row)| row).collect(),
+                cx.listener(|view, _, _, cx| view.toggle_source("unavailable".into(), cx)),
+            ));
+        }
 
         // Search replaces the section list. Give it separate keyed expansion
         // state, or its "Matches" row could inherit a different category's
         // open state and pass that state back when the query is cleared.
-        Sidebar::new(if searching {
-            "cluster-tree-search"
-        } else {
-            "cluster-tree"
-        })
-        .collapsible(false)
-        .w_full()
-        .when_some(search, |sidebar, search| {
-            sidebar.header(
-                div()
-                    .w_full()
-                    .px_2()
-                    .py_1()
-                    .child(Input::new(&search).small()),
-            )
-        })
-        .child(SidebarGroup::new("Clusters").child(SidebarMenu::new().children(rows)))
+        Sidebar::new(sidebar_id)
+            .collapsible(false)
+            .w_full()
+            .when_some(search, |sidebar, search| {
+                sidebar.header(Input::new(&search).small())
+            })
+            .children(groups)
+            .into_any_element()
     }
 
     fn render_workspace(&mut self, cx: &mut Context<Self>) -> AnyElement {
@@ -2259,10 +2514,15 @@ impl BeaconApp {
                 "Could not read kubeconfig".to_string(),
                 error.clone(),
             ),
+            (_, Ok(contexts)) if contexts.is_empty() && crate::sources::store(cx).read(cx).loaded.is_none() => (
+                Tone::Progressing,
+                "Loading kubeconfig sources".into(),
+                "Reading local configuration. No cluster connection is started automatically.".into(),
+            ),
             (_, Ok(contexts)) if contexts.is_empty() => (
                 Tone::Warning,
                 "Kubeconfig has no contexts".to_string(),
-                "Add a cluster with `kubectl config set-context`, then reopen Beacon.".to_string(),
+                "Add a kubeconfig file, folder, or pasted YAML in Kubeconfig sources.".to_string(),
             ),
             _ => (
                 Tone::Unknown,
@@ -2787,6 +3047,191 @@ mod rendering_tests {
     use super::*;
     use crate::feature_test_support as support;
     use gpui_kit::test::TestWindowExt as _;
+
+    #[::core::prelude::v1::test]
+    fn context_sources_layouts_update_all_windows_and_groups_collapse_without_connecting() {
+        use beacon_kube::sources::{self, Source, SourceKind};
+        let cx = &mut support::context();
+        let directory = tempfile::tempdir().unwrap();
+        support::workspace(cx, directory.path());
+        let mut sources_preferences = sources::Preferences {
+            system_enabled: false,
+            ..Default::default()
+        };
+        for (id, name) in [("local", "Local"), ("team", "Platform")] {
+            let path = directory.path().join(format!("{id}.yaml"));
+            std::fs::write(&path,"apiVersion: v1\nkind: Config\nclusters:\n- name: fixture\n  cluster:\n    server: https://example.invalid\ncontexts:\n- name: shared\n  context:\n    cluster: fixture\n").unwrap();
+            sources_preferences.sources.push(Source {
+                id: id.into(),
+                name: name.into(),
+                kind: SourceKind::File { path },
+                enabled: true,
+                excluded: Default::default(),
+            });
+        }
+        let folder = directory.path().join("environments");
+        std::fs::create_dir(&folder).unwrap();
+        std::fs::copy(directory.path().join("local.yaml"), folder.join("dev.yaml")).unwrap();
+        sources_preferences.sources.push(Source {
+            id: "environments".into(),
+            name: "Environments".into(),
+            kind: SourceKind::Directory {
+                path: folder,
+                recursive: false,
+                patterns: "*.yaml".into(),
+            },
+            enabled: true,
+            excluded: Default::default(),
+        });
+        let catalog = sources::load(&sources_preferences, directory.path(), &[]);
+        let ids: Vec<_> = catalog
+            .contexts
+            .entries()
+            .iter()
+            .map(|entry| entry.id.clone())
+            .collect();
+        cx.update(|cx| {
+            crate::settings::store(cx).update(cx, |settings, _| {
+                settings.preferences.kubeconfigs = sources_preferences.clone()
+            });
+            crate::sources::store(cx).update(cx, |state, _| {
+                state.labels = catalog.labels();
+                state.catalog = Arc::new(catalog);
+            });
+        });
+        let windows: Vec<_> = (0..2)
+            .map(|_| {
+                cx.update(|cx| {
+                    gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
+                        window.set_view_retention(false);
+                        cx.new(|cx| BeaconApp::new(window, cx))
+                    })
+                    .unwrap()
+                    .0
+                })
+            })
+            .collect();
+        for window in &windows {
+            support::render_until(cx, *window, |window| {
+                window
+                    .try_find("toggle-source-team")
+                    .is_some_and(|item| item.visible())
+            });
+        }
+        cx.update_window(windows[0], |_, window, cx| {
+            window.click("toggle-source-team", cx);
+            assert!(window.find("source-rows-local-0").visible());
+            assert!(window.try_find("source-rows-team-0").is_none());
+            assert!(
+                cx.global::<SharedConnections>()
+                    .0
+                    .read(cx)
+                    .sessions
+                    .is_empty()
+            );
+            let mut preferences = crate::settings::store(cx).read(cx).preferences.clone();
+            preferences.context_display = crate::settings::ContextDisplay::SourceLabels;
+            crate::settings::save(preferences, window, cx).unwrap();
+        })
+        .unwrap();
+        for window in &windows {
+            support::render_until(cx, *window, |window| {
+                window
+                    .try_find(format!("context-source-label-{}", ids[0]))
+                    .is_some_and(|item| item.visible())
+            });
+            cx.update_window(*window, |_, window, _| {
+                assert!(window.try_find("toggle-source-team").is_none());
+                for id in &ids {
+                    assert!(window.find(format!("context-source-label-{id}")).visible());
+                }
+                let label = window
+                    .find(format!("context-source-label-{}", ids[2]))
+                    .bounds();
+                let row = window.find("0-2").bounds();
+                assert!(
+                    label.top() >= row.top() && label.bottom() <= row.bottom(),
+                    "folder source label must stay in its row"
+                );
+            })
+            .unwrap();
+        }
+        cx.update_window(windows[0], |_, window, cx| {
+            let mut preferences = crate::settings::store(cx).read(cx).preferences.clone();
+            preferences.kubeconfigs.sources.truncate(1);
+            crate::settings::save(preferences, window, cx).unwrap();
+        })
+        .unwrap();
+        for window in &windows {
+            support::render_until(cx, *window, |window| {
+                window
+                    .try_find(format!("context-source-label-{}", ids[0]))
+                    .is_none()
+            });
+            cx.update_window(*window, |_, window, cx| {
+                window.render_frame(cx);
+                assert!(
+                    window
+                        .try_find(format!("context-source-label-{}", ids[0]))
+                        .is_none()
+                );
+                window.remove_window();
+            })
+            .unwrap();
+        }
+    }
+
+    struct MenuProbe;
+    impl Render for MenuProbe {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            v_flex()
+                .size_full()
+                .child(TitleBar::new().child(application_menu()))
+        }
+    }
+    #[::core::prelude::v1::test]
+    fn caption_menu_opens_and_dispatches_sources_without_losing_its_mouse_down() {
+        let cx = &mut support::context();
+        let directory = tempfile::tempdir().unwrap();
+        support::workspace(cx, directory.path());
+        let window = cx.update(|cx| {
+            gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
+                window.set_view_retention(false);
+                cx.new(|_| MenuProbe)
+            })
+            .unwrap()
+            .0
+        });
+        cx.update_window(window, |_, window, cx| {
+            window.render_frame(cx);
+            window.click("view-menu", cx);
+            window.render_frame(cx);
+            assert!(window.find("popup-menu").visible());
+            let item = gpui_kit::base::test_support::snapshots(window)
+                .into_iter()
+                .find(|item| {
+                    item.role() == Some(Role::MenuItem)
+                        && item.label() == Some("Kubeconfig sources…")
+                })
+                .unwrap();
+            assert_ne!(item.disabled(), Some(true));
+            window.click(item.path().last().unwrap().clone(), cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        let sources = cx
+            .windows()
+            .into_iter()
+            .find(|other| other != &window)
+            .expect("the menu action must open Settings");
+        support::render_until(cx, sources, |window| {
+            window
+                .try_find("kubeconfig-sources")
+                .is_some_and(|view| view.visible())
+        });
+        cx.update_window(sources, |_, window, _| window.remove_window())
+            .unwrap();
+    }
 
     #[::core::prelude::v1::test]
     fn closing_the_empty_main_window_requires_confirmation_and_cancel_preserves_it() {
