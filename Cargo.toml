@@ -2,7 +2,7 @@
 resolver = "3"
 members = ["crates/*"]
 default-members = ["crates/beacon"]
-exclude = ["vendor/gpui-base"]
+exclude = ["vendor/gpui-base", "vendor/kube-client"]
 
 [workspace.package]
 version = "1.4.11"
@@ -30,7 +30,8 @@ gpui-kit = { git = "https://github.com/longbridge/gpui-kit", rev = "67265a36e260
 # toolchain dependency. `http-proxy` is not optional in practice: kube reads
 # HTTPS_PROXY from the environment and refuses to connect at all when it is set
 # and the feature is off, which is most corporate laptops.
-kube = { version = "4.0", features = ["runtime", "ws", "gzip", "oidc", "http-proxy", "socks5"] }
+# Keep this aligned with the local kube-client Windows credential spawn patch.
+kube = { version = "=4.2.0", features = ["runtime", "ws", "gzip", "oidc", "http-proxy", "socks5"] }
 k8s-openapi = { version = "0.28", features = ["latest"] }
 
 # Async. kube/hyper need a tokio reactor; GPUI has its own executor. These two
@@ -85,3 +86,8 @@ strip = true
 # See vendor/gpui-base/BEACON-PATCHES.md for provenance and regression tests.
 [patch."https://github.com/longbridge/gpui-kit"]
 gpui-base = { path = "vendor/gpui-base" }
+
+# Noninteractive exec credentials must not flash console windows on Windows.
+# Keep interactive plugins on upstream's console behavior. See patch provenance.
+[patch.crates-io]
+kube-client = { path = "vendor/kube-client" }
