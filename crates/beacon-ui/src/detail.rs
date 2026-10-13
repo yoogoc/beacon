@@ -21,7 +21,7 @@ use beacon_kube::{
 use gpui_kit::base::{Link, SelectableText, TestSupportExt as _, TextSelection};
 use gpui_kit::component::WindowExt as _;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::input::{Editor, EditorState, Textarea, TextareaState};
+use gpui_kit::component::input::{Editor, EditorState, InputEvent, TextDecorationCollection};
 use gpui_kit::component::menu::{DropdownMenu as _, PopupMenuItem};
 use gpui_kit::component::spinner::Spinner;
 use gpui_kit::component::tab::{Tab, TabBar};
@@ -33,6 +33,8 @@ use serde_json::Value;
 use crate::bridge::{Bridge, drain_into};
 use crate::theme::{BeaconTheme as _, Tone};
 use crate::tls::{self, CertificateInfo};
+
+mod data_editors;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DetailTab {
@@ -94,7 +96,11 @@ struct DataKey {
     entry: DataEntry,
     /// `None` for a value that is not text. It is described, not edited:
     /// putting a TLS key through a text box would corrupt it on save.
-    editor: Option<Entity<TextareaState>>,
+    editor: Option<Entity<EditorState>>,
+    syntax: crate::data_syntax::Analysis,
+    decorations: Option<TextDecorationCollection>,
+    _change: Option<Subscription>,
+    _detect: Option<Task<()>>,
 }
 
 /// What the Data tab has to show.
@@ -177,6 +183,9 @@ pub struct DetailView {
     yaml: Yaml,
     /// The Data tab's editors, built when it is first opened.
     data: Data,
+    data_heights: BTreeMap<String, Pixels>,
+    data_resize: Option<data_editors::HeightDrag>,
+    _data_theme: Option<Subscription>,
     /// A Secret's values start covered. They are the one thing in this
     /// application that somebody might not want on screen while a colleague
     /// walks past, and an editor is not a place to keep them by default.
@@ -259,6 +268,9 @@ impl DetailView {
             _owners_task: None,
             yaml: Yaml::Unopened,
             data: Data::Unopened,
+            data_heights: BTreeMap::new(),
+            data_resize: None,
+            _data_theme: None,
             revealed: false,
             yaml_editor,
             yaml_baseline: String::new(),
@@ -369,6 +381,7 @@ impl DetailView {
             return;
         }
         self.tab = tab;
+        self.data_resize = None;
         match tab {
             DetailTab::Network if self.network.is_none() => {
                 let session = self.session.clone();
@@ -671,18 +684,63 @@ impl DetailView {
         let keys = data::read(&self.object, self.kind.resource.kind == "Secret")
             .into_iter()
             .map(|entry| {
+                let id = data_editors::id(&entry);
                 let editor = entry.text.clone().map(|text| {
+                    self.data_heights.entry(id.clone()).or_insert_with(|| {
+                        px((text.lines().count().clamp(4, 12) as f32
+                            * f32::from(cx.theme().mono_font_size)
+                            * 1.5
+                            + 20.)
+                            .clamp(96., 280.))
+                    });
                     cx.new(|cx| {
-                        let mut state = TextareaState::new(window, cx).auto_grow(1, 12);
+                        let mut state = EditorState::new(window, cx)
+                            .language("text")
+                            .soft_wrap(true)
+                            .auto_close(false)
+                            .smart_indent(false)
+                            .folding(true);
                         state.set_value(text, window, cx);
                         state
                     })
                 });
-                DataKey { entry, editor }
+                let decorations = editor.as_ref().map(|editor| {
+                    editor.update(cx, |state, cx| {
+                        state.create_decorations_collection(vec![], cx)
+                    })
+                });
+                let change = editor.as_ref().map(|editor| {
+                    cx.subscribe_in(
+                        editor,
+                        window,
+                        move |view, _, event: &InputEvent, window, cx| {
+                            if matches!(event, InputEvent::Change) {
+                                view.schedule_data_syntax(id.clone(), window, cx);
+                            }
+                        },
+                    )
+                });
+                DataKey {
+                    entry,
+                    editor,
+                    decorations,
+                    syntax: crate::data_syntax::Analysis {
+                        format: crate::data_syntax::Format::Plain,
+                        tokens: vec![],
+                    },
+                    _change: change,
+                    _detect: None,
+                }
             })
             .collect();
 
         self.data = Data::Ready(keys);
+        if self._data_theme.is_none() {
+            self._data_theme = Some(cx.observe_global::<gpui_kit::component::Theme>(|view, cx| {
+                view.refresh_data_colors(cx)
+            }));
+        }
+        self.prepare_data_syntax(window, cx);
         cx.notify();
     }
 
@@ -2209,6 +2267,8 @@ impl DetailView {
         let covered = secret && !self.revealed;
 
         let rows = keys.iter().map(|key| {
+            let id = data_editors::id(&key.entry);
+            let height = self.data_heights.get(&id).copied().unwrap_or(px(120.));
             let bytes = format!("{} bytes", key.entry.bytes);
             let field = if key.entry.field == beacon_kube::DataField::BinaryData {
                 "binaryData"
@@ -2217,6 +2277,7 @@ impl DetailView {
             };
 
             v_flex()
+                .id(SharedString::from(format!("data-key-{id}")))
                 .w_full()
                 .gap_1()
                 .child(
@@ -2238,6 +2299,14 @@ impl DetailView {
                                 .text_color(cx.theme().muted_foreground)
                                 .child(bytes),
                         )
+                        .when(key.editor.is_some() && !covered, |this| {
+                            this.child(
+                                div()
+                                    .text_xs()
+                                    .text_color(cx.theme().muted_foreground)
+                                    .child(key.syntax.format.label()),
+                            )
+                        })
                         .when(!field.is_empty(), |this| {
                             this.child(
                                 div()
@@ -2260,8 +2329,61 @@ impl DetailView {
                         .text_color(cx.theme().muted_foreground)
                         .child("Hidden. Reveal to read or edit it.")
                         .into_any_element(),
-                    (Some(editor), false) => Textarea::new(editor)
-                        .readonly(!may_apply || self.busy())
+                    (Some(editor), false) => v_flex()
+                        .w_full()
+                        .min_w_0()
+                        .flex_shrink_0()
+                        .rounded_md()
+                        .border_1()
+                        .border_color(cx.theme().border)
+                        .overflow_hidden()
+                        .child(
+                            div()
+                                .id(SharedString::from(format!("data-editor-{id}")))
+                                .test_support()
+                                .w_full()
+                                .h(height)
+                                .overflow_hidden()
+                                .child(
+                                    Editor::new(editor)
+                                        .h(relative(1.))
+                                        .bordered(false)
+                                        .aria_label(format!("{} contents", key.entry.key))
+                                        .readonly(!may_apply || self.busy()),
+                                ),
+                        )
+                        .child(
+                            h_flex()
+                                .id(SharedString::from(format!("resize-data-{id}")))
+                                .test_support()
+                                .w_full()
+                                .h(px(10.))
+                                .flex_shrink_0()
+                                .justify_center()
+                                .items_center()
+                                .cursor_row_resize()
+                                .hover(|this| this.bg(cx.theme().muted.opacity(0.5)))
+                                .child(
+                                    div()
+                                        .w(px(32.))
+                                        .h(px(3.))
+                                        .rounded_full()
+                                        .bg(cx.theme().border),
+                                )
+                                .on_mouse_down(
+                                    MouseButton::Left,
+                                    cx.listener(move |view, event: &MouseDownEvent, window, cx| {
+                                        TextSelection::end(window, cx);
+                                        cx.stop_propagation();
+                                        view.data_resize = Some(data_editors::HeightDrag {
+                                            id: id.clone(),
+                                            height,
+                                            y: event.position.y,
+                                        });
+                                        cx.notify();
+                                    }),
+                                ),
+                        )
                         .into_any_element(),
                     (None, _) => div()
                         .w_full()
@@ -2277,7 +2399,11 @@ impl DetailView {
         });
 
         v_flex()
+            .relative()
             .size_full()
+            .when(self.data_resize.is_some(), |this| {
+                this.child(self.data_resize_listener(cx))
+            })
             .child(
                 div()
                     .id("data-keys")
@@ -2338,8 +2464,11 @@ impl DetailView {
                                 .ghost()
                                 .small()
                                 .label(if revealed { "Hide" } else { "Reveal" })
-                                .on_click(cx.listener(|view, _, _, cx| {
+                                .on_click(cx.listener(|view, _, window, cx| {
                                     view.revealed = !view.revealed;
+                                    if view.revealed {
+                                        view.prepare_data_syntax(window, cx);
+                                    }
                                     cx.notify();
                                 })),
                         )

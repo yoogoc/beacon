@@ -23,7 +23,7 @@ beacon-updater = { path = "crates/beacon-updater" }
 # an upgrade as its own task.
 # Pin the latest stable GPUI Kit release (0.7.3) and keep its GPUI Fast
 # backend enabled across Kit and the matching platform layers.
-gpui-kit = { git = "https://github.com/longbridge/gpui-kit", rev = "67265a36e260ffe03c5aaebdcd8d654dbf892eab", features = ["gpui-fast", "tree-sitter-yaml"] }
+gpui-kit = { git = "https://github.com/longbridge/gpui-kit", rev = "67265a36e260ffe03c5aaebdcd8d654dbf892eab", features = ["gpui-fast", "tree-sitter-yaml", "tree-sitter-toml", "tree-sitter-bash", "tree-sitter-html"] }
 
 # Kubernetes. Default features already give us client + rustls-tls + ring;
 # rustls matters because it keeps the three CI targets free of an OpenSSL

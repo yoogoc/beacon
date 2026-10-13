@@ -18,6 +18,7 @@ mod connections;
 mod context_sidebar;
 mod copyable_text;
 mod create;
+mod data_syntax;
 mod debug_container;
 pub mod detail;
 #[cfg(all(test, feature = "ui-tests"))]
