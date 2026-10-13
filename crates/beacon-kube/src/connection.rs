@@ -125,6 +125,8 @@ pub struct Prometheus {
     pub pod_memory: String,
     pub node_cpu: String,
     pub node_memory: String,
+    pub container_cpu: String,
+    pub container_memory: String,
 }
 impl Default for Prometheus {
     fn default() -> Self {
@@ -134,6 +136,8 @@ impl Default for Prometheus {
             pod_memory: "sum by (namespace, pod) (container_memory_working_set_bytes{container!=\"\",container!=\"POD\",pod!=\"\"})".into(),
             node_cpu: "sum by (node) (rate(container_cpu_usage_seconds_total{container=\"\",pod=\"\"}[5m]))".into(),
             node_memory: "max by (node) (container_memory_working_set_bytes{container=\"\",pod=\"\"})".into(),
+            container_cpu: "sum by (namespace, pod, container) (rate(container_cpu_usage_seconds_total{container!=\"\",container!=\"POD\",pod!=\"\"}[5m]))".into(),
+            container_memory: "sum by (namespace, pod, container) (container_memory_working_set_bytes{container!=\"\",container!=\"POD\",pod!=\"\"})".into(),
         }
     }
 }
@@ -158,11 +162,13 @@ impl Prometheus {
             &self.pod_memory,
             &self.node_cpu,
             &self.node_memory,
+            &self.container_cpu,
+            &self.container_memory,
         ]
         .iter()
         .any(|q| q.trim().is_empty())
         {
-            return Err("All four Prometheus queries are required.".into());
+            return Err("All six Prometheus queries are required.".into());
         }
         if self.bearer_token.contains(['\r', '\n']) {
             return Err("The bearer token contains invalid characters.".into());

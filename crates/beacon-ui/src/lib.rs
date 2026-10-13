@@ -44,6 +44,7 @@ mod preferences;
 pub mod prompt;
 mod related;
 mod resource_compare;
+mod resource_metrics;
 mod rollout;
 mod selection;
 mod settings;

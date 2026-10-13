@@ -40,6 +40,7 @@ mod data_editors;
 pub enum DetailTab {
     Overview,
     Pods,
+    Metrics,
     Related,
     UsedBy,
     Configuration,
@@ -64,6 +65,9 @@ impl DetailTab {
         if kind.resource.group.is_empty() && kind.resource.kind == "Node" {
             tabs.push(Self::Pods);
         }
+        if kind.resource.group.is_empty() && matches!(kind.resource.kind.as_str(), "Pod" | "Node") {
+            tabs.push(Self::Metrics);
+        }
         if beacon_kube::relationships::Relationship::for_kind(
             &kind.resource.group,
             &kind.resource.kind,
@@ -87,6 +91,7 @@ impl DetailTab {
         match self {
             Self::Overview => "Overview",
             Self::Pods => "Pods",
+            Self::Metrics => "Metrics",
             Self::Related => "Related",
             Self::UsedBy => "Used by",
             Self::Configuration => "Configuration",
@@ -170,6 +175,7 @@ pub struct DetailView {
     expanded_sections: BTreeSet<String>,
     overview: crate::overview::Projection,
     node_pods: Option<Entity<crate::node_pods::NodePodsView>>,
+    metrics: Option<Entity<crate::resource_metrics::ResourceMetricsView>>,
     related: Option<Entity<crate::related::RelatedView>>,
     configuration: Option<Entity<crate::configuration_usage::ConfigurationUsageView>>,
     rollout: Option<Entity<crate::rollout::RolloutView>>,
@@ -259,6 +265,7 @@ impl DetailView {
             expanded_sections: BTreeSet::new(),
             overview,
             node_pods: None,
+            metrics: None,
             related: None,
             configuration: None,
             rollout: None,
@@ -397,7 +404,22 @@ impl DetailView {
         }
         self.tab = tab;
         self.data_resize = None;
+        if let Some(metrics) = &self.metrics {
+            metrics.update(cx, |view, cx| {
+                view.set_visible(tab == DetailTab::Metrics, window, cx)
+            });
+        }
         match tab {
+            DetailTab::Metrics if self.metrics.is_none() => {
+                let session = self.session.clone();
+                let kind = self.kind.clone();
+                let object = self.object.clone();
+                self.metrics = Some(cx.new(|cx| {
+                    crate::resource_metrics::ResourceMetricsView::new(
+                        session, kind, object, window, cx,
+                    )
+                }));
+            }
             DetailTab::Network if self.network.is_none() => {
                 let session = self.session.clone();
                 let kind = self.kind.clone();
@@ -3165,6 +3187,11 @@ impl Render for DetailView {
                 .map(|view| view.into_any_element())
                 .unwrap_or_else(|| div().into_any_element()),
             DetailTab::Pods => self.render_node_pods(cx),
+            DetailTab::Metrics => self
+                .metrics
+                .clone()
+                .map(|view| view.into_any_element())
+                .unwrap_or_else(|| div().into_any_element()),
             DetailTab::Related => self.render_related(),
             DetailTab::UsedBy | DetailTab::Configuration => self
                 .configuration

@@ -49,9 +49,9 @@
 
 ### 07 · 单资源指标趋势
 
-- [ ] 增加 Pod / Node / Container 的 CPU 和内存历史图表。
-- [ ] 显示使用量与 requests / limits 的对照，并关联重启和 OOM 事件。
-- [ ] 分别处理 Metrics API 会话采样与 Prometheus 历史数据，显示数据来源和可用范围。
+- [x] 增加 Pod / Node / Container 的 CPU 和内存历史图表。
+- [x] 显示使用量与 requests / limits 的对照，并关联重启和 OOM 事件。
+- [x] 分别处理 Metrics API 会话采样与 Prometheus 历史数据，显示数据来源和可用范围。
 
 ### 08 · Argo Workflows 运行操作
 

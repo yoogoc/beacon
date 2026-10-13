@@ -371,6 +371,8 @@ struct ClusterEditor {
     pod_memory: Entity<InputState>,
     node_cpu: Entity<InputState>,
     node_memory: Entity<InputState>,
+    container_cpu: Entity<InputState>,
+    container_memory: Entity<InputState>,
 }
 enum Page {
     Application(Box<ThemeEditor>),
@@ -503,6 +505,20 @@ impl PreferencesView {
                     pod_memory: input("Pod memory query", prom.pod_memory, false, window, cx),
                     node_cpu: input("Node CPU query", prom.node_cpu, false, window, cx),
                     node_memory: input("Node memory query", prom.node_memory, false, window, cx),
+                    container_cpu: input(
+                        "Container CPU query",
+                        prom.container_cpu,
+                        false,
+                        window,
+                        cx,
+                    ),
+                    container_memory: input(
+                        "Container memory query",
+                        prom.container_memory,
+                        false,
+                        window,
+                        cx,
+                    ),
                 };
                 (
                     Page::Cluster(Box::new(editor)),
@@ -535,6 +551,8 @@ impl PreferencesView {
                 &c.pod_memory,
                 &c.node_cpu,
                 &c.node_memory,
+                &c.container_cpu,
+                &c.container_memory,
             ],
         };
         let mut input_subscriptions: Vec<_> = inputs
@@ -731,6 +749,8 @@ impl PreferencesView {
             pod_memory: value(&c.pod_memory, cx),
             node_cpu: value(&c.node_cpu, cx),
             node_memory: value(&c.node_memory, cx),
+            container_cpu: value(&c.container_cpu, cx),
+            container_memory: value(&c.container_memory, cx),
         }
     }
     fn save(&mut self, reconnect: bool, window: &mut Window, cx: &mut Context<Self>) {
@@ -1531,7 +1551,9 @@ impl PreferencesView {
                         .child(field("Pod memory query", &c.pod_memory))
                         .child(field("Node CPU query", &c.node_cpu))
                         .child(field("Node memory query", &c.node_memory))
-                        .child(hint("Queries return CPU in cores and memory in bytes. Pod results require namespace/pod labels; node results require a node label. Add cluster selectors when Prometheus contains multiple clusters.", cx))))
+                        .child(field("Container CPU query", &c.container_cpu))
+                        .child(field("Container memory query", &c.container_memory))
+                        .child(hint("Queries return CPU in cores and memory in bytes. Pod results require namespace/pod labels; node results require a node label; container results require namespace/pod/container labels. Add cluster selectors when Prometheus contains multiple clusters.", cx))))
                 .child(inline_action(Button::new("test-metrics").outline().icon(IconName::Activity).disabled(self.testing)
                     .label(if self.testing { "Testing…" } else { "Test metrics source" })
                     .on_click(cx.listener(|view, _, window, cx| view.test_metrics(window, cx))))))
@@ -2284,6 +2306,12 @@ mod update_tests {
                 c.pod_cpu.update(cx, |input, cx| {
                     input.set_value("custom_cpu_query", window, cx)
                 });
+                c.container_cpu.update(cx, |input, cx| {
+                    input.set_value("custom_container_cpu", window, cx)
+                });
+                c.container_memory.update(cx, |input, cx| {
+                    input.set_value("custom_container_memory", window, cx)
+                });
             });
             window.click("settings-yaml", cx);
             window.click(("yaml-fold-field", 1usize), cx);
@@ -2302,6 +2330,7 @@ mod update_tests {
             };
             assert_eq!(value(&c.alias, cx), "Development");
             assert_eq!(value(&c.pod_cpu, cx), "custom_cpu_query");
+            assert_eq!(value(&c.container_cpu, cx), "custom_container_cpu");
             assert_eq!(c.yaml_folding.fields.len(), 6);
             window.click("save-preferences", cx);
         })
@@ -2318,6 +2347,8 @@ mod update_tests {
                 panic!()
             };
             assert_eq!(metrics.pod_cpu, "custom_cpu_query");
+            assert_eq!(metrics.container_cpu, "custom_container_cpu");
+            assert_eq!(metrics.container_memory, "custom_container_memory");
             assert!(!saved.yaml_folding.fields[1].collapsed);
             assert_eq!(saved.yaml_folding.fields[5].path, "spec.template.metadata");
             assert!(!view.read(cx).dirty);

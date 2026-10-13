@@ -31,6 +31,7 @@ pub mod ops;
 pub mod overview;
 pub mod rbac;
 pub mod relationships;
+pub mod resource_metrics;
 pub mod resources;
 pub mod rollout;
 pub mod search;

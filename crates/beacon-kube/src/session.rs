@@ -141,6 +141,14 @@ impl ClusterSession {
             health,
         }
     }
+
+    /// Configures metrics on an isolated API fixture, without kubeconfig access.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn with_metrics_source(mut self, metrics: crate::connection::MetricsSource) -> Self {
+        self.connection.metrics = metrics;
+        self.connection.proxy = crate::connection::Proxy::Direct;
+        self
+    }
     /// Builds a client for a kubeconfig context and proves it can reach the
     /// API server.
     ///
