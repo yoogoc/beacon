@@ -166,6 +166,7 @@ pub struct ClusterView {
     creation: Option<Entity<CreateView>>,
     job_action: Option<Entity<crate::job_actions::JobActions>>,
     node_action: Option<Entity<crate::node_actions::NodeActions>>,
+    workflow_action: Option<Entity<crate::workflow_actions::WorkflowActions>>,
     /// What the last write said, for the toolbar.
     outcome: Option<Outcome>,
     bulk_deleting: bool,
@@ -349,6 +350,7 @@ impl ClusterView {
             creation: None,
             job_action: None,
             node_action: None,
+            workflow_action: None,
             outcome: None,
             bulk_deleting: false,
             mode: Mode::Objects,
@@ -748,31 +750,14 @@ impl ClusterView {
             .and_then(|object| object.data.get("spec")?.get("replicas")?.as_i64())
             .unwrap_or(1) as i32;
 
-        let suspended = self
-            .table
+        self.table
             .read(cx)
             .delegate()
             .object(&selected)
-            .and_then(|object| {
-                object
-                    .data
-                    .pointer(
-                        if kind.resource.group.is_empty() && kind.resource.kind == "Node" {
-                            "/spec/unschedulable"
-                        } else {
-                            "/spec/suspend"
-                        },
-                    )?
-                    .as_bool()
+            .map(|object| {
+                crate::actions::available_for_object(&kind, self.rules.as_deref(), replicas, object)
             })
-            .unwrap_or(false);
-        crate::actions::available_for_target(
-            &kind,
-            self.rules.as_deref(),
-            replicas,
-            suspended,
-            Some(&selected.name),
-        )
+            .unwrap_or_default()
     }
 
     /// Starts an operation, asking first when it needs asking.
@@ -796,11 +781,60 @@ impl ClusterView {
             return;
         };
 
+        if let Operation::Workflow { action } = operation {
+            if self.workflow_action.is_some()
+                || self.node_action.is_some()
+                || self.job_action.is_some()
+                || self.prompt.is_some()
+                || self.creation.is_some()
+            {
+                return;
+            }
+            let uid = self
+                .table
+                .read(cx)
+                .delegate()
+                .object(&target)
+                .and_then(|object| object.metadata.uid.clone());
+            let dialog = cx.new(|cx| {
+                crate::workflow_actions::WorkflowActions::new(
+                    self.session.clone(),
+                    kind,
+                    target,
+                    uid,
+                    action,
+                    window,
+                    cx,
+                )
+            });
+            cx.subscribe_in(
+                &dialog,
+                window,
+                |view, _, event: &crate::workflow_actions::WorkflowEvent, _, cx| {
+                    view.workflow_action = None;
+                    if let crate::workflow_actions::WorkflowEvent::Open { kind, target } = event {
+                        cx.emit(ResourceRequested {
+                            kind: kind.clone(),
+                            scope: target.namespace.iter().cloned().collect(),
+                            new_tab: false,
+                            target: Some(target.clone()),
+                        });
+                    }
+                    cx.notify();
+                },
+            )
+            .detach();
+            self.workflow_action = Some(dialog);
+            cx.notify();
+            return;
+        }
+
         if matches!(
             operation,
             Operation::NodeCordon { .. } | Operation::NodeDrain
         ) {
-            if self.node_action.is_some()
+            if self.workflow_action.is_some()
+                || self.node_action.is_some()
                 || self.job_action.is_some()
                 || self.prompt.is_some()
                 || self.creation.is_some()
@@ -850,7 +884,12 @@ impl ClusterView {
             operation,
             Operation::RunJob | Operation::CronJobSuspend { .. }
         ) {
-            if self.job_action.is_some() || self.prompt.is_some() || self.creation.is_some() {
+            if self.workflow_action.is_some()
+                || self.node_action.is_some()
+                || self.job_action.is_some()
+                || self.prompt.is_some()
+                || self.creation.is_some()
+            {
                 return;
             }
             let uid = self
@@ -2919,6 +2958,17 @@ impl Render for ClusterView {
                     .bg(cx.theme().background.opacity(0.75))
                     .child(action)
             }))
+            .children(self.workflow_action.clone().map(|action| {
+                div()
+                    .absolute()
+                    .inset_0()
+                    .occlude()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .bg(cx.theme().background.opacity(0.75))
+                    .child(action)
+            }))
             .children(self.node_action.clone().map(|action| {
                 div()
                     .absolute()
@@ -3246,6 +3296,136 @@ mod integration_tests {
                 .unwrap()
                 .iter()
                 .any(|(line, _)| line.starts_with("PATCH") || line.starts_with("DELETE"))
+        );
+    }
+    #[::core::prelude::v1::test]
+    fn workflow_row_actions_open_review_and_navigate_to_existing_live_detail() {
+        use beacon_kube::workflow_ops::Action;
+        let cx = &mut support::context();
+        let directory = tempfile::tempdir().unwrap();
+        support::workspace(cx, directory.path());
+        let run = json!({"apiVersion":"argoproj.io/v1alpha1","kind":"Workflow","metadata":{"name":"pipeline-run","namespace":"default","uid":"wf-uid","resourceVersion":"1"},"spec":{"entrypoint":"main","templates":[{"name":"main","container":{"image":"busybox"}}]},"status":{"phase":"Running","nodes":{"pipeline-run":{"id":"pipeline-run","name":"pipeline-run","type":"Pod","phase":"Running","templateName":"main"}}}});
+        let (fixture, session) = support::fixture(cx, "argo-row-actions", vec![run.clone()]);
+        let (window, view) = cx.update(|cx| {
+            gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
+                window.set_view_retention(false);
+                cx.new(|cx| {
+                    ClusterView::new(
+                        session,
+                        Some("default".into()),
+                        Some(Arc::new(support::kind(
+                            "argoproj.io",
+                            "Workflow",
+                            "workflows",
+                        ))),
+                        None,
+                        false,
+                        window,
+                        cx,
+                    )
+                })
+            })
+            .unwrap()
+        });
+        support::settle(cx, |cx| {
+            view.read_with(cx, |view, cx| {
+                view.counts(cx).0 == 1 && view.rules.is_some()
+            })
+        });
+        view.update(cx, |view, cx| {
+            view.table.update(cx, |state, cx| {
+                let table = state.delegate_mut();
+                let mut layout = table.layout_snapshot();
+                layout.hidden = table
+                    .column_choices()
+                    .into_iter()
+                    .filter(|(_, name, _, _)| name != "Name")
+                    .map(|(id, _, _, _)| id)
+                    .collect();
+                table.apply_layout(layout);
+                cx.notify();
+            })
+        });
+        cx.update_window(window, |_, window, cx| {
+            window.render_frame(cx);
+            window.click(("resource-actions", 0usize), cx);
+            let entries = menu(window);
+            assert!(entries.iter().any(|(name, _)| name == "Stop Workflow…"));
+            assert!(
+                entries
+                    .iter()
+                    .any(|(name, _)| name == "Terminate Workflow…")
+            );
+            assert!(
+                !entries
+                    .iter()
+                    .any(|(name, _)| name == "Retry failed steps…")
+            );
+            let item = gpui_kit::base::test_support::snapshots(window)
+                .into_iter()
+                .find(|item| {
+                    item.role() == Some(Role::MenuItem) && item.label() == Some("Stop Workflow…")
+                })
+                .unwrap();
+            window.click(item.path().last().unwrap().clone(), cx);
+        })
+        .unwrap();
+        support::render_until(cx, window, |window| {
+            window
+                .try_find("workflow-confirm")
+                .is_some_and(|item| item.visible())
+        });
+        cx.update_window(window, |_, window, cx| window.click("workflow-cancel", cx))
+            .unwrap();
+        assert!(view.read_with(cx, |view, _| view.workflow_action.is_none()));
+        assert_eq!(fixture.object("Workflow", "pipeline-run"), run);
+        let navigation = Arc::new(std::sync::Mutex::new(None));
+        let observed = navigation.clone();
+        cx.update(|cx| {
+            cx.subscribe(&view, move |_, event: &ResourceRequested, _| {
+                *observed.lock().unwrap() = event.target.clone()
+            })
+            .detach()
+        });
+        cx.update_window(window, |_, window, cx| {
+            view.update(cx, |view, cx| {
+                view.start_for(
+                    ObjectRef::new(Some("default".into()), "pipeline-run"),
+                    Operation::Workflow {
+                        action: Action::Stop,
+                    },
+                    window,
+                    cx,
+                )
+            })
+        })
+        .unwrap();
+        // The asynchronous load may finish after the dialog first appears.
+        support::render_until(cx, window, |window| {
+            window.try_find("workflow-loading").is_none()
+                && window
+                    .try_find("workflow-confirm")
+                    .is_some_and(|item| item.visible())
+        });
+        cx.update_window(window, |_, window, cx| window.click("workflow-confirm", cx))
+            .unwrap();
+        support::render_until(cx, window, |window| {
+            window
+                .try_find("workflow-reviewed")
+                .is_some_and(|item| item.visible())
+        });
+        assert_eq!(fixture.object("Workflow", "pipeline-run"), run);
+        cx.update_window(window, |_, window, cx| window.click("workflow-confirm", cx))
+            .unwrap();
+        support::settle(cx, |_| navigation.lock().unwrap().is_some());
+        assert_eq!(
+            navigation.lock().unwrap().as_ref().unwrap().name,
+            "pipeline-run"
+        );
+        assert!(view.read_with(cx, |view, _| view.workflow_action.is_none()));
+        assert_eq!(
+            fixture.object("Workflow", "pipeline-run")["spec"]["shutdown"],
+            "Stop"
         );
     }
 }

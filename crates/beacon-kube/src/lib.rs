@@ -44,6 +44,7 @@ pub mod terminal;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test_support;
 pub mod watch;
+pub mod workflow_ops;
 
 pub use access::Rules;
 pub use data::{Entry as DataEntry, Field as DataField};

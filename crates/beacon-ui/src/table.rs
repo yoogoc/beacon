@@ -478,21 +478,7 @@ impl ResourceTable {
                     .update(cx, |view, cx| view.compare_for(&compare_target, window, cx));
             }),
         );
-        let choices = actions::available_for_target(
-            &kind,
-            rules.as_deref(),
-            replicas,
-            object
-                .data
-                .pointer(if group.is_empty() && name == "Node" {
-                    "/spec/unschedulable"
-                } else {
-                    "/spec/suspend"
-                })
-                .and_then(serde_json::Value::as_bool)
-                .unwrap_or(false),
-            object.metadata.name.as_deref(),
-        );
+        let choices = actions::available_for_object(&kind, rules.as_deref(), replicas, object);
         if !choices.is_empty() {
             menu = menu.separator();
         }

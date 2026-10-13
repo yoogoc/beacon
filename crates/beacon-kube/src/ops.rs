@@ -50,6 +50,9 @@ pub enum Operation {
         unschedulable: bool,
     },
     NodeDrain,
+    Workflow {
+        action: crate::workflow_ops::Action,
+    },
     Apply,
 }
 
@@ -58,6 +61,7 @@ impl Operation {
     pub fn verb(&self) -> &'static str {
         match self {
             Self::Delete => verbs::DELETE,
+            Self::Workflow { action } => action.verb(),
             Self::RunJob => verbs::CREATE,
             // Everything else is a PATCH, including Server-Side Apply.
             Self::Restart
@@ -77,6 +81,7 @@ impl Operation {
         match self {
             Self::Scale { .. } => format!("{plural}/scale"),
             Self::RunJob => "jobs".to_owned(),
+            Self::Workflow { .. } => "workflows".to_owned(),
             _ => plural.to_string(),
         }
     }
@@ -88,6 +93,7 @@ impl Operation {
     pub fn applies_to(&self, group: &str, kind: &str) -> bool {
         match self {
             Self::Delete | Self::Apply => true,
+            Self::Workflow { action } => action.applies(group, kind),
             Self::RunJob => matches!((group, kind), ("batch", "Job" | "CronJob")),
             Self::CronJobSuspend { .. } => (group, kind) == ("batch", "CronJob"),
             Self::NodeCordon { .. } | Self::NodeDrain => (group, kind) == ("", "Node"),
@@ -120,6 +126,7 @@ impl Operation {
                 unschedulable: false,
             } => "Uncordon Node".into(),
             Self::NodeDrain => "Drain Node".into(),
+            Self::Workflow { action } => action.label().into(),
         }
     }
 }

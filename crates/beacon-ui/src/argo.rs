@@ -78,7 +78,7 @@ pub(crate) fn phase_tone(phase: &str) -> Tone {
         "Succeeded" => Tone::Healthy,
         "Running" => Tone::Progressing,
         "Failed" | "Error" => Tone::Critical,
-        "Pending" | "Suspended" => Tone::Warning,
+        "Pending" | "Suspended" | "Stopping" | "Terminating" => Tone::Warning,
         _ => Tone::Unknown,
     }
 }
@@ -139,8 +139,25 @@ pub(crate) fn summary(
                     tasks.len()
                 ));
             }
+            let phase = text(&data["status"]["phase"])
+                .filter(|phase| !phase.is_empty())
+                .unwrap_or_else(|| "Pending".into());
             (
-                text(&data["status"]["phase"]).unwrap_or_else(|| "Pending".into()),
+                if matches!(phase.as_str(), "Succeeded" | "Failed" | "Error") {
+                    phase
+                } else if data["spec"]["shutdown"] == "Terminate" {
+                    "Terminating".into()
+                } else if data["spec"]["shutdown"] == "Stop" {
+                    "Stopping".into()
+                } else if data["spec"]["suspend"] == true
+                    || nodes
+                        .values()
+                        .any(|node| node["type"] == "Suspend" && node["phase"] == "Running")
+                {
+                    "Suspended".into()
+                } else {
+                    phase
+                },
                 true,
             )
         }
@@ -881,8 +898,10 @@ impl Graph {
 
 #[cfg(test)]
 mod tests {
-    use super::{Graph, project};
+    use super::{Graph, project, summary};
+    use beacon_columns::Timestamp;
     use beacon_kube::DynamicObject;
+    use beacon_kube::argo::Nodes;
     use serde_json::json;
     fn object(kind: &str, data: serde_json::Value) -> DynamicObject {
         let mut object:DynamicObject=serde_json::from_value(json!({"apiVersion":"argoproj.io/v1alpha1","kind":kind,"metadata":{"name":"run","namespace":"default"}})).unwrap();
@@ -1005,5 +1024,32 @@ mod tests {
         let rows = &projection.groups[0].table.as_ref().unwrap().rows;
         assert_eq!(rows[0][2].value.as_deref(), Some("s3://shared/data.json"));
         assert_eq!(rows[0][3].value.as_deref(), Some("AccessDenied"));
+    }
+    #[test]
+    fn workflow_controls_show_pending_transitions_until_the_controller_finishes() {
+        let mut run = object(
+            "Workflow",
+            json!({"spec":{"shutdown":"Stop"},"status":{"phase":"Running"}}),
+        );
+        assert_eq!(
+            summary("Workflow", &run, &Nodes::new(), Timestamp::now()).label,
+            "Stopping"
+        );
+        run.data["status"]["phase"] = json!("Failed");
+        assert_eq!(
+            summary("Workflow", &run, &Nodes::new(), Timestamp::now()).label,
+            "Failed"
+        );
+        run.data["status"]["phase"] = json!("");
+        run.data["spec"].as_object_mut().unwrap().remove("shutdown");
+        assert_eq!(
+            summary("Workflow", &run, &Nodes::new(), Timestamp::now()).label,
+            "Pending"
+        );
+        run.data["spec"]["suspend"] = json!(true);
+        assert_eq!(
+            summary("Workflow", &run, &Nodes::new(), Timestamp::now()).label,
+            "Suspended"
+        );
     }
 }

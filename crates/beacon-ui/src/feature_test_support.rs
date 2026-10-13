@@ -45,10 +45,21 @@ pub(crate) fn window(cx: &mut TestAppContext) -> AnyWindowHandle {
 pub(crate) fn kind(group: &str, name: &str, plural: &str) -> Kind {
     Kind {
         resource: ApiResource::from_gvk_with_plural(
-            &GroupVersionKind::gvk(group, "v1", name),
+            &GroupVersionKind::gvk(
+                group,
+                if group == "argoproj.io" {
+                    "v1alpha1"
+                } else {
+                    "v1"
+                },
+                name,
+            ),
             plural,
         ),
-        namespaced: !matches!(name, "Namespace" | "Node" | "PersistentVolume"),
+        namespaced: !matches!(
+            name,
+            "Namespace" | "Node" | "PersistentVolume" | "ClusterWorkflowTemplate"
+        ),
         verbs: vec!["get".into(), "list".into(), "watch".into(), "patch".into()],
     }
 }
@@ -62,7 +73,17 @@ pub(crate) fn fixture(
         let fixture = Fixture::start(objects).await;
         let mut job_kind = kind("batch", "Job", "jobs");
         job_kind.verbs.push("create".into());
+        let mut workflow_kind = kind("argoproj.io", "Workflow", "workflows");
+        workflow_kind.verbs.push("create".into());
         let kinds = vec![
+            workflow_kind,
+            kind("argoproj.io", "WorkflowTemplate", "workflowtemplates"),
+            kind(
+                "argoproj.io",
+                "ClusterWorkflowTemplate",
+                "clusterworkflowtemplates",
+            ),
+            kind("argoproj.io", "CronWorkflow", "cronworkflows"),
             kind("", "Pod", "pods"),
             kind("", "Node", "nodes"),
             kind("", "Event", "events"),

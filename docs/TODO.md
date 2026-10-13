@@ -55,9 +55,9 @@
 
 ### 08 · Argo Workflows 运行操作
 
-- [ ] 支持从模板提交 Workflow，并填写和审阅运行参数。
-- [ ] 支持 Retry、Resubmit、Suspend / Resume、Stop / Terminate。
-- [ ] 按运行状态和权限提供可用操作，操作后继续追踪现有 DAG、节点详情和日志。
+- [x] 支持从模板提交 Workflow，并填写和审阅运行参数。
+- [x] 支持 Retry、Resubmit、Suspend / Resume、Stop / Terminate。
+- [x] 按运行状态和权限提供可用操作，操作后继续追踪现有 DAG、节点详情和日志。
 
 ### 09 · RBAC 权限查看与解释
 

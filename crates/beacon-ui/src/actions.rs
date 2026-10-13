@@ -9,7 +9,7 @@
 //! `ConfigMap` has no replicas, so `Scale` is not offered at all. A user
 //! without `delete` on pods sees `Delete`, greyed, saying so.
 
-use beacon_kube::{Kind, Operation, Rules};
+use beacon_kube::{DynamicObject, Kind, Operation, Rules, workflow_ops::Action};
 
 /// One entry in the actions menu.
 #[derive(Debug, Clone)]
@@ -113,6 +113,77 @@ pub fn available_for_target(
     .collect()
 }
 
+/// Canonical resource actions, filtered using the selected object's live state.
+pub fn available_for_object(
+    kind: &Kind,
+    rules: Option<&Rules>,
+    replicas: i32,
+    object: &DynamicObject,
+) -> Vec<Choice> {
+    let suspended = object
+        .data
+        .pointer(
+            if kind.resource.group.is_empty() && kind.resource.kind == "Node" {
+                "/spec/unschedulable"
+            } else {
+                "/spec/suspend"
+            },
+        )
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false);
+    let mut choices = available_for_target(
+        kind,
+        rules,
+        replicas,
+        suspended,
+        object.metadata.name.as_deref(),
+    );
+    let mut workflow = Vec::new();
+    for action in [
+        Action::Submit,
+        Action::Retry,
+        Action::Resubmit,
+        Action::Suspend,
+        Action::Resume,
+        Action::Stop,
+        Action::Terminate,
+    ] {
+        if !action.applies(&kind.resource.group, &kind.resource.kind)
+            || !action.available(&kind.resource.kind, object)
+        {
+            continue;
+        }
+        let allowed = rules.is_none_or(|rules| {
+            // The cluster template's destination namespace is chosen in the
+            // dialog. Cluster-scope rules cannot answer that namespace question.
+            if action.creates() {
+                kind.resource.kind == "ClusterWorkflowTemplate"
+                    || rules.allows("create", "argoproj.io", "workflows")
+            } else {
+                rules.allows_named(
+                    "patch",
+                    "argoproj.io",
+                    "workflows",
+                    object.metadata.name.as_deref().unwrap_or(""),
+                )
+            }
+        });
+        workflow.push(Choice {
+            operation: Operation::Workflow { action },
+            label: format!("{}…", action.label()),
+            allowed,
+            blocked_because: (!allowed).then(|| {
+                format!(
+                    "You do not have {} on argoproj.io/workflows in this namespace",
+                    action.verb()
+                )
+            }),
+        });
+    }
+    workflow.append(&mut choices);
+    workflow
+}
+
 /// Whether this user may apply an edited manifest for a kind.
 ///
 /// Separate from [`available`] because Apply is reached from the YAML pane
@@ -192,6 +263,7 @@ fn label(operation: &Operation) -> String {
             unschedulable: false,
         } => "Uncordon…".into(),
         Operation::NodeDrain => "Drain…".into(),
+        Operation::Workflow { action } => format!("{}…", action.label()),
     }
 }
 
@@ -230,6 +302,53 @@ mod tests {
 
     fn labels(choices: &[Choice]) -> Vec<&str> {
         choices.iter().map(|choice| choice.label.as_str()).collect()
+    }
+
+    #[test]
+    fn argo_actions_follow_live_phase_and_named_workflow_permissions() {
+        let workflow = kind("argoproj.io", "Workflow", "workflows");
+        let mut object: DynamicObject = serde_json::from_value(serde_json::json!({"apiVersion":"argoproj.io/v1alpha1","kind":"Workflow","metadata":{"name":"run","namespace":"default"},"spec":{},"status":{"phase":"Running"}})).unwrap();
+        let patch = rules(&[("patch", "argoproj.io", "workflows")]);
+        let choices = available_for_object(&workflow, Some(&patch), 1, &object);
+        assert!(labels(&choices).contains(&"Suspend Workflow…"));
+        assert!(labels(&choices).contains(&"Stop Workflow…"));
+        assert!(!labels(&choices).contains(&"Retry failed steps…"));
+        object.data["spec"]["suspend"] = serde_json::json!(true);
+        let choices = available_for_object(&workflow, Some(&patch), 1, &object);
+        assert!(labels(&choices).contains(&"Resume Workflow…"));
+        assert!(!labels(&choices).contains(&"Suspend Workflow…"));
+        object.data["status"]["phase"] = serde_json::json!("Failed");
+        let choices = available_for_object(&workflow, Some(&patch), 1, &object);
+        assert!(
+            choices
+                .iter()
+                .find(|choice| choice.label == "Retry failed steps…")
+                .unwrap()
+                .allowed
+        );
+        assert!(
+            !choices
+                .iter()
+                .find(|choice| choice.label == "Resubmit Workflow…")
+                .unwrap()
+                .allowed
+        );
+        assert!(!labels(&choices).contains(&"Stop Workflow…"));
+        let template = kind("argoproj.io", "WorkflowTemplate", "workflowtemplates");
+        let create = rules(&[("create", "argoproj.io", "workflows")]);
+        assert!(
+            available_for_object(&template, Some(&create), 1, &object)
+                .iter()
+                .find(|choice| choice.label == "Submit Workflow…")
+                .unwrap()
+                .allowed
+        );
+        let unrelated = kind("example.test", "Workflow", "workflows");
+        assert!(
+            !available_for_object(&unrelated, Some(&create), 1, &object)
+                .iter()
+                .any(|choice| matches!(choice.operation, Operation::Workflow { .. }))
+        );
     }
 
     /// Built from a `SelfSubjectRulesReview` answer, the way the real one is.

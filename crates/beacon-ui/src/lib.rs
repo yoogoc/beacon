@@ -58,6 +58,7 @@ pub mod theme;
 mod tls;
 pub mod updates;
 mod web_links;
+mod workflow_actions;
 mod workspace;
 mod yaml_assistance;
 mod yaml_folding;

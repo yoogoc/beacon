@@ -337,6 +337,37 @@ impl ClusterSession {
     ) -> Result<Applied> {
         let namespace = namespace.as_deref();
         match operation {
+            Operation::Workflow { action } => {
+                let kind = self
+                    .discovery()
+                    .kinds()
+                    .iter()
+                    .find(|kind| kind.resource == resource)
+                    .cloned()
+                    .ok_or_else(|| Error::Manifest("Workflow source kind is unavailable".into()))?;
+                let source = crate::workflow_ops::load(
+                    self.clone(),
+                    kind.clone(),
+                    crate::ObjectRef {
+                        namespace: namespace.map(str::to_owned),
+                        name,
+                    },
+                    None,
+                    action,
+                )
+                .await?;
+                let plan = crate::workflow_ops::prepare(
+                    self.clone(),
+                    kind,
+                    source,
+                    action,
+                    Default::default(),
+                )
+                .await?;
+                Ok(Applied::Ok(Box::new(
+                    crate::workflow_ops::execute(self, &plan).await?,
+                )))
+            }
             Operation::NodeCordon { .. } | Operation::NodeDrain => {
                 if !resource.group.is_empty() || resource.kind != "Node" || namespace.is_some() {
                     return Err(Error::Manifest(

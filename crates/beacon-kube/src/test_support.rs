@@ -110,6 +110,61 @@ async fn response(stream: &mut TcpStream, status: &str, body: String, content_ty
     );
     let _ = stream.write_all(header.as_bytes()).await;
 }
+
+/// Only the RFC 6902 operations used by reviewed Workflow changes are needed by
+/// this fixture. Apply them to a private copy so failed tests never partially
+/// persist a patch, just as an API server rejects the entire request.
+fn workflow_patch(object: &mut Value, operations: &Value) -> std::result::Result<(), String> {
+    let operations = operations.as_array().ok_or("JSON Patch must be an array")?;
+    for operation in operations {
+        let path = operation["path"]
+            .as_str()
+            .ok_or("JSON Patch path is missing")?;
+        let action = operation["op"]
+            .as_str()
+            .ok_or("JSON Patch operation is missing")?;
+        if action == "test" {
+            if object.pointer(path) != operation.get("value") {
+                return Err(format!("JSON Patch test failed at {path}"));
+            }
+            continue;
+        }
+        let (parent, key) = path.rsplit_once('/').ok_or("JSON Patch path is invalid")?;
+        let key = key.replace("~1", "/").replace("~0", "~");
+        let parent = object
+            .pointer_mut(parent)
+            .ok_or("JSON Patch parent does not exist")?;
+        let value = operation.get("value").cloned();
+        match (action, parent) {
+            ("add", Value::Object(map)) => {
+                map.insert(key, value.ok_or("JSON Patch value is missing")?);
+            }
+            ("remove", Value::Object(map)) => {
+                map.remove(&key).ok_or("JSON Patch member does not exist")?;
+            }
+            ("add", Value::Array(array)) => {
+                let index = if key == "-" {
+                    array.len()
+                } else {
+                    key.parse().map_err(|_| "JSON Patch index is invalid")?
+                };
+                if index > array.len() {
+                    return Err("JSON Patch array index is out of bounds".into());
+                }
+                array.insert(index, value.ok_or("JSON Patch value is missing")?);
+            }
+            ("remove", Value::Array(array)) => {
+                let index: usize = key.parse().map_err(|_| "JSON Patch index is invalid")?;
+                if index >= array.len() {
+                    return Err("JSON Patch array index is out of bounds".into());
+                }
+                array.remove(index);
+            }
+            _ => return Err("unsupported JSON Patch operation in fixture".into()),
+        }
+    }
+    Ok(())
+}
 async fn serve(
     mut stream: TcpStream,
     objects: Arc<Mutex<Vec<Value>>>,
@@ -175,6 +230,16 @@ async fn serve(
         response(&mut stream, "403 Forbidden", json!({"kind":"Status","apiVersion":"v1","status":"Failure","reason":"Forbidden","message":format!("Fixture refuses {resource}"),"code":403}).to_string(), "application/json").await;
         return;
     }
+    let mutation_refused = {
+        let denied = denied.lock().unwrap();
+        let verb = method.to_ascii_lowercase();
+        denied.contains(&format!("{verb}/{resource}"))
+            || name.is_some_and(|name| denied.contains(&format!("{verb}/{resource}/{name}")))
+    };
+    if mutation_refused {
+        response(&mut stream, "403 Forbidden", json!({"kind":"Status","apiVersion":"v1","status":"Failure","reason":"Forbidden","message":format!("Fixture refuses {method} {resource}"),"code":403}).to_string(), "application/json").await;
+        return;
+    }
     let kind = match resource {
         "pods" if parts.get(1) == Some(&"metrics.k8s.io") => "PodMetrics",
         "nodes" if parts.get(1) == Some(&"metrics.k8s.io") => "NodeMetrics",
@@ -200,6 +265,10 @@ async fn serve(
         "poddisruptionbudgets" => "PodDisruptionBudget",
         "persistentvolumeclaims" => "PersistentVolumeClaim",
         "persistentvolumes" => "PersistentVolume",
+        "workflows" => "Workflow",
+        "workflowtemplates" => "WorkflowTemplate",
+        "clusterworkflowtemplates" => "ClusterWorkflowTemplate",
+        "cronworkflows" => "CronWorkflow",
         _ => "Unknown",
     };
     let selector = query
@@ -360,6 +429,91 @@ async fn serve(
         .await;
         return;
     }
+    if method == "POST" && resource == "workflows" && name.is_none() {
+        let mut object = request.clone();
+        let owner_valid = object
+            .pointer("/metadata/ownerReferences")
+            .is_none_or(|owners| {
+                owners.as_array().is_some_and(|owners| {
+                    owners.len() == 1
+                        && owners[0]["kind"] == "CronWorkflow"
+                        && owners[0]["controller"] == true
+                        && owners[0]["uid"].as_str().is_some_and(|uid| !uid.is_empty())
+                        && objects.lock().unwrap().iter().any(|source| {
+                            source["kind"] == "CronWorkflow"
+                                && source["apiVersion"] == owners[0]["apiVersion"]
+                                && source.pointer("/metadata/name") == owners[0].get("name")
+                                && source.pointer("/metadata/uid") == owners[0].get("uid")
+                                && source
+                                    .pointer("/metadata/namespace")
+                                    .and_then(Value::as_str)
+                                    == namespace
+                        })
+                })
+            });
+        if object["apiVersion"] != "argoproj.io/v1alpha1"
+            || object["kind"] != "Workflow"
+            || object.pointer("/metadata/uid").is_some()
+            || object.pointer("/metadata/resourceVersion").is_some()
+            || !owner_valid
+            || object.pointer("/status").is_some()
+            || object
+                .pointer("/metadata/namespace")
+                .and_then(Value::as_str)
+                != namespace
+            || !object["spec"].is_object()
+        {
+            response(&mut stream, "422 Unprocessable Entity", json!({"apiVersion":"v1","kind":"Status","status":"Failure","code":422,"reason":"Invalid","message":"new Workflow retains old execution identity or has an invalid namespace/spec"}).to_string(), "application/json").await;
+            return;
+        }
+        let generated = {
+            let store = objects.lock().unwrap();
+            let prefix = object
+                .pointer("/metadata/generateName")
+                .and_then(Value::as_str)
+                .unwrap_or("workflow-");
+            let mut serial = store.len();
+            loop {
+                let candidate = format!("{prefix}{serial:05}");
+                if !store.iter().any(|existing| {
+                    matches(existing)
+                        && existing.pointer("/metadata/name").and_then(Value::as_str)
+                            == Some(&candidate)
+                }) {
+                    break candidate;
+                }
+                serial += 1;
+            }
+        };
+        let name = object
+            .pointer("/metadata/name")
+            .and_then(Value::as_str)
+            .unwrap_or(&generated)
+            .to_owned();
+        if objects.lock().unwrap().iter().any(|existing| {
+            matches(existing)
+                && existing.pointer("/metadata/name").and_then(Value::as_str) == Some(&name)
+        }) {
+            response(&mut stream, "409 Conflict", json!({"apiVersion":"v1","kind":"Status","status":"Failure","code":409,"reason":"AlreadyExists","message":"Workflow already exists"}).to_string(), "application/json").await;
+            return;
+        }
+        object["metadata"]["name"] = json!(name);
+        object["metadata"]["uid"] = json!(format!("uid-{name}"));
+        object["metadata"]["resourceVersion"] = json!("1");
+        object["status"] = json!({"phase":"Pending"});
+        if !query.contains_key("dryRun") {
+            objects.lock().unwrap().push(object.clone());
+            let _ = events.send(json!({"type":"ADDED","object":object.clone()}));
+        }
+        response(
+            &mut stream,
+            "201 Created",
+            object.to_string(),
+            "application/json",
+        )
+        .await;
+        return;
+    }
     if query.get("watch").is_some_and(|watch| watch == "true") {
         let mut receiver = events.subscribe();
         if stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nTransfer-Encoding: chunked\r\n\r\n").await.is_err() { return; }
@@ -403,69 +557,126 @@ async fn serve(
         response(&mut stream,"404 Not Found",json!({"apiVersion":"v1","kind":"Status","status":"Failure","code":404,"message":"fixture resource missing","reason":"NotFound"}).to_string(),"application/json").await;
         return;
     };
-    if method == "PATCH" {
-        if request.pointer("/metadata/uid") != object.pointer("/metadata/uid")
-            || request.pointer("/metadata/resourceVersion")
-                != object.pointer("/metadata/resourceVersion")
+    if method == "DELETE" && kind == "Pod" && parts.get(index + 2).is_none() {
+        if request.pointer("/preconditions/uid").is_some()
+            && request.pointer("/preconditions/uid") != object.pointer("/metadata/uid")
         {
-            response(&mut stream,"409 Conflict",json!({"apiVersion":"v1","kind":"Status","status":"Failure","code":409,"reason":"Conflict","message":"resource changed after preview"}).to_string(),"application/json").await;
+            response(&mut stream, "409 Conflict", json!({"apiVersion":"v1","kind":"Status","status":"Failure","code":409,"reason":"Conflict","message":"Pod UID changed after review"}).to_string(), "application/json").await;
             return;
         }
-        if parts.last() == Some(&"ephemeralcontainers") {
-            let containers = request
-                .pointer("/spec/ephemeralContainers")
-                .and_then(Value::as_array)
-                .cloned()
-                .unwrap_or_default();
-            if !object["spec"]["ephemeralContainers"].is_array() {
-                object["spec"]["ephemeralContainers"] = json!([]);
-            }
-            let statuses = containers.iter().map(|container|json!({"name":container["name"],"restartCount":0,"ready":true,"image":container["image"],"imageID":"fixture","state":{"running":{}}})).collect::<Vec<_>>();
-            object["spec"]["ephemeralContainers"]
-                .as_array_mut()
-                .unwrap()
-                .extend(containers);
-            object["status"]["ephemeralContainerStatuses"] = json!(statuses);
-        } else if kind == "Node" {
-            if let Some(unschedulable) = request.pointer("/spec/unschedulable") {
-                object["spec"]["unschedulable"] = unschedulable.clone();
-            }
-        } else if kind == "CronJob" {
-            if let Some(suspend) = request.pointer("/spec/suspend") {
-                object["spec"]["suspend"] = suspend.clone();
-            }
-        } else if let Some(template) = request.pointer("/spec/template") {
-            let mut template = template.clone();
-            template.as_object_mut().unwrap().remove("$patch");
-            object["spec"]["template"] = template;
-        } else if matches!(kind, "ConfigMap" | "Secret") {
-            if request["apiVersion"] != object["apiVersion"]
-                || request["kind"] != object["kind"]
-                || request.pointer("/metadata/managedFields").is_some()
-            {
-                response(&mut stream,"422 Unprocessable Entity",json!({"apiVersion":"v1","kind":"Status","status":"Failure","code":422,"reason":"Invalid","message":"apply requires apiVersion and kind without managedFields"}).to_string(),"application/json").await;
+        if !query.contains_key("dryRun") {
+            objects.lock().unwrap().retain(|existing| {
+                !matches(existing)
+                    || existing.pointer("/metadata/uid") != object.pointer("/metadata/uid")
+            });
+            let _ = events.send(json!({"type":"DELETED","object":object}));
+        }
+        response(
+            &mut stream,
+            "200 OK",
+            json!({"apiVersion":"v1","kind":"Status","status":"Success","code":200}).to_string(),
+            "application/json",
+        )
+        .await;
+        return;
+    }
+    if method == "PATCH" {
+        if kind == "Workflow" && request.is_array() {
+            let identity_tests =
+                ["/metadata/uid", "/metadata/resourceVersion"]
+                    .iter()
+                    .all(|path| {
+                        request.as_array().unwrap().iter().any(|operation| {
+                            operation["op"] == "test" && operation["path"] == *path
+                        })
+                    });
+            if !identity_tests {
+                response(&mut stream, "409 Conflict", json!({"apiVersion":"v1","kind":"Status","status":"Failure","code":409,"reason":"Conflict","message":"Workflow patch requires reviewed UID and resourceVersion tests"}).to_string(), "application/json").await;
                 return;
             }
-            for field in ["data", "binaryData"] {
-                if let Some(values) = request.get(field) {
-                    object[field] = values.clone();
+            if let Err(message) = workflow_patch(&mut object, &request) {
+                response(&mut stream, "409 Conflict", json!({"apiVersion":"v1","kind":"Status","status":"Failure","code":409,"reason":"Conflict","message":message}).to_string(), "application/json").await;
+                return;
+            }
+        } else {
+            if request.pointer("/metadata/uid") != object.pointer("/metadata/uid")
+                || request.pointer("/metadata/resourceVersion")
+                    != object.pointer("/metadata/resourceVersion")
+            {
+                response(&mut stream,"409 Conflict",json!({"apiVersion":"v1","kind":"Status","status":"Failure","code":409,"reason":"Conflict","message":"resource changed after preview"}).to_string(),"application/json").await;
+                return;
+            }
+            if parts.last() == Some(&"ephemeralcontainers") {
+                let containers = request
+                    .pointer("/spec/ephemeralContainers")
+                    .and_then(Value::as_array)
+                    .cloned()
+                    .unwrap_or_default();
+                if !object["spec"]["ephemeralContainers"].is_array() {
+                    object["spec"]["ephemeralContainers"] = json!([]);
+                }
+                let statuses = containers.iter().map(|container|json!({"name":container["name"],"restartCount":0,"ready":true,"image":container["image"],"imageID":"fixture","state":{"running":{}}})).collect::<Vec<_>>();
+                object["spec"]["ephemeralContainers"]
+                    .as_array_mut()
+                    .unwrap()
+                    .extend(containers);
+                object["status"]["ephemeralContainerStatuses"] = json!(statuses);
+            } else if kind == "Node" {
+                if let Some(unschedulable) = request.pointer("/spec/unschedulable") {
+                    object["spec"]["unschedulable"] = unschedulable.clone();
+                }
+            } else if kind == "CronJob" {
+                if let Some(suspend) = request.pointer("/spec/suspend") {
+                    object["spec"]["suspend"] = suspend.clone();
+                }
+            } else if let Some(template) = request.pointer("/spec/template") {
+                let mut template = template.clone();
+                template.as_object_mut().unwrap().remove("$patch");
+                object["spec"]["template"] = template;
+            } else if matches!(kind, "ConfigMap" | "Secret") {
+                if request["apiVersion"] != object["apiVersion"]
+                    || request["kind"] != object["kind"]
+                    || request.pointer("/metadata/managedFields").is_some()
+                {
+                    response(&mut stream,"422 Unprocessable Entity",json!({"apiVersion":"v1","kind":"Status","status":"Failure","code":422,"reason":"Invalid","message":"apply requires apiVersion and kind without managedFields"}).to_string(),"application/json").await;
+                    return;
+                }
+                for field in ["data", "binaryData"] {
+                    if let Some(values) = request.get(field) {
+                        object[field] = values.clone();
+                    }
                 }
             }
         }
-        object["metadata"]["resourceVersion"] = json!("2");
-        {
-            let mut store = objects.lock().unwrap();
-            let existing = store
-                .iter_mut()
-                .find(|existing| {
-                    existing["kind"] == kind
-                        && existing.pointer("/metadata/name").and_then(Value::as_str) == Some(name)
-                        && matches(existing)
-                })
-                .unwrap();
-            *existing = object.clone();
+        if !query.contains_key("dryRun") {
+            object["metadata"]["resourceVersion"] = if kind == "Workflow" {
+                json!(
+                    (object
+                        .pointer("/metadata/resourceVersion")
+                        .and_then(Value::as_str)
+                        .and_then(|version| version.parse::<u64>().ok())
+                        .unwrap_or(0)
+                        + 1)
+                    .to_string()
+                )
+            } else {
+                json!("2")
+            };
+            {
+                let mut store = objects.lock().unwrap();
+                let existing = store
+                    .iter_mut()
+                    .find(|existing| {
+                        existing["kind"] == kind
+                            && existing.pointer("/metadata/name").and_then(Value::as_str)
+                                == Some(name)
+                            && matches(existing)
+                    })
+                    .unwrap();
+                *existing = object.clone();
+            }
+            let _ = events.send(json!({"type":"MODIFIED","object":object.clone()}));
         }
-        let _ = events.send(json!({"type":"MODIFIED","object":object.clone()}));
     }
     response(
         &mut stream,
