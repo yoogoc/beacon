@@ -781,12 +781,21 @@ impl ClusterView {
             kind: SharedString::from(kind.resource.kind.clone()),
             bulk_targets: None,
         };
-        let prompt = cx.new(|cx| Prompt::new(ask, window, cx));
+        let prompt = cx.new(|cx| {
+            Prompt::new(ask, window, cx).with_usage(beacon_kube::data::is_keyed(
+                &kind.resource.group,
+                &kind.resource.kind,
+            ))
+        });
 
         cx.subscribe_in(
             &prompt,
             window,
             move |view, _, event: &PromptEvent, window, cx| {
+                if let PromptEvent::UsageRequested(target) = event {
+                    view.show_usage(target, window, cx);
+                    return;
+                }
                 view.prompt = None;
                 if let PromptEvent::Confirmed(operation) = event {
                     view.run_for(target.clone(), operation.clone(), window, cx);
@@ -798,6 +807,34 @@ impl ClusterView {
 
         self.prompt = Some(prompt);
         cx.notify();
+    }
+
+    fn show_usage(&mut self, target: &ObjectRef, window: &mut Window, cx: &mut Context<Self>) {
+        let (Some(kind), Some(object)) = (
+            self.kind.clone(),
+            self.table.read(cx).delegate().object(target).cloned(),
+        ) else {
+            return;
+        };
+        match crate::configuration_usage::open(self.session.clone(), kind, object, window, cx) {
+            Ok(usage) => {
+                cx.subscribe(&usage, |view, _, event: &OwnerRequested, cx| {
+                    view.prompt = None;
+                    cx.emit(ResourceRequested {
+                        kind: event.kind.clone(),
+                        scope: event.target.namespace.iter().cloned().collect(),
+                        new_tab: false,
+                        target: Some(event.target.clone()),
+                    });
+                    cx.notify();
+                })
+                .detach();
+            }
+            Err(error) => {
+                self.outcome = Some(Outcome::Failed(format!("Could not open usage: {error}")));
+                cx.notify();
+            }
+        }
     }
 
     fn start_create(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -863,11 +900,20 @@ impl ClusterView {
                 .map(|target| target.reference.clone())
                 .collect(),
         );
-        let prompt = cx.new(|cx| Prompt::new(ask, window, cx));
+        let prompt = cx.new(|cx| {
+            Prompt::new(ask, window, cx).with_usage(beacon_kube::data::is_keyed(
+                &kind.resource.group,
+                &kind.resource.kind,
+            ))
+        });
         cx.subscribe_in(
             &prompt,
             window,
             move |view, _, event: &PromptEvent, window, cx| {
+                if let PromptEvent::UsageRequested(target) = event {
+                    view.show_usage(target, window, cx);
+                    return;
+                }
                 view.prompt = None;
                 if matches!(event, PromptEvent::Confirmed(Operation::Delete)) {
                     view.run_delete_many(kind.clone(), targets.clone(), window, cx);

@@ -41,6 +41,8 @@ pub enum DetailTab {
     Overview,
     Pods,
     Related,
+    UsedBy,
+    Configuration,
     History,
     Network,
     /// A ConfigMap's or Secret's keys, one editor each.
@@ -71,7 +73,11 @@ impl DetailTab {
             tabs.push(Self::Related);
         }
         if data::is_keyed(&kind.resource.group, &kind.resource.kind) {
+            tabs.push(Self::UsedBy);
             tabs.push(Self::Data);
+        }
+        if beacon_kube::config_refs::supported(&kind.resource.group, &kind.resource.kind) {
+            tabs.push(Self::Configuration);
         }
         tabs.extend([Self::Yaml, Self::Events]);
         tabs
@@ -82,6 +88,8 @@ impl DetailTab {
             Self::Overview => "Overview",
             Self::Pods => "Pods",
             Self::Related => "Related",
+            Self::UsedBy => "Used by",
+            Self::Configuration => "Configuration",
             Self::History => "History",
             Self::Network => "Network",
             Self::Data => "Data",
@@ -163,6 +171,7 @@ pub struct DetailView {
     overview: crate::overview::Projection,
     node_pods: Option<Entity<crate::node_pods::NodePodsView>>,
     related: Option<Entity<crate::related::RelatedView>>,
+    configuration: Option<Entity<crate::configuration_usage::ConfigurationUsageView>>,
     rollout: Option<Entity<crate::rollout::RolloutView>>,
     network: Option<Entity<crate::network::NetworkView>>,
     argo_nodes: Arc<beacon_kube::argo::Nodes>,
@@ -250,6 +259,7 @@ impl DetailView {
             overview,
             node_pods: None,
             related: None,
+            configuration: None,
             rollout: None,
             network: None,
             argo_nodes: Arc::new(beacon_kube::argo::Nodes::new()),
@@ -356,6 +366,9 @@ impl DetailView {
         if let Some(related) = &self.related {
             related.update(cx, |view, cx| view.refresh(self.object.clone(), cx));
         }
+        if let Some(configuration) = &self.configuration {
+            configuration.update(cx, |view, cx| view.refresh(self.object.clone(), cx));
+        }
         if let Some(rollout) = &self.rollout {
             rollout.update(cx, |view, cx| {
                 view.refresh(
@@ -400,6 +413,9 @@ impl DetailView {
             }
             DetailTab::Pods if self.node_pods.is_none() => self.load_node_pods(window, cx),
             DetailTab::Related if self.related.is_none() => self.load_related(window, cx),
+            DetailTab::UsedBy | DetailTab::Configuration if self.configuration.is_none() => {
+                self.load_configuration(window, cx)
+            }
             DetailTab::History if self.rollout.is_none() => {
                 let session = self.session.clone();
                 let object = self.object.clone();
@@ -417,6 +433,26 @@ impl DetailView {
 
     fn busy(&self) -> bool {
         self.reviewing || matches!(self.apply, Apply::Running)
+    }
+
+    fn load_configuration(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let configuration = cx.new(|cx| {
+            crate::configuration_usage::ConfigurationUsageView::new(
+                self.session.clone(),
+                self.kind.clone(),
+                self.object.clone(),
+                window,
+                cx,
+            )
+        });
+        cx.subscribe(&configuration, |_, _, event: &OwnerRequested, cx| {
+            cx.emit(OwnerRequested {
+                kind: event.kind.clone(),
+                target: event.target.clone(),
+            });
+        })
+        .detach();
+        self.configuration = Some(configuration);
     }
 
     fn load_related(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -2419,6 +2455,22 @@ impl DetailView {
 
     /// The bar under the keys: the same status line the YAML tab has, a
     /// reveal for Secrets, and Save.
+    fn usage_link(&self, id: &'static str, cx: &mut Context<Self>) -> Option<AnyElement> {
+        crate::configuration_usage::supported(&self.kind).then(|| {
+            let tab = if data::is_keyed(&self.kind.resource.group, &self.kind.resource.kind) {
+                DetailTab::UsedBy
+            } else {
+                DetailTab::Configuration
+            };
+            Button::new(id)
+                .ghost()
+                .small()
+                .label("View usage")
+                .on_click(cx.listener(move |view, _, window, cx| view.select(tab, window, cx)))
+                .into_any_element()
+        })
+    }
+
     fn render_data_bar(
         &self,
         secret: bool,
@@ -2446,6 +2498,7 @@ impl DetailView {
                     .gap_2()
                     .items_center()
                     .flex_shrink_0()
+                    .children(self.usage_link("data-view-usage", cx))
                     .when(matches!(self.apply, Apply::Refused(_)), |this| {
                         this.child(
                             Button::new("force-apply-data")
@@ -2539,6 +2592,7 @@ impl DetailView {
                     .gap_2()
                     .items_center()
                     .flex_shrink_0()
+                    .children(self.usage_link("yaml-view-usage", cx))
                     .when(matches!(self.apply, Apply::Refused(_)), |this| {
                         this.child(
                             Button::new("force-apply")
@@ -3086,6 +3140,11 @@ impl Render for DetailView {
                 .unwrap_or_else(|| div().into_any_element()),
             DetailTab::Pods => self.render_node_pods(cx),
             DetailTab::Related => self.render_related(),
+            DetailTab::UsedBy | DetailTab::Configuration => self
+                .configuration
+                .clone()
+                .map(|view| view.into_any_element())
+                .unwrap_or_else(|| div().into_any_element()),
             DetailTab::History => self
                 .rollout
                 .clone()

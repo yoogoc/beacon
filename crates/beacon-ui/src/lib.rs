@@ -14,6 +14,7 @@ pub mod bridge;
 pub mod catalog;
 pub mod cluster;
 mod cluster_overview;
+mod configuration_usage;
 mod connections;
 mod context_sidebar;
 mod copyable_text;

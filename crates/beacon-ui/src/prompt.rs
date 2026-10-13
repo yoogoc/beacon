@@ -69,6 +69,7 @@ pub enum PromptEvent {
     /// Go ahead, with the operation as the user finally set it.
     Confirmed(Operation),
     Cancelled,
+    UsageRequested(ObjectRef),
 }
 
 impl EventEmitter<PromptEvent> for Prompt {}
@@ -76,6 +77,7 @@ impl EventEmitter<PromptEvent> for Prompt {}
 pub struct Prompt {
     ask: Ask,
     replicas: Entity<InputState>,
+    usage: bool,
 }
 
 impl Prompt {
@@ -94,7 +96,16 @@ impl Prompt {
             replicas.read(cx).focus_handle(cx).focus(window, cx);
         }
 
-        Self { ask, replicas }
+        Self {
+            ask,
+            replicas,
+            usage: false,
+        }
+    }
+
+    pub(crate) fn with_usage(mut self, enabled: bool) -> Self {
+        self.usage = enabled;
+        self
     }
 
     /// The operation with whatever the user typed folded in.
@@ -165,7 +176,7 @@ impl Prompt {
         )
     }
 
-    fn render_targets(&self, cx: &App) -> Option<AnyElement> {
+    fn render_targets(&self, cx: &Context<Self>) -> Option<AnyElement> {
         let targets = self.ask.bulk_targets.as_ref()?;
         let border = cx.theme().border;
         let muted = cx.theme().muted_foreground;
@@ -211,6 +222,18 @@ impl Prompt {
                     ),
                 )
                 .child(div().flex_1().min_w_0().child(target.name.clone()))
+                .when(self.usage, |row| {
+                    let target = target.clone();
+                    row.child(
+                        Button::new(("delete-view-usage", index))
+                            .small()
+                            .ghost()
+                            .label("View usage")
+                            .on_click(cx.listener(move |_, _, _, cx| {
+                                cx.emit(PromptEvent::UsageRequested(target.clone()))
+                            })),
+                    )
+                })
         });
 
         Some(
@@ -278,6 +301,18 @@ impl Render for Prompt {
                 h_flex()
                     .gap_2()
                     .justify_end()
+                    .when(self.usage && self.ask.bulk_targets.is_none(), |row| {
+                        let target = self.ask.target.clone();
+                        row.child(
+                            Button::new("delete-view-usage")
+                                .small()
+                                .ghost()
+                                .label("View usage")
+                                .on_click(cx.listener(move |_, _, _, cx| {
+                                    cx.emit(PromptEvent::UsageRequested(target.clone()))
+                                })),
+                        )
+                    })
                     .child(
                         Button::new("cancel")
                             .ghost()

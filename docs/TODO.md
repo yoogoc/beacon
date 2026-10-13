@@ -10,9 +10,9 @@
 
 ### 01 · ConfigMap / Secret 被谁使用
 
-- [ ] 增加 Used by 视图，列出引用配置的 Pod 和工作负载，并可跳转到对应资源。
-- [ ] 显示引用的 key、环境变量和挂载路径；解析 env、envFrom、volume、projected、imagePullSecrets 等实际引用，覆盖常规容器、initContainers 和工作负载 Pod 模板。
-- [ ] 展示缺失引用，并在编辑或删除时提供影响范围查看入口。
+- [x] 增加 Used by 视图，列出引用配置的 Pod 和工作负载，并可跳转到对应资源。
+- [x] 显示引用的 key、环境变量和挂载路径；解析 env、envFrom、volume、projected、imagePullSecrets 等实际引用，覆盖常规容器、initContainers 和工作负载 Pod 模板。
+- [x] 展示缺失引用，并在编辑或删除时提供影响范围查看入口。
 
 ### 02 · 结构化日志
 

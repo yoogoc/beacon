@@ -9,6 +9,7 @@ pub mod access;
 pub mod aggregate_logs;
 pub mod argo;
 pub mod config;
+pub mod config_refs;
 pub mod connection;
 pub mod data;
 pub mod debug;

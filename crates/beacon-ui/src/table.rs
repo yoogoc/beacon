@@ -335,6 +335,15 @@ impl ResourceTable {
 
         if data::is_keyed(group, name) {
             menu = menu.item(detail_item("View data", &view, &target, DetailTab::Data));
+            menu = menu.item(detail_item("View usage", &view, &target, DetailTab::UsedBy));
+        }
+        if beacon_kube::config_refs::supported(group, name) {
+            menu = menu.item(detail_item(
+                "View configuration",
+                &view,
+                &target,
+                DetailTab::Configuration,
+            ));
         }
         if is_pod {
             let debug_view = view.clone();
