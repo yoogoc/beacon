@@ -18,7 +18,7 @@ use beacon_kube::{
     Applied, ClusterSession, Conflict, DataEntry, DynamicObject, Kind, ObjectRef, Operation,
     ResourceStore, Rules, WatchKey, data,
 };
-use gpui_kit::base::{Link, SelectableText, TextSelection};
+use gpui_kit::base::{Link, SelectableText, TestSupportExt as _, TextSelection};
 use gpui_kit::component::WindowExt as _;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::{Editor, EditorState, Textarea, TextareaState};
@@ -1345,11 +1345,12 @@ impl DetailView {
                         self.field(index, label, cell, cx).into_any_element()
                     }),
             );
+            let has_fields = !fields.is_empty();
             let fields = self.field_grid(fields);
             let body = v_flex()
                 .w_full()
                 .gap_3()
-                .child(fields)
+                .when(has_fields, |this| this.child(fields))
                 .when_some(group.table.as_ref(), |this, table| {
                     this.child(self.overview_table(table, cx))
                 });
@@ -1364,7 +1365,7 @@ impl DetailView {
                 ))
             } else {
                 block
-                    .child(self.heading(group.title.clone(), cx))
+                    .child(self.heading_with_links(group.title.clone(), &group.title_links, cx))
                     .child(body)
             });
         }
@@ -1550,6 +1551,10 @@ impl DetailView {
             .child(self.overview_value(cell, cx))
     }
 
+    fn is_ingress(&self) -> bool {
+        self.kind.resource.group == "networking.k8s.io" && self.kind.resource.kind == "Ingress"
+    }
+
     fn overview_value(&self, cell: &crate::overview::Cell, cx: &mut Context<Self>) -> AnyElement {
         let value = cell.value.clone().unwrap_or_else(|| "<none>".into());
         let reference = cell.reference.as_ref().and_then(|reference| {
@@ -1599,7 +1604,18 @@ impl DetailView {
                         });
                     }))
                     .into_any_element(),
-                None => SelectableText::new("value", value).into_any_element(),
+                None => {
+                    let detected;
+                    let links = if !cell.web_links.is_empty() {
+                        &cell.web_links
+                    } else if self.is_ingress() {
+                        detected = crate::web_links::detect(&value);
+                        &detected
+                    } else {
+                        &cell.web_links
+                    };
+                    crate::web_links::render(value, links, cx)
+                }
             })
             .into_any_element()
     }
@@ -1633,7 +1649,7 @@ impl DetailView {
                     label,
                     &crate::overview::Cell {
                         value: value.clone(),
-                        reference: None,
+                        ..Default::default()
                     },
                     cx,
                 )
@@ -1935,6 +1951,15 @@ impl DetailView {
     }
 
     fn heading(&self, title: impl Into<SharedString>, cx: &mut Context<Self>) -> impl IntoElement {
+        self.heading_with_links(title, &[], cx)
+    }
+
+    fn heading_with_links(
+        &self,
+        title: impl Into<SharedString>,
+        links: &[crate::web_links::WebLink],
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
         let title = title.into();
         h_flex()
             .min_w_0()
@@ -1947,12 +1972,11 @@ impl DetailView {
                     .size_3p5()
                     .text_color(cx.theme().muted_foreground),
             )
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .child(SelectableText::new("heading", title)),
-            )
+            .child(div().flex_1().min_w_0().child(crate::web_links::render(
+                title.to_string(),
+                links,
+                cx,
+            )))
     }
 
     fn metadata_entries(
@@ -1997,10 +2021,17 @@ impl DetailView {
                     .bg(cx.theme().muted.opacity(0.5))
                     .text_xs()
                     .whitespace_normal()
-                    .child(SelectableText::new(
-                        SharedString::from(format!("{}-{key}", group.title())),
-                        format!("{key}={value}"),
-                    ))
+                    .id(SharedString::from(format!("{}-{key}", group.title())))
+                    .test_support()
+                    .child({
+                        let text = format!("{key}={value}");
+                        let links = if self.is_ingress() {
+                            crate::web_links::detect(&text)
+                        } else {
+                            vec![]
+                        };
+                        crate::web_links::inline(text, &links, cx)
+                    })
             }))
             .when(entries.len() > PREVIEW_LIMIT, |this| {
                 this.child(
@@ -3023,6 +3054,117 @@ mod integration_tests {
     use crate::feature_test_support as support;
     use gpui_kit::test::TestWindowExt as _;
     use serde_json::json;
+
+    #[::core::prelude::v1::test]
+    fn ingress_links_open_the_matching_host_and_path_in_the_browser() {
+        let cx = &mut support::context();
+        let object = json!({
+            "apiVersion":"networking.k8s.io/v1", "kind":"Ingress",
+            "metadata":{"name":"routes", "namespace":"default", "uid":"routes-id",
+                "annotations":{"docs":"https://docs.example.com/ingress"}},
+            "spec":{"rules":[
+                {"host":"secure.example.com", "http":{"paths":[{"path":"/api", "pathType":"Prefix", "backend":{"service":{"name":"api", "port":{"number":8080}}}}]}},
+                {"host":"plain.example.com", "http":{"paths":[{"path":"/health", "pathType":"Exact", "backend":{"service":{"name":"api", "port":{"number":8443}}}}]}}
+            ], "tls":[{"hosts":["secure.example.com"], "secretName":"cert"}]},
+            "status":{"loadBalancer":{"ingress":[{"hostname":"lb.example.com"}]}}
+        });
+        let (_fixture, session) = support::fixture(cx, "ingress-links", vec![object.clone()]);
+        let object = Arc::new(serde_json::from_value(object).unwrap());
+        let (window, _) = cx.update(|cx| {
+            gpui_kit::open_window(
+                WindowOptions {
+                    window_bounds: Some(WindowBounds::Windowed(Bounds::new(
+                        point(px(0.), px(0.)),
+                        size(px(1000.), px(1400.)),
+                    ))),
+                    ..Default::default()
+                },
+                cx,
+                |window, cx| {
+                    window.set_view_retention(false);
+                    cx.new(|cx| {
+                        DetailView::new(
+                            session,
+                            Arc::new(support::kind("networking.k8s.io", "Ingress", "ingresses")),
+                            object,
+                            None,
+                            window,
+                            cx,
+                        )
+                    })
+                },
+            )
+            .unwrap()
+        });
+
+        for (group, destination) in [
+            (1usize, "https://secure.example.com/api"),
+            (2usize, "http://plain.example.com/health"),
+        ] {
+            cx.update_window(window, |_, window, cx| {
+                window.render_frame(cx);
+                window
+                    .within(("group", group))
+                    .within("overview-table")
+                    .within(("table-row", 0usize))
+                    .within(("table-cell", 0usize))
+                    .click(("web-link", 0usize), cx);
+            })
+            .unwrap();
+            assert_eq!(cx.opened_url().as_deref(), Some(destination));
+        }
+        cx.update_window(window, |_, window, cx| {
+            window
+                .within(("group", 1usize))
+                .click(("web-link", "Rules · ".len()), cx);
+        })
+        .unwrap();
+        assert_eq!(
+            cx.opened_url().as_deref(),
+            Some("https://secure.example.com/")
+        );
+        cx.update_window(window, |_, window, cx| {
+            window
+                .within(("group", 3usize))
+                .within(("field", 1usize))
+                .click(("web-link", 0usize), cx);
+        })
+        .unwrap();
+        assert_eq!(
+            cx.opened_url().as_deref(),
+            Some("https://secure.example.com/")
+        );
+        cx.update_window(window, |_, window, cx| {
+            window.click_at("Annotations-docs", point(px(120.), px(10.)), cx);
+        })
+        .unwrap();
+        assert_eq!(
+            cx.opened_url().as_deref(),
+            Some("https://docs.example.com/ingress")
+        );
+        cx.update_window(window, |_, window, cx| {
+            window
+                .within(("group", 0usize))
+                .within(("field", 1usize))
+                .click(("web-link", 0usize), cx);
+        })
+        .unwrap();
+        assert_eq!(cx.opened_url().as_deref(), Some("http://lb.example.com/"));
+        cx.update_window(window, |_, window, cx| {
+            let bounds = window.find("Annotations-docs").bounds();
+            window.drag(
+                bounds.origin + point(px(8.1), bounds.size.height / 2.),
+                bounds.origin + point(bounds.size.width - px(8.), bounds.size.height / 2.),
+                cx,
+            );
+            assert_eq!(
+                TextSelection::selected_text(window, cx).trim_end_matches('\n'),
+                "docs=https://docs.example.com/ingress"
+            );
+        })
+        .unwrap();
+        assert_eq!(cx.opened_url().as_deref(), Some("http://lb.example.com/"));
+    }
 
     fn edit_data(
         view: &Entity<DetailView>,

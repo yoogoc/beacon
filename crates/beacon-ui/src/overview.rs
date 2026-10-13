@@ -21,20 +21,21 @@ pub(crate) struct Reference {
 pub(crate) struct Cell {
     pub value: Option<String>,
     pub reference: Option<Reference>,
+    pub web_links: Vec<crate::web_links::WebLink>,
 }
 
 impl Cell {
     pub(crate) fn text(value: impl Into<String>) -> Self {
         Self {
             value: Some(value.into()),
-            reference: None,
+            ..Default::default()
         }
     }
 
     pub(crate) fn of(value: Option<&Value>) -> Self {
         Self {
             value: value.and_then(text),
-            reference: None,
+            ..Default::default()
         }
     }
 
@@ -50,6 +51,36 @@ impl Cell {
             });
         self
     }
+
+    fn web_url(mut self, url: Option<String>) -> Self {
+        if let (Some(value), Some(url)) = (&self.value, url) {
+            self.web_links.push(crate::web_links::WebLink {
+                range: 0..value.len(),
+                url,
+            });
+        }
+        self
+    }
+
+    fn web_values(values: impl IntoIterator<Item = (String, Option<String>)>) -> Self {
+        let mut cell = Self::default();
+        let mut value = String::new();
+        for (label, url) in values {
+            if !value.is_empty() {
+                value.push('\n');
+            }
+            let start = value.len();
+            value.push_str(&label);
+            if let Some(url) = url {
+                cell.web_links.push(crate::web_links::WebLink {
+                    range: start..value.len(),
+                    url,
+                });
+            }
+        }
+        cell.value = (!value.is_empty()).then_some(value);
+        cell
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -61,6 +92,7 @@ pub(crate) struct Table {
 #[derive(Debug, Clone)]
 pub(crate) struct Group {
     pub title: String,
+    pub title_links: Vec<crate::web_links::WebLink>,
     pub fields: Vec<(String, Cell)>,
     pub table: Option<Table>,
     pub owner: bool,
@@ -71,6 +103,7 @@ impl Group {
     pub(crate) fn new(title: impl Into<String>, fields: Vec<(&str, Cell)>) -> Self {
         Self {
             title: title.into(),
+            title_links: vec![],
             fields: fields.into_iter().map(|(k, v)| (k.into(), v)).collect(),
             table: None,
             owner: false,
@@ -135,7 +168,7 @@ fn pairs(data: &Value, path: &str) -> Cell {
                     .collect::<Vec<_>>()
                     .join("\n")
             }),
-        reference: None,
+        ..Default::default()
     }
 }
 
@@ -328,7 +361,7 @@ pub(crate) fn project(group: &str, kind: &str, object: &DynamicObject) -> Projec
                                 value: object.metadata.annotations.as_ref().and_then(|v| {
                                     v.get("deployment.kubernetes.io/revision").cloned()
                                 }),
-                                reference: None,
+                                ..Default::default()
                             },
                         ),
                         (
@@ -441,7 +474,16 @@ pub(crate) fn project(group: &str, kind: &str, object: &DynamicObject) -> Projec
                 "Routing",
                 vec![
                     ("Class", class.link("networking.k8s.io", "IngressClass")),
-                    ("Addresses", addresses(data)),
+                    (
+                        "Addresses",
+                        Cell::web_values(
+                            crate::ingress_links::addresses(data)
+                                .into_iter()
+                                .map(|host| {
+                                    (host.into(), crate::ingress_links::url(data, host, "/"))
+                                }),
+                        ),
+                    ),
                 ],
             ));
             for (index, rule) in items(data, "/spec/rules").enumerate() {
@@ -452,12 +494,20 @@ pub(crate) fn project(group: &str, kind: &str, object: &DynamicObject) -> Projec
                     ),
                     vec![],
                 );
+                if let Some(host) = rule.get("host").and_then(Value::as_str)
+                    && let Some(url) = crate::ingress_links::url(data, host, "/")
+                {
+                    routes.title_links.push(crate::web_links::WebLink {
+                        range: routes.title.len() - host.len()..routes.title.len(),
+                        url,
+                    });
+                }
                 routes.table = Some(Table {
                     headers: vec!["Path", "Type", "Service", "Port"],
                     rows: items(rule, "/http/paths")
                         .map(|v| {
                             vec![
-                                at(v, "/path"),
+                                ingress_path(data, rule, v),
                                 at(v, "/pathType"),
                                 at(v, "/backend/service/name").link("", "Service"),
                                 backend_port(&v["backend"]),
@@ -493,7 +543,12 @@ pub(crate) fn project(group: &str, kind: &str, object: &DynamicObject) -> Projec
                     format!("TLS · {}", index + 1),
                     vec![
                         ("Secret", at(tls, "/secretName").link("", "Secret")),
-                        ("Hosts", at(tls, "/hosts")),
+                        (
+                            "Hosts",
+                            Cell::web_values(items(tls, "/hosts").filter_map(Value::as_str).map(
+                                |host| (host.into(), crate::ingress_links::url(data, host, "/")),
+                            )),
+                        ),
                     ],
                 ));
             }
@@ -639,7 +694,30 @@ fn addresses(data: &Value) -> Cell {
         .collect::<Vec<_>>();
     Cell {
         value: (!addresses.is_empty()).then(|| addresses.join("\n")),
-        reference: None,
+        ..Default::default()
+    }
+}
+
+fn ingress_path(data: &Value, rule: &Value, path: &Value) -> Cell {
+    let path = path
+        .get("path")
+        .and_then(Value::as_str)
+        .filter(|path| !path.is_empty())
+        .unwrap_or("/");
+    let urls =
+        crate::ingress_links::path_urls(data, rule.get("host").and_then(Value::as_str), path);
+    if urls.len() > 1 {
+        Cell::web_values(urls.into_iter().map(|url| {
+            (
+                format!(
+                    "{path} · {}",
+                    url::Url::parse(&url).unwrap().host_str().unwrap()
+                ),
+                Some(url),
+            )
+        }))
+    } else {
+        Cell::text(path).web_url(urls.into_iter().next())
     }
 }
 
@@ -910,13 +988,40 @@ mod tests {
         let routes = projection.groups[1].table.as_ref().unwrap();
         assert_eq!(routes.rows[0][2].reference.as_ref().unwrap().name, "api");
         assert_eq!(routes.rows[0][3].value.as_deref(), Some("http"));
+        assert_eq!(routes.rows[0][0].web_links[0].url, "https://example.com/");
+        assert_eq!(routes.rows[1][0].value.as_deref(), Some("/assets"));
+        assert_eq!(
+            routes.rows[1][0].web_links[0].url,
+            "https://example.com/assets"
+        );
+        assert_eq!(
+            projection.groups[1].title_links[0].url,
+            "https://example.com/"
+        );
+        assert_eq!(
+            &projection.groups[1].title[projection.groups[1].title_links[0].range.clone()],
+            "example.com"
+        );
         assert!(
-            projection.groups[1].fields[0]
-                .1
-                .value
-                .as_ref()
-                .unwrap()
-                .contains("Bucket")
+            !projection.groups[1]
+                .fields
+                .iter()
+                .any(|(label, _)| label == "Host")
+        );
+        assert_eq!(
+            value(&projection, "TLS · 1", "Hosts").web_links[0].url,
+            "https://example.com/"
+        );
+        assert!(
+            value(
+                &projection,
+                "Rules · example.com",
+                "Resource backend · rule 1"
+            )
+            .value
+            .as_ref()
+            .unwrap()
+            .contains("Bucket")
         );
         assert_eq!(
             value(&projection, "TLS · 1", "Secret")

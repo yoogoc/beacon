@@ -18,6 +18,7 @@ use beacon_kube::labels::LabelSelector;
 use beacon_kube::{
     DeleteTarget, Delta, DeltaBatch, DynamicObject, Metrics, ObjectRef, ResourceStore, data,
 };
+use gpui_kit::base::TestSupportExt as _;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::menu::{DropdownMenu as _, PopupMenu, PopupMenuItem};
 use gpui_kit::component::table::{Column, ColumnSort, TableDelegate, TableState};
@@ -1291,6 +1292,44 @@ impl TableDelegate for ResourceTable {
             return h_flex().into_any_element();
         };
 
+        if matches!(definition.header.as_str(), "Hosts" | "Address")
+            && let Some(object) = self.key_at(row).and_then(|key| self.object(key))
+        {
+            let ingress = self
+                .context_view
+                .as_ref()
+                .and_then(WeakEntity::upgrade)
+                .and_then(|view| {
+                    view.read(cx).kind().map(|kind| {
+                        kind.resource.group == "networking.k8s.io"
+                            && kind.resource.kind == "Ingress"
+                    })
+                })
+                .unwrap_or_else(|| {
+                    object.types.as_ref().is_some_and(|types| {
+                        types.api_version == "networking.k8s.io/v1" && types.kind == "Ingress"
+                    })
+                });
+            if ingress {
+                let text = value.display().to_string();
+                let links =
+                    crate::ingress_links::table_links(&object.data, &definition.header, &text);
+                return h_flex()
+                    .id(SharedString::from(format!(
+                        "ingress-links-{row}-{}",
+                        definition.header
+                    )))
+                    .test_support()
+                    .size_full()
+                    .min_w_0()
+                    .overflow_hidden()
+                    .items_center()
+                    .text_color(cx.theme().muted_foreground)
+                    .child(crate::web_links::table(text, &links, cx))
+                    .into_any_element();
+            }
+        }
+
         if matches!(definition.source, ColumnSource::Containers) {
             let Some(object) = self.key_at(row).and_then(|key| self.object(key)) else {
                 return h_flex().into_any_element();
@@ -1435,6 +1474,118 @@ fn pod_tools_item(
             cluster.open_pod_tools(&target, tab, window, cx);
         });
     })
+}
+
+#[cfg(all(test, feature = "ui-tests"))]
+mod rendering_tests {
+    use super::*;
+    use crate::feature_test_support as support;
+    use gpui_kit::component::table::TableEvent;
+    use gpui_kit::test::TestWindowExt as _;
+    use std::{cell::Cell as Counter, rc::Rc};
+
+    struct IngressTable(Entity<TableState<ResourceTable>>);
+    impl Render for IngressTable {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            div().size_full().child(self.0.clone())
+        }
+    }
+
+    #[::core::prelude::v1::test]
+    fn ingress_list_links_open_without_selecting_the_resource_row() {
+        let cx = &mut support::context();
+        let first_host =
+            "a-very-long-ingress-host-that-must-fit-within-the-column.secure.example.com";
+        let second_host = "another-long-ingress-host-that-must-not-wrap.plain.example.com";
+        let address = "a-long-load-balancer-address-that-must-stay-inside-its-cell.example.com";
+        let object = Arc::new(serde_json::from_value(serde_json::json!({
+            "apiVersion":"networking.k8s.io/v1", "kind":"Ingress",
+            "metadata":{"name":"routes", "namespace":"default", "uid":"routes-id"},
+            "spec":{"rules":[{"host":first_host}, {"host":second_host}], "tls":[{"hosts":[first_host]}]},
+            "status":{"loadBalancer":{"ingress":[{"hostname":address}]}}
+        })).unwrap());
+        let (window, view) = cx.update(|cx| {
+            gpui_kit::open_window(
+                WindowOptions {
+                    window_bounds: Some(WindowBounds::Windowed(Bounds::new(
+                        point(px(0.), px(0.)),
+                        size(px(1400.), px(600.)),
+                    ))),
+                    ..Default::default()
+                },
+                cx,
+                |window, cx| {
+                    window.set_view_retention(false);
+                    let state = cx.new(|cx| {
+                        let mut delegate = ResourceTable::new(ColumnSet::for_kind(
+                            "networking.k8s.io",
+                            "Ingress",
+                            true,
+                        ));
+                        delegate.apply(vec![Delta::Reset(vec![object])]);
+                        TableState::new(delegate, window, cx).row_selectable(true)
+                    });
+                    cx.new(|_| IngressTable(state))
+                },
+            )
+            .unwrap()
+        });
+        let selections = Rc::new(Counter::new(0usize));
+        let observe = selections.clone();
+        let _subscription = cx.update(|cx| {
+            let table = view.read(cx).0.clone();
+            cx.subscribe(&table, move |_, event: &TableEvent, _| {
+                if matches!(event, TableEvent::SelectRow(_)) {
+                    observe.set(observe.get() + 1);
+                }
+            })
+        });
+        for (column, start, destination) in [
+            ("Hosts", 0usize, format!("https://{first_host}/")),
+            (
+                "Hosts",
+                first_host.len() + 1,
+                format!("http://{second_host}/"),
+            ),
+            ("Address", 0usize, format!("http://{address}/")),
+        ] {
+            cx.update_window(window, |_, window, cx| {
+                window.render_frame(cx);
+                window
+                    .within(SharedString::from(format!("ingress-links-0-{column}")))
+                    .click(("web-link", start), cx);
+                let cell = window
+                    .find(SharedString::from(format!("ingress-links-0-{column}")))
+                    .bounds();
+                let link = window
+                    .within(SharedString::from(format!("ingress-links-0-{column}")))
+                    .find(("web-link", start))
+                    .bounds();
+                assert!(
+                    link.top() >= cell.top() && link.bottom() <= cell.bottom(),
+                    "link must fit the fixed row: {link:?} in {cell:?}"
+                );
+                assert!(
+                    link.left() >= cell.left() && link.right() <= cell.right(),
+                    "link must fit the column: {link:?} in {cell:?}"
+                );
+                if column == "Hosts" {
+                    let first = window
+                        .within("ingress-links-0-Hosts")
+                        .find(("web-link", 0usize))
+                        .bounds();
+                    assert_eq!(
+                        link.top(),
+                        first.top(),
+                        "multiple hosts must share one line"
+                    );
+                }
+            })
+            .unwrap();
+            assert_eq!(cx.opened_url().as_deref(), Some(destination.as_str()));
+            assert_eq!(selections.get(), 0);
+        }
+    }
 }
 
 #[cfg(test)]

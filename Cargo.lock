@@ -737,6 +737,7 @@ dependencies = [
  "tempfile",
  "tokio",
  "tracing",
+ "url",
  "x509-parser",
 ]
 

@@ -536,7 +536,7 @@ pub(crate) fn recent_runs(
                     timestamp(run.data.pointer("/status/startedAt")),
                     Cell {
                         value: duration(&run.data["status"], now),
-                        reference: None,
+                        ..Default::default()
                     },
                 ]
             })

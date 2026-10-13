@@ -90,8 +90,8 @@ const COLORS: &[ColorRole] = &[
     },
     ColorRole {
         key: "link",
-        label: "Links",
-        description: "Clickable resource references",
+        label: "Resource links",
+        description: "Clickable references to resources in the cluster",
         group: 0,
         color: |t| t.link,
     },

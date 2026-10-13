@@ -29,6 +29,8 @@ pub enum Tone {
 pub trait BeaconTheme {
     /// Foreground for links that navigate to another resource.
     fn resource_link(&self) -> Hsla;
+    /// Browser links use a separate hue from internal resource navigation.
+    fn external_link(&self) -> Hsla;
     /// Foreground colour for a status label.
     fn tone(&self, tone: Tone) -> Hsla;
     /// Background for a status pill, at the low contrast a dense table wants.
@@ -42,6 +44,16 @@ pub trait BeaconTheme {
 impl BeaconTheme for Theme {
     fn resource_link(&self) -> Hsla {
         self.link
+    }
+
+    fn external_link(&self) -> Hsla {
+        // A restrained blue keeps browser links distinct from the resource
+        // accent without inheriting its bright saturation or shifting purple.
+        if self.is_dark() {
+            rgb(0x8cabd1).into()
+        } else {
+            rgb(0x426b9a).into()
+        }
     }
 
     fn tone(&self, tone: Tone) -> Hsla {

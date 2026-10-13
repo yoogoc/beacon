@@ -316,7 +316,7 @@ impl ArgoNodeView {
                         key,
                         Cell {
                             value,
-                            reference: None,
+                            ..Default::default()
                         },
                     )
                 })
@@ -370,7 +370,7 @@ impl ArgoNodeView {
                     "Duration",
                     Cell {
                         value: crate::argo::duration(node, Timestamp::now()),
-                        reference: None,
+                        ..Default::default()
                     },
                 ),
                 (
@@ -411,7 +411,7 @@ impl ArgoNodeView {
                 },
                 Cell {
                     value,
-                    reference: None,
+                    ..Default::default()
                 },
             ));
         }
@@ -566,7 +566,7 @@ impl ArgoNodeView {
                                     },
                                     Cell {
                                         value,
-                                        reference: None,
+                                        ..Default::default()
                                     },
                                 )
                             }),
@@ -642,7 +642,7 @@ impl ArgoNodeView {
                                 k,
                                 Cell {
                                     value: v,
-                                    reference: None,
+                                    ..Default::default()
                                 },
                             )
                         })
@@ -694,7 +694,7 @@ impl ArgoNodeView {
                     k,
                     Cell {
                         value,
-                        reference: None,
+                        ..Default::default()
                     },
                 )
             })
@@ -783,7 +783,7 @@ impl ArgoNodeView {
                                             key,
                                             Cell {
                                                 value,
-                                                reference: None,
+                                                ..Default::default()
                                             },
                                         )
                                     })
@@ -807,7 +807,7 @@ impl ArgoNodeView {
                                 key,
                                 Cell {
                                     value,
-                                    reference: None,
+                                    ..Default::default()
                                 },
                             )
                         })
