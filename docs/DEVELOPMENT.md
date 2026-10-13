@@ -127,16 +127,17 @@ GPUI 视图在前台线程更新。`beacon-ui/src/bridge.rs` 桥接两个执行�
 
 ## 依赖与打包
 
-`gpui-kit` 固定到上游提交 `3cc2d0d624ce124be62eb4670e04197bc78bb8a5`（0.7.1 之后），
+`gpui-kit` 固定到上游提交 `67265a36e260ffe03c5aaebdcd8d654dbf892eab`（正式版 0.7.3），
 统一引入 GPUI、组件和图标，并默认启用 `gpui-fast` 后端。
-正式发布的 0.7.1 尚无这个开关，因此使用固定 Git 提交并保留 Cargo.lock；
+该版本支持 `gpui-fast`，使用固定发布提交并保留 Cargo.lock；
 `tree-sitter-yaml` 继续提供 YAML 高亮。升级时应一起检查这些 API。
 `vendor/gpui-base` 基于该提交，保留 YAML 初始折叠补丁，并修正折叠后的滚动高度；来源与测试命令见
 [BEACON-PATCHES.md](../vendor/gpui-base/BEACON-PATCHES.md)。
 
-目前锁定的 GPUI Fast 版本为 0.1.5。该版本在重定位 retained paint range 时仍会
-出现 `attempt to subtract with overflow`，仅在标签页切换时刷新窗口不足以规避。
-Beacon 因此在启动日志线程和 GPUI 之前，默认设置 `GPUI_VIEW_RETENTION=0`，
+目前锁定的 GPUI Fast 版本为 0.1.7，对应 gpui-pre 0.3.9。此前 0.1.5 在重定位
+retained paint range 时出现过 `attempt to subtract with overflow`，仅在标签页切换
+时刷新窗口不足以规避。升级后继续保留规避措施：启动日志线程和 GPUI 之前，
+默认设置 `GPUI_VIEW_RETENTION=0`，
 覆盖主窗口、拆分窗口和应用日志等独立窗口。布局与文本优化仍然启用；
 视图及滚动层的缓存复用暂停，重绘开销可能增加。启动日志记录 `retained_views`。
 
@@ -149,7 +150,7 @@ GPUI Fast 的 Retained Mode 会复用未变化的视图。改变未被实体或�
 GPUI_VIEW_RETENTION=0 cargo run --locked -p beacon
 ```
 
-仅排查上游渲染问题时重新启用，可能复现上述崩溃：
+仅排查上游渲染问题时重新启用：
 
 ```sh
 RUST_BACKTRACE=full GPUI_VIEW_RETENTION=1 cargo run --locked -p beacon

@@ -34,6 +34,8 @@ gpui_kit::assets::icon_assets!(
         Lock,
         Link,
         FileCode,
+        GitCompareArrows,
+        List,
         FileArchive,
         Files,
         FileKey,

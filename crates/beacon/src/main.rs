@@ -11,8 +11,8 @@ fn main() -> anyhow::Result<()> {
     if let Some(result) = beacon_updater::helper_main() {
         return result;
     }
-    // GPUI Fast 0.1.5 can underflow while rebasing retained paint ranges.
-    // Use its supported fallback for every window until that path is fixed.
+    // GPUI Fast 0.1.5 underflowed while rebasing retained paint ranges.
+    // Preserve the supported fallback across upgrades for every window.
     // An explicit value remains available for renderer diagnostics.
     if std::env::var_os("GPUI_VIEW_RETENTION").is_none() {
         // SAFETY: main has not started the logging worker, GPUI or Tokio yet.

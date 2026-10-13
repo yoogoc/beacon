@@ -3559,7 +3559,14 @@ mod rendering_tests {
         assert!(!native.simulate_close());
         cx.update_window(window, |_, window, cx| {
             window.render_frame(cx);
-            assert_eq!(window.find_all("quit-confirmation").len(), 1);
+            let id: ElementId = "quit-confirmation".into();
+            assert_eq!(
+                gpui_kit::base::test_support::snapshots(window)
+                    .iter()
+                    .filter(|snapshot| snapshot.path().last() == Some(&id))
+                    .count(),
+                1
+            );
             window.press("escape", cx);
             window.render_frame(cx);
             assert!(!window.has_active_dialog(cx));

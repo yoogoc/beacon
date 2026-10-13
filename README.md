@@ -163,9 +163,10 @@ Configuration paths, proxy behavior, and Prometheus label requirements are cover
 
 ## Development
 
-Beacon uses GPUI Fast through a pinned GPUI Kit commit after 0.7.1. Automatic
-view retention is disabled by default to avoid a paint-cache overflow in GPUI
-Fast 0.1.5; layout and text optimizations remain enabled. YAML highlighting and
+Beacon uses GPUI Kit 0.7.3 with GPUI Fast 0.1.7, pinned to the upstream release
+commit. Automatic view retention stays disabled by default as a workaround for
+paint-cache overflows observed in earlier GPUI Fast versions; layout and text
+optimizations remain enabled. YAML highlighting and
 initial field folding remain enabled. See the [development guide (中文)](docs/DEVELOPMENT.md#依赖与打包)
 for dependency pins, patch tests, and rendering diagnostics.
 

@@ -154,16 +154,16 @@ pub use progress::{Progress, ProgressIndicator, ProgressTrack};
 pub use radio::{Radio, RadioStyles};
 pub use radio_group::RadioGroup;
 pub use reduce_motion::apply_system_reduce_motion;
-#[doc(hidden)]
-pub use resizable::PANEL_MIN_SIZE;
 pub use resizable::{
     HandleEdge, ResizablePanel, ResizablePanelEvent, ResizablePanelGroup, ResizableState,
-    ResizeHandle, ResizeHandleContext, ResizeHandleRenderer, ResizeHandleState, h_resizable,
-    resizable_panel, resize_handle, v_resizable,
+    ResizeHandleContext, ResizeHandleRenderer, ResizeHandleState, h_resizable, resizable_panel,
+    v_resizable,
 };
+#[doc(hidden)]
+pub use resizable::{PANEL_MIN_SIZE, resize_handle};
 pub use root::{Root, RootPlugin};
 pub use scroll_bounce::{ScrollBounce, ScrollBounceMotion};
-pub use scrollable_mask::ScrollableMask;
+pub use scrollable_mask::{RoundedFrameCover, ScrollableMask};
 pub use scrollbar::{
     Scrollbar, ScrollbarAxis, ScrollbarEntrance, ScrollbarHandle, ScrollbarMode, ScrollbarMotion,
     ScrollbarStyles, ScrollbarThumbStyle, ScrollbarTrackStyle,

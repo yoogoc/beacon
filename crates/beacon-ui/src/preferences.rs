@@ -2079,13 +2079,7 @@ mod update_tests {
             assert!(window.find("download-update").visible());
             assert!(window.find("update-error-row").visible());
             assert!(window.find("update-error-scroll").bounds().size.height <= px(120.));
-            window.click_with_options(
-                "update-error-scroll",
-                gpui_kit::test::ClickOptions::new()
-                    .with_button(MouseButton::Right)
-                    .with_offset(point(px(5.), px(10.))),
-                cx,
-            );
+            window.right_click("update-error-scroll", cx);
         })
         .unwrap();
         cx.run_until_parked();

@@ -1,23 +1,19 @@
 //! An immutable manifest preview. Only an explicit confirmation emits a write.
 
+mod presentation;
+
 use beacon_kube::ops;
-use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::diff::{Diff, DiffFile, DiffMode, DiffState};
-use gpui_kit::component::{
-    ActiveTheme as _, Disableable as _, Selectable as _, Sizable as _, WindowExt as _, h_flex,
-    v_flex,
-};
-use gpui_kit::prelude::FluentBuilder as _;
+use gpui_kit::component::WindowExt as _;
+use gpui_kit::component::diff::{DiffFile, DiffLinePosition, DiffMode, DiffSide, DiffState};
 use gpui_kit::*;
 use serde_json::Value;
 use similar::TextDiff;
-
-use crate::theme::{BeaconTheme as _, Tone};
 
 pub(crate) struct Preview {
     manifest: Value,
     files: Vec<DiffFile>,
     changed: bool,
+    changes: Vec<DiffLinePosition>,
 }
 
 impl Preview {
@@ -55,6 +51,7 @@ impl Preview {
             vec![DiffFile::unchanged("file", &after)]
         };
         Ok(Self {
+            changes: change_positions(before, &after, "file"),
             manifest: Value::String(after),
             files,
             changed,
@@ -91,11 +88,32 @@ impl Preview {
             vec![DiffFile::unchanged("resource.yaml", &after).with_language("yaml")]
         };
         Ok(Self {
+            changes: change_positions(before, &after, "resource.yaml"),
             manifest,
             files,
             changed,
         })
     }
+}
+
+fn change_positions(before: &str, after: &str, path: &str) -> Vec<DiffLinePosition> {
+    let mut positions = Vec::new();
+    let mut changing = false;
+    for change in TextDiff::from_lines(before, after).iter_all_changes() {
+        let (side, index) = match change.tag() {
+            similar::ChangeTag::Equal => {
+                changing = false;
+                continue;
+            }
+            similar::ChangeTag::Delete => (DiffSide::Original, change.old_index()),
+            similar::ChangeTag::Insert => (DiffSide::Modified, change.new_index()),
+        };
+        if !changing && let Some(index) = index {
+            positions.push(DiffLinePosition::new(path.to_owned(), side, index + 1));
+        }
+        changing = true;
+    }
+    positions
 }
 
 pub(crate) fn canonical_yaml(mut value: Value) -> Result<String, String> {
@@ -122,6 +140,9 @@ pub(crate) struct ReviewView {
     preview: Preview,
     diff: Entity<DiffState>,
     context: String,
+    title: &'static str,
+    change: usize,
+    show_context: bool,
     create: bool,
     force: bool,
     resolved: bool,
@@ -144,7 +165,7 @@ pub(crate) fn open(
         context,
         create,
         force,
-        "Review YAML changes",
+        "Review changes",
         window,
         cx,
     )
@@ -165,7 +186,7 @@ pub(crate) fn open_text(
         window,
         cx,
     );
-    review.update(cx, |view, _| view.confirmation_label("Confirm and save"));
+    review.update(cx, |view, _| view.confirmation_label("Confirm & save"));
     review
 }
 
@@ -179,12 +200,22 @@ fn open_titled(
     cx: &mut App,
 ) -> Entity<ReviewView> {
     let review = cx.new(|cx| {
-        let diff =
-            cx.new(|cx| DiffState::new(preview.files.clone(), cx).with_mode(DiffMode::Split));
+        let diff = cx.new(|cx| {
+            DiffState::new(preview.files.clone(), cx)
+                .with_mode(if preview.changed {
+                    DiffMode::Split
+                } else {
+                    DiffMode::Unified
+                })
+                .with_context_lines(Some(2))
+        });
         ReviewView {
             preview,
             diff,
             context,
+            title,
+            change: 0,
+            show_context: false,
             create,
             force,
             resolved: false,
@@ -197,7 +228,9 @@ fn open_titled(
         let confirmed = content.clone();
         let closed = content.clone();
         dialog
-            .title(title)
+            .close_button(false)
+            .p_0()
+            .gap_0()
             .width(px(1200.))
             .margin_top(px(32.))
             .on_ok(move |_, _, cx| confirmed.update(cx, |view, cx| view.confirm(cx)))
@@ -233,159 +266,70 @@ impl ReviewView {
     }
 }
 
-impl Render for ReviewView {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let mode = self.diff.read(cx).mode();
-        let label = if let Some(label) = self.confirmation_label.as_deref() {
-            label
-        } else if self.create {
-            "Confirm and create"
-        } else if self.force {
-            "Confirm force apply"
-        } else {
-            "Confirm and apply"
-        };
-        v_flex()
-            .w_full()
-            .h((window.viewport_size().height * 0.75).min(px(680.)))
-            .gap_3()
-            .child(crate::copyable_text::copyable_text(
-                "yaml-review-context",
-                self.context.clone(),
-            ))
-            .when(self.force, |this| {
-                this.child(
-                    div()
-                        .text_sm()
-                        .text_color(cx.theme().tone(Tone::Warning))
-                        .child("Force apply will take ownership of the conflicting fields."),
-                )
-            })
-            .child(
-                h_flex()
-                    .w_full()
-                    .gap_2()
-                    .child(
-                        Button::new("diff-split")
-                            .small()
-                            .ghost()
-                            .label("Side by side")
-                            .selected(mode == DiffMode::Split)
-                            .on_click(cx.listener(|view, _, _, cx| {
-                                view.diff
-                                    .update(cx, |state, cx| state.set_mode(DiffMode::Split, cx))
-                            })),
-                    )
-                    .child(
-                        Button::new("diff-unified")
-                            .small()
-                            .ghost()
-                            .label("Unified")
-                            .selected(mode == DiffMode::Unified)
-                            .on_click(cx.listener(|view, _, _, cx| {
-                                view.diff
-                                    .update(cx, |state, cx| state.set_mode(DiffMode::Unified, cx))
-                            })),
-                    )
-                    .child(
-                        Button::new("diff-show-all")
-                            .small()
-                            .ghost()
-                            .label("Show all lines")
-                            .on_click(cx.listener(|view, _, _, cx| {
-                                view.diff.update(cx, |state, cx| state.expand_unchanged(cx))
-                            })),
-                    ),
-            )
-            .child(
-                h_flex()
-                    .w_full()
-                    .text_xs()
-                    .text_color(cx.theme().muted_foreground)
-                    .child(div().flex_1().child(if self.create {
-                        "Current: new resource"
-                    } else {
-                        if self.preview.manifest.is_string() {
-                            "− Current file"
-                        } else {
-                            "− Current cluster YAML"
-                        }
-                    }))
-                    .child(div().flex_1().child(if self.preview.manifest.is_string() {
-                        "+ Proposed file"
-                    } else {
-                        "+ Proposed YAML"
-                    })),
-            )
-            .child(
-                div()
-                    .id("yaml-review-diff")
-                    .test_support()
-                    .flex_1()
-                    .min_h_0()
-                    .overflow_hidden()
-                    .rounded_md()
-                    .border_1()
-                    .border_color(cx.theme().border)
-                    // Keep both columns inside the viewport even when an annotation
-                    // or Secret value would otherwise determine the entire row width.
-                    .child(Diff::new(&self.diff).soft_wrap(true).size_full()),
-            )
-            .child(
-                h_flex()
-                    .w_full()
-                    .justify_between()
-                    .gap_2()
-                    .child(
-                        div()
-                            .text_sm()
-                            .text_color(cx.theme().muted_foreground)
-                            .child(if self.preview.changed {
-                                "Review the highlighted changes before saving."
-                            } else {
-                                "No changes to save."
-                            }),
-                    )
-                    .child(
-                        h_flex()
-                            .gap_2()
-                            .child(
-                                Button::new("cancel-yaml-review")
-                                    .ghost()
-                                    .label("Back to editing")
-                                    .on_click(cx.listener(|view, _, window, cx| {
-                                        view.cancel(cx);
-                                        // Deliver the event while the dialog still owns its view.
-                                        // Subscribers hold only a weak handle to the emitter.
-                                        window.defer(cx, |window, cx| window.close_dialog(cx));
-                                    })),
-                            )
-                            .child(
-                                Button::new("confirm-yaml-review")
-                                    .primary()
-                                    .label(label)
-                                    .disabled(
-                                        !self.preview.changed
-                                            || self.resolved
-                                            || !self.confirmation_allowed,
-                                    )
-                                    .on_click(cx.listener(|view, _, window, cx| {
-                                        if view.confirm(cx) {
-                                            window.defer(cx, |window, cx| window.close_dialog(cx));
-                                        }
-                                    })),
-                            ),
-                    ),
-            )
-    }
-}
-
 #[cfg(all(test, feature = "ui-tests"))]
 mod rendering_tests {
     use super::*;
     use crate::feature_test_support as support;
     use gpui_kit::test::TestWindowExt as _;
     use serde_json::json;
+
+    #[::core::prelude::v1::test]
+    fn review_navigation_context_and_confirmation_keep_the_frozen_draft() {
+        use std::{cell::RefCell, rc::Rc};
+        let cx = &mut support::context();
+        let directory = tempfile::tempdir().unwrap();
+        support::workspace(cx, directory.path());
+        let window = support::window(cx);
+        let before = (0..24)
+            .map(|i| format!("key_{i}: old\n"))
+            .collect::<String>();
+        let after = before
+            .replace("key_0: old", "key_0: new")
+            .replace("key_20: old", "key_20: new");
+        let confirmed = Rc::new(RefCell::new(Vec::new()));
+        let (review, _subscription) = cx
+            .update_window(window, |_, window, cx| {
+                window.resize(size(px(700.), px(700.)));
+                let review = open_text(
+                    Preview::text(&before, after.clone()).unwrap(),
+                    "dev · default · app · /etc/config.yaml".into(),
+                    window,
+                    cx,
+                );
+                let recorded = confirmed.clone();
+                let subscription = cx.subscribe(&review, move |_, event: &ReviewEvent, _| {
+                    if let ReviewEvent::Confirmed(value) = event {
+                        recorded.borrow_mut().push((**value).clone());
+                    }
+                });
+                (review, subscription)
+            })
+            .unwrap();
+        cx.update_window(window, |_, window, cx| {
+            window.render_frame(cx);
+            window.render_frame(cx);
+            window.click("diff-next", cx);
+            window.render_frame(cx);
+            window.render_frame(cx);
+            assert!(window.within(("new", 20usize)).find("source").visible());
+            assert_eq!(review.read(cx).change, 1);
+            window.click("diff-show-all", cx);
+            assert_eq!(review.read(cx).diff.read(cx).context_lines(), None);
+            window.click("diff-show-all", cx);
+            assert_eq!(review.read(cx).diff.read(cx).context_lines(), Some(2));
+            window.click("diff-previous", cx);
+            assert_eq!(review.read(cx).change, 0);
+            assert!(confirmed.borrow().is_empty());
+            let button = window.find("confirm-yaml-review");
+            assert!(button.visible());
+            assert!(button.bounds().right() <= window.viewport_size().width);
+            assert!(button.bounds().bottom() <= window.viewport_size().height);
+            window.click("confirm-yaml-review", cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        assert_eq!(&*confirmed.borrow(), &[Value::String(after)]);
+    }
 
     #[::core::prelude::v1::test]
     fn split_review_keeps_both_long_yaml_values_visible_and_copies_the_original_line() {

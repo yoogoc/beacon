@@ -145,26 +145,10 @@ impl Drop for Registration {
 /// Internal lookup used by Kit's testing API. Scope follows GPUI's element path.
 #[doc(hidden)]
 pub fn find(window: &Window, scope: &[ElementId], id: &ElementId) -> Option<ElementSnapshot> {
-    let mut matches = find_all(window, scope, id);
-    assert!(
-        matches.len() <= 1,
-        "ambiguous ElementId {id:?}; use within(...) to select a scope. Matches: {:?}",
-        matches.iter().map(|entry| &entry.path).collect::<Vec<_>>()
-    );
-    matches.pop()
-}
-
-/// Every match for `id` below `scope`, top to bottom, then left to right by
-/// bounds origin. Includes invisible registrations; equal-origin order is unspecified.
-#[doc(hidden)]
-pub fn find_all(window: &Window, scope: &[ElementId], id: &ElementId) -> Vec<ElementSnapshot> {
-    let mut matches: Vec<_> = REGISTRY.with(|registry| {
+    REGISTRY.with(|registry| {
         let registry = registry.borrow();
-        let Some(entries) = registry.get(&(std::sync::Arc::as_ptr(window.text_system()) as usize))
-        else {
-            return Vec::new();
-        };
-        entries
+        let entries = registry.get(&(std::sync::Arc::as_ptr(window.text_system()) as usize))?;
+        let matches: Vec<_> = entries
             .values()
             .filter_map(Weak::upgrade)
             .filter(|entry| {
@@ -172,11 +156,17 @@ pub fn find_all(window: &Window, scope: &[ElementId], id: &ElementId) -> Vec<Ele
                     && entry.global_id.starts_with(scope)
                     && entry.global_id.last() == Some(id)
             })
-            .map(|entry| entry.facts.borrow().clone())
-            .collect()
-    });
-    matches.sort_unstable_by_key(|entry| (entry.bounds.origin.y, entry.bounds.origin.x));
-    matches
+            .collect();
+        assert!(
+            matches.len() <= 1,
+            "ambiguous ElementId {id:?}; use within(...) to select a scope. Matches: {:?}",
+            matches
+                .iter()
+                .map(|entry| &entry.global_id)
+                .collect::<Vec<_>>()
+        );
+        matches.first().map(|entry| entry.facts.borrow().clone())
+    })
 }
 
 #[doc(hidden)]

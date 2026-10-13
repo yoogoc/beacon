@@ -151,7 +151,10 @@ impl RolloutView {
                         let review =
                             crate::yaml_review::open(preview, context, false, false, window, cx);
                         review.update(cx, |review, _| {
-                            review.confirmation_label("Confirm and roll back");
+                            review.confirmation_label(&format!(
+                                "Roll back to revision {}",
+                                plan.revision
+                            ));
                             if !view.may_patch {
                                 review.read_only();
                             }

@@ -1,8 +1,8 @@
-# Beacon patches to gpui-base 0.7.1
+# Beacon patches to gpui-base 0.7.3
 
 This directory contains `crates/base` from the GPUI Kit commit
-`3cc2d0d624ce124be62eb4670e04197bc78bb8a5`. This snapshot follows the
-0.7.1 release and includes the optional GPUI Fast backend. Its Apache 2.0
+`67265a36e260ffe03c5aaebdcd8d654dbf892eab`. This snapshot is the
+0.7.3 release, using gpui-pre 0.3.9 and the optional GPUI Fast 0.1.7 backend. Its Apache 2.0
 license is preserved in `LICENSE-APACHE`.
 
 The standalone `Cargo.toml` resolves upstream workspace inheritance with the
