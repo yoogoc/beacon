@@ -23,6 +23,20 @@ pub(crate) enum Status {
         release: Option<Release>,
     },
 }
+impl Status {
+    pub fn has_update(&self) -> bool {
+        matches!(
+            self,
+            Self::Available(_)
+                | Self::Downloading { .. }
+                | Self::Ready(_)
+                | Self::Failed {
+                    release: Some(_),
+                    ..
+                }
+        )
+    }
+}
 pub(crate) struct Updater {
     pub status: Status,
     pub installation: Installation,

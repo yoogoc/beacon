@@ -78,6 +78,9 @@ pub(crate) fn application(cx: &mut App) {
 pub(crate) fn sources(cx: &mut App) {
     open_section(None, Some(Section::Sources), cx);
 }
+pub(crate) fn updates(cx: &mut App) {
+    open_section(None, Some(Section::Updates), cx);
+}
 pub(crate) fn cluster(id: ClusterId, cx: &mut App) {
     open(Some(id), cx);
 }

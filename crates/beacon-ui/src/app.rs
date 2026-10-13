@@ -22,7 +22,7 @@ use beacon_kube::{
     ClusterId, ClusterSession, Kind,
     config::{ContextEntry, Contexts},
 };
-use gpui_kit::base::{Tab as TabItem, Tabs};
+use gpui_kit::base::{Button as StatusButton, Tab as TabItem, Tabs};
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::dialog::DialogButtonProps;
 use gpui_kit::component::input::Input;
@@ -33,7 +33,7 @@ use gpui_kit::component::sidebar::{Sidebar, SidebarMenu, SidebarMenuItem};
 use gpui_kit::component::spinner::Spinner;
 use gpui_kit::component::tooltip::Tooltip;
 use gpui_kit::component::{
-    ActiveTheme as _, IconName, Root, Sizable as _, TitleBar, WindowExt as _, h_flex, v_flex,
+    ActiveTheme as _, Icon, IconName, Root, Sizable as _, TitleBar, WindowExt as _, h_flex, v_flex,
 };
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
@@ -106,7 +106,7 @@ pub fn init(log_directory: PathBuf, cx: &mut App) {
     cx.on_action(|_: &OpenSettings, cx| crate::preferences::application(cx));
     cx.on_action(|_: &OpenKubeconfigSources, cx| crate::preferences::sources(cx));
     cx.on_action(|_: &CheckForUpdates, cx| {
-        crate::preferences::application(cx);
+        crate::preferences::updates(cx);
         crate::updates::store(cx).update(cx, |view, cx| view.check(cx));
     });
     crate::shortcuts::init(cx);
@@ -506,15 +506,10 @@ impl BeaconApp {
         };
 
         if let Some(updater) = crate::updates::maybe_store(cx) {
-            let badge = |updater: &crate::updates::Updater| match updater.status {
-                crate::updates::Status::Available(_) => 1,
-                crate::updates::Status::Ready(_) => 2,
-                _ => 0,
-            };
-            let mut previous = badge(updater.read(cx));
+            let mut previous = updater.read(cx).status.has_update();
             this._subscriptions
                 .push(cx.observe(&updater, move |_, updater, cx| {
-                    let next = badge(updater.read(cx));
+                    let next = updater.read(cx).status.has_update();
                     // Download progress belongs to Settings. Resource tables only
                     // redraw when their update notification changes.
                     if next != previous {
@@ -2925,12 +2920,9 @@ impl BeaconApp {
             }
         };
 
-        let update_label =
-            crate::updates::maybe_store(cx).and_then(|store| match &store.read(cx).status {
-                crate::updates::Status::Available(_) => Some("Update available"),
-                crate::updates::Status::Ready(_) => Some("Update ready"),
-                _ => None,
-            });
+        let has_update =
+            crate::updates::maybe_store(cx).is_some_and(|store| store.read(cx).status.has_update());
+        let update_color = cx.theme().resource_link();
         let copy_description = description.clone();
         h_flex()
             .w_full()
@@ -2946,19 +2938,44 @@ impl BeaconApp {
             .text_xs()
             .text_color(cx.theme().muted_foreground)
             .child(
-                div()
+                h_flex()
                     .flex_shrink_0()
-                    .child(format!("Beacon {}", env!("CARGO_PKG_VERSION"))),
+                    .gap_2()
+                    .items_center()
+                    .child(
+                        div()
+                            .id("app-version")
+                            .test_support()
+                            .child(format!("Beacon {}", env!("CARGO_PKG_VERSION"))),
+                    )
+                    .when(has_update, |version| {
+                        version.child(
+                            StatusButton::new("open-updates")
+                                .h(px(18.))
+                                .px_1p5()
+                                .gap_1()
+                                .rounded_full()
+                                .bg(update_color.opacity(0.12))
+                                .text_color(update_color)
+                                .text_xs()
+                                .font_weight(FontWeight::MEDIUM)
+                                .cursor_pointer()
+                                .hover(move |button| button.bg(update_color.opacity(0.2)))
+                                .accessibility_label("Update available — open Updates settings")
+                                .tooltip(|window, cx| {
+                                    Tooltip::new(
+                                        "A new version is available. Open Updates settings.",
+                                    )
+                                    .build(window, cx)
+                                })
+                                .child(
+                                    Icon::new(gpui_kit::assets::IconName::Download).size(px(11.)),
+                                )
+                                .child("Update")
+                                .on_click(|_, _, cx| crate::preferences::updates(cx)),
+                        )
+                    }),
             )
-            .when_some(update_label, |bar, label| {
-                bar.child(
-                    Button::new("open-updates")
-                        .ghost()
-                        .small()
-                        .label(label)
-                        .on_click(|_, _, cx| crate::preferences::application(cx)),
-                )
-            })
             .child(
                 h_flex()
                     .min_w_0()
@@ -3111,6 +3128,129 @@ mod rendering_tests {
     use super::*;
     use crate::feature_test_support as support;
     use gpui_kit::test::TestWindowExt as _;
+
+    #[::core::prelude::v1::test]
+    fn version_update_badge_stays_adjacent_and_opens_the_updates_section() {
+        use crate::updates::Status;
+        use beacon_updater::{Asset, Format, Release};
+
+        let cx = &mut support::context();
+        let directory = tempfile::tempdir().unwrap();
+        support::workspace(cx, directory.path());
+        cx.update(|cx| {
+            crate::settings::store(cx).update(cx, |settings, _| {
+                settings.preferences.updates.auto_check = false;
+            });
+            crate::updates::init(cx);
+        });
+        let window = cx.update(|cx| {
+            gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
+                window.set_view_retention(false);
+                cx.new(|cx| BeaconApp::new(window, cx))
+            })
+            .unwrap()
+            .0
+        });
+        cx.update_window(window, |_, window, cx| {
+            window.render_frame(cx);
+            assert!(window.try_find("open-updates").is_none());
+        })
+        .unwrap();
+        let release = Release {
+            version: "9.9.9".parse().unwrap(),
+            notes: "A newer version".into(),
+            page: "https://example.invalid/release".parse().unwrap(),
+            asset: Asset {
+                url: "https://example.invalid/package".parse().unwrap(),
+                signature: String::new(),
+                size: 1024,
+                format: Format::App,
+            },
+        };
+        cx.update(|cx| {
+            crate::updates::store(cx).update(cx, |updater, cx| {
+                updater.installation = beacon_updater::Installation::Managed;
+                updater.status = Status::Available(release.clone());
+                cx.notify();
+            });
+        });
+        cx.run_until_parked();
+        cx.update_window(window, |_, window, cx| {
+            window.render_frame(cx);
+            let version = window.find("app-version").bounds();
+            let badge = window.find("open-updates");
+            assert!(badge.visible());
+            assert_eq!(badge.role(), Some(Role::Button));
+            assert!(badge.bounds().left() >= version.right());
+            assert!(badge.bounds().left() - version.right() <= px(12.));
+            assert!(badge.bounds().size.height <= px(24.));
+            window.click("open-updates", cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        let settings = cx
+            .windows()
+            .into_iter()
+            .find(|other| other != &window)
+            .expect("Update should open application settings");
+        cx.update_window(settings, |_, window, cx| {
+            window.render_frame(cx);
+            assert!(window.find("get-update-package").visible());
+            window.click("settings-appearance", cx);
+            window.render_frame(cx);
+            assert!(window.try_find("get-update-package").is_none());
+        })
+        .unwrap();
+        cx.update_window(window, |_, window, cx| {
+            window.click("open-updates", cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        assert_eq!(cx.windows().len(), 2, "reuse the open settings window");
+        cx.update_window(settings, |_, window, cx| {
+            window.render_frame(cx);
+            assert!(window.find("get-update-package").visible());
+        })
+        .unwrap();
+        for (status, visible) in [
+            (
+                Status::Downloading {
+                    release: release.clone(),
+                    received: 512,
+                    total: 1024,
+                },
+                true,
+            ),
+            (
+                Status::Failed {
+                    message: "Download interrupted".into(),
+                    release: Some(release),
+                },
+                true,
+            ),
+            (Status::Current, false),
+            (
+                Status::Failed {
+                    message: "Check interrupted".into(),
+                    release: None,
+                },
+                false,
+            ),
+        ] {
+            cx.update(|cx| {
+                crate::updates::store(cx).update(cx, |updater, cx| {
+                    updater.status = status;
+                    cx.notify();
+                });
+            });
+            cx.run_until_parked();
+            cx.update_window(window, |_, window, cx| {
+                window.render_frame(cx);
+                assert_eq!(window.try_find("open-updates").is_some(), visible);
+            })
+            .unwrap();
+        }
+    }
 
     #[::core::prelude::v1::test]
     fn overview_is_explicit_reuses_its_tab_and_resource_navigation_preserves_it() {
