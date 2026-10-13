@@ -29,9 +29,9 @@
 
 ### 04 · Helm release 详情
 
-- [ ] 从现有 release 列表进入详情，显示 values 和渲染后的 manifest。
-- [ ] 显示历史 revision、状态和版本信息。
-- [ ] 支持 revision 之间的 values / manifest 差异审阅。
+- [x] 从现有 release 列表进入详情，显示 values 和渲染后的 manifest。
+- [x] 显示历史 revision、状态和版本信息。
+- [x] 支持 revision 之间的 values / manifest 差异审阅。
 
 ## P2 · 接着完善
 

@@ -46,6 +46,199 @@ pub struct Release {
     pub updated: Option<String>,
 }
 
+/// A release identity stays stable while its active revision changes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Identity {
+    pub name: String,
+    pub namespace: String,
+}
+
+impl From<&Release> for Identity {
+    fn from(release: &Release) -> Self {
+        Self {
+            name: release.name.clone(),
+            namespace: release.namespace.clone(),
+        }
+    }
+}
+
+/// The stored configuration and rendered resources for one immutable revision.
+/// These are read from Helm storage, including releases created elsewhere.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Revision {
+    pub summary: Release,
+    pub chart_name: String,
+    pub chart_version: String,
+    pub first_deployed: Option<String>,
+    pub description: String,
+    pub values: Value,
+    pub manifest: String,
+    pub notes: String,
+}
+
+/// Preserve unreadable revisions in the history instead of silently hiding them.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RevisionRecord {
+    pub number: i64,
+    pub secret_name: String,
+    pub revision: Option<Revision>,
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct History {
+    pub identity: Identity,
+    /// Newest first; revision gaps are normal when Helm prunes old history.
+    pub revisions: Vec<RevisionRecord>,
+}
+
+/// All stored revisions for one release. No local Helm executable is required.
+pub async fn history(client: &kube::Client, identity: &Identity) -> Result<History> {
+    if identity.namespace.is_empty()
+        || identity.name.is_empty()
+        || !identity
+            .name
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.'))
+    {
+        return Err(crate::Error::Manifest(
+            "Choose a valid Helm release and namespace.".into(),
+        ));
+    }
+    let resource =
+        ApiResource::from_gvk_with_plural(&GroupVersionKind::gvk("", "v1", "Secret"), "secrets");
+    let api: Api<DynamicObject> =
+        Api::namespaced_with(client.clone(), &identity.namespace, &resource);
+    let params = ListParams::default()
+        .fields(&format!("type={RELEASE_TYPE}"))
+        .labels(&format!("owner=helm,name={}", identity.name));
+    let secrets = api.list(&params).await?;
+    Ok(stored_history(identity, secrets.items.iter()))
+}
+
+fn stored_history<'a>(
+    identity: &Identity,
+    secrets: impl Iterator<Item = &'a DynamicObject>,
+) -> History {
+    let mut revisions: Vec<_> = secrets
+        .filter(|secret| {
+            secret.data["type"] == RELEASE_TYPE
+                && secret.metadata.namespace.as_deref() == Some(identity.namespace.as_str())
+                && (secret
+                    .metadata
+                    .labels
+                    .as_ref()
+                    .and_then(|labels| labels.get("name"))
+                    == Some(&identity.name)
+                    || secret.metadata.name.as_deref().is_some_and(|name| {
+                        name.starts_with(&format!("sh.helm.release.v1.{}.v", identity.name))
+                    }))
+        })
+        .map(|secret| {
+            let name = secret.metadata.name.clone().unwrap_or_default();
+            let number = secret
+                .metadata
+                .labels
+                .as_ref()
+                .and_then(|labels| labels.get("version"))
+                .and_then(|number| number.parse().ok())
+                .or_else(|| {
+                    name.rsplit_once(".v")
+                        .and_then(|(_, number)| number.parse().ok())
+                })
+                .unwrap_or(0);
+            match read_revision(secret, identity) {
+                Ok(revision) => RevisionRecord {
+                    number: revision.summary.revision,
+                    secret_name: name,
+                    revision: Some(revision),
+                    error: None,
+                },
+                Err(error) => RevisionRecord {
+                    number,
+                    secret_name: name,
+                    revision: None,
+                    error: Some(error),
+                },
+            }
+        })
+        .collect();
+    revisions.sort_by(|a, b| {
+        b.number
+            .cmp(&a.number)
+            .then_with(|| a.secret_name.cmp(&b.secret_name))
+    });
+    History {
+        identity: identity.clone(),
+        revisions,
+    }
+}
+
+fn read_revision(
+    secret: &DynamicObject,
+    identity: &Identity,
+) -> std::result::Result<Revision, String> {
+    let payload = secret
+        .data
+        .pointer("/data/release")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "This revision has no release payload.".to_string())?;
+    let value = decode(payload).ok_or_else(|| {
+        "This revision's release payload is damaged or has an unsupported encoding.".to_string()
+    })?;
+    let summary = summary(secret, &value)
+        .ok_or_else(|| "This revision is missing its release or chart identity.".to_string())?;
+    if summary.name != identity.name
+        || summary.namespace != identity.namespace
+        || summary.revision < 1
+    {
+        return Err(
+            "The stored payload does not match this release or has an invalid revision.".into(),
+        );
+    }
+    if secret
+        .metadata
+        .labels
+        .as_ref()
+        .and_then(|labels| labels.get("version"))
+        .and_then(|version| version.parse::<i64>().ok())
+        .is_some_and(|number| number != summary.revision)
+    {
+        return Err("The stored revision label does not match its payload.".into());
+    }
+    let manifest = match value.get("manifest") {
+        None | Some(Value::Null) => String::new(),
+        Some(Value::String(manifest)) => manifest.clone(),
+        _ => return Err("This revision has an invalid rendered manifest.".into()),
+    };
+    let values = value
+        .get("config")
+        .filter(|value| !value.is_null())
+        .cloned()
+        .unwrap_or_else(|| Value::Object(Default::default()));
+    if !values.is_object() {
+        return Err("This revision has invalid Helm values; a mapping was expected.".into());
+    }
+    Ok(Revision {
+        chart_name: value
+            .pointer("/chart/metadata/name")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .into(),
+        chart_version: value
+            .pointer("/chart/metadata/version")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .into(),
+        first_deployed: text(value.get("info"), "first_deployed"),
+        description: text(value.get("info"), "description").unwrap_or_default(),
+        notes: text(value.get("info"), "notes").unwrap_or_default(),
+        summary,
+        values,
+        manifest,
+    })
+}
+
 /// Every release in the cluster, newest revision only.
 ///
 /// Helm keeps one Secret per revision, so a chart upgraded twenty times has
@@ -64,7 +257,31 @@ pub async fn list(client: &kube::Client, namespace: Option<&str>) -> Result<Vec<
     let params = ListParams::default().fields(&format!("type={RELEASE_TYPE}"));
     let secrets = api.list(&params).await?;
 
-    Ok(latest(secrets.items.iter().filter_map(read)))
+    Ok(latest(secrets.items.iter().filter_map(|secret| {
+        read(secret).or_else(|| unreadable_summary(secret))
+    })))
+}
+
+/// A damaged newest revision still needs an entry so its history can be opened.
+fn unreadable_summary(secret: &DynamicObject) -> Option<Release> {
+    if secret.data["type"] != RELEASE_TYPE {
+        return None;
+    }
+    let labels = secret.metadata.labels.as_ref()?;
+    let name = labels.get("name")?.clone();
+    let revision = labels.get("version")?.parse::<i64>().ok()?;
+    if revision < 1 || name.is_empty() {
+        return None;
+    }
+    Some(Release {
+        name,
+        namespace: secret.metadata.namespace.clone().unwrap_or_default(),
+        revision,
+        status: "unreadable".into(),
+        chart: "Unreadable revision".into(),
+        app_version: String::new(),
+        updated: None,
+    })
 }
 
 /// Keeps the newest revision of each release.
@@ -92,6 +309,10 @@ fn read(secret: &DynamicObject) -> Option<Release> {
     let payload = secret.data.get("data")?.get("release")?.as_str()?;
     let release = decode(payload)?;
 
+    summary(secret, &release)
+}
+
+fn summary(secret: &DynamicObject, release: &Value) -> Option<Release> {
     let info = release.get("info");
     let metadata = release.get("chart").and_then(|chart| chart.get("metadata"));
 
@@ -155,9 +376,14 @@ fn decode(payload: &str) -> Option<Value> {
 fn inflate(bytes: &[u8]) -> Option<Vec<u8>> {
     if bytes.starts_with(&[0x1f, 0x8b]) {
         use std::io::Read as _;
-        let mut decoder = flate2::read::GzDecoder::new(bytes);
+        // An unreadable/hostile revision must not allocate without a bound.
+        const MAX_JSON: u64 = 64 * 1024 * 1024;
+        let decoder = flate2::read::GzDecoder::new(bytes);
         let mut json = Vec::new();
-        decoder.read_to_end(&mut json).ok()?;
+        decoder.take(MAX_JSON + 1).read_to_end(&mut json).ok()?;
+        if json.len() as u64 > MAX_JSON {
+            return None;
+        }
         return Some(json);
     }
 
@@ -209,7 +435,7 @@ mod tests {
         );
         DynamicObject::new("sh.helm.release.v1.x.v1", &resource)
             .within(release["namespace"].as_str().unwrap_or("default"))
-            .data(json!({ "data": { "release": encoded } }))
+            .data(json!({ "type": RELEASE_TYPE, "data": { "release": encoded } }))
     }
 
     #[test]
@@ -322,5 +548,150 @@ mod tests {
         release["chart"]["metadata"]["version"] = json!("");
         let parsed = read(&secret(&release, true)).expect("a release");
         assert_eq!(parsed.chart, "argo-workflows");
+    }
+
+    #[test]
+    fn history_preserves_payloads_pruned_gaps_and_damaged_revisions() {
+        let identity = Identity {
+            name: "web".into(),
+            namespace: "default".into(),
+        };
+        let mut one = release_json("web", "default", 1, "superseded");
+        one["config"] = json!({"server":{"port":8080},"password":"do-not-log"});
+        one["manifest"] = json!("kind: Deployment\nmetadata:\n  name: web\n");
+        let seven = release_json("web", "default", 7, "deployed");
+        let mut objects = vec![secret(&seven, true), secret(&one, true)];
+        for object in &mut objects {
+            let number = read(object).unwrap().revision;
+            object.metadata.name = Some(format!("sh.helm.release.v1.web.v{number}"));
+            object.metadata.labels = Some(
+                [
+                    ("name".into(), "web".into()),
+                    ("version".into(), number.to_string()),
+                ]
+                .into(),
+            );
+        }
+        let mut broken = objects[0].clone();
+        broken.metadata.name = Some("sh.helm.release.v1.web.v8".into());
+        broken
+            .metadata
+            .labels
+            .as_mut()
+            .unwrap()
+            .insert("version".into(), "8".into());
+        broken.data["data"]["release"] = json!("bad payload");
+        objects.push(broken);
+        objects.push(secret(
+            &release_json("elsewhere", "other", 2, "deployed"),
+            true,
+        ));
+        let result = stored_history(&identity, objects.iter());
+        assert_eq!(
+            result
+                .revisions
+                .iter()
+                .map(|record| record.number)
+                .collect::<Vec<_>>(),
+            [8, 7, 1]
+        );
+        assert!(result.revisions[0].revision.is_none());
+        assert!(
+            result.revisions[0]
+                .error
+                .as_ref()
+                .unwrap()
+                .contains("damaged")
+        );
+        let oldest = result.revisions[2].revision.as_ref().unwrap();
+        assert_eq!(oldest.values, one["config"]);
+        assert_eq!(oldest.manifest, one["manifest"].as_str().unwrap());
+        let newest = result.revisions[1].revision.as_ref().unwrap();
+        assert_eq!(newest.values, json!({}));
+        assert_eq!(newest.manifest, "");
+    }
+
+    #[test]
+    fn stored_identity_and_revision_number_are_validated_without_echoing_payloads() {
+        let identity = Identity {
+            name: "web".into(),
+            namespace: "default".into(),
+        };
+        let mut object = secret(&release_json("other", "default", 1, "deployed"), true);
+        assert!(
+            read_revision(&object, &identity)
+                .unwrap_err()
+                .contains("does not match")
+        );
+        object = secret(&release_json("web", "default", 1, "deployed"), true);
+        object.metadata.labels = Some([("version".into(), "2".into())].into());
+        assert!(
+            read_revision(&object, &identity)
+                .unwrap_err()
+                .contains("label")
+        );
+        let mut invalid = release_json("web", "default", 1, "deployed");
+        invalid["config"] = json!(["sensitive-payload"]);
+        let error = read_revision(&secret(&invalid, true), &identity).unwrap_err();
+        assert!(error.contains("mapping") && !error.contains("sensitive-payload"));
+    }
+
+    #[test]
+    fn a_damaged_latest_revision_remains_discoverable_in_the_release_list() {
+        let mut object = secret(&release_json("web", "default", 3, "deployed"), true);
+        object.metadata.labels = Some(
+            [
+                ("name".into(), "web".into()),
+                ("version".into(), "3".into()),
+            ]
+            .into(),
+        );
+        object.data["data"]["release"] = json!("damaged");
+        let fallback = unreadable_summary(&object).unwrap();
+        assert_eq!(fallback.status, "unreadable");
+        assert_eq!(fallback.revision, 3);
+        assert_eq!(fallback.name, "web");
+        let older = read(&secret(
+            &release_json("web", "default", 2, "deployed"),
+            true,
+        ))
+        .unwrap();
+        assert_eq!(latest([older, fallback].into_iter())[0].revision, 3);
+    }
+
+    #[cfg(feature = "test-support")]
+    #[tokio::test]
+    async fn history_reads_only_its_namespace_and_reports_api_permissions() {
+        let mut object = secret(&release_json("web", "default", 2, "deployed"), true);
+        object.metadata.name = Some("sh.helm.release.v1.web.v2".into());
+        object.metadata.labels = Some(
+            [
+                ("name".into(), "web".into()),
+                ("owner".into(), "helm".into()),
+            ]
+            .into(),
+        );
+        let fixture =
+            crate::test_support::Fixture::start(vec![serde_json::to_value(object).unwrap()]).await;
+        let client =
+            kube::Client::try_from(kube::Config::new(fixture.url.parse().unwrap())).unwrap();
+        let identity = Identity {
+            name: "web".into(),
+            namespace: "default".into(),
+        };
+        let result = history(&client, &identity).await.unwrap();
+        assert_eq!(result.revisions[0].number, 2);
+        let requests = fixture.requests.lock().unwrap().clone();
+        assert!(requests.iter().all(|(line, _)| line.starts_with("GET ")));
+        assert!(requests[0].0.contains("/namespaces/default/secrets?"));
+        assert!(
+            requests[0].0.contains("labelSelector=") && requests[0].0.contains("fieldSelector=")
+        );
+        fixture.deny("secrets");
+        let error = history(&client, &identity)
+            .await
+            .unwrap_err()
+            .user_message();
+        assert!(error.contains("403") && error.contains("secrets"));
     }
 }

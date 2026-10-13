@@ -1981,6 +1981,11 @@ impl ClusterView {
                     };
 
                     h_flex()
+                        .id(format!(
+                            "helm-release-{}-{}",
+                            release.namespace, release.name
+                        ))
+                        .test_support()
                         .w_full()
                         .px_3()
                         .py_2()
@@ -1989,6 +1994,20 @@ impl ClusterView {
                         .border_b_1()
                         .border_color(cx.theme().border)
                         .text_sm()
+                        .cursor_pointer()
+                        .hover(|row| row.bg(cx.theme().muted.opacity(0.5)))
+                        .on_click({
+                            let session = self.session.clone();
+                            let release = release.clone();
+                            move |_, window, cx| {
+                                crate::helm_details::open(
+                                    session.clone(),
+                                    (&release).into(),
+                                    window,
+                                    cx,
+                                )
+                            }
+                        })
                         .child(div().w(px(220.)).truncate().child(release.name.clone()))
                         .child(
                             div()

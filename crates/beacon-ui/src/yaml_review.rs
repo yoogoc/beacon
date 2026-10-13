@@ -17,6 +17,11 @@ pub(crate) struct Preview {
 }
 
 impl Preview {
+    /// Read-only surfaces share the review's complete-context diff preparation.
+    pub(crate) fn files(&self) -> &[DiffFile] {
+        &self.files
+    }
+
     pub fn apply(current: Value, proposed: Value) -> Result<Self, String> {
         // A renamed manifest must not be reviewed as though it were the selected object.
         for field in ["/apiVersion", "/kind", "/metadata/name"] {
