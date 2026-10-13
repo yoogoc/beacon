@@ -58,7 +58,9 @@ mod tls;
 pub mod updates;
 mod web_links;
 mod workspace;
+mod yaml_assistance;
 mod yaml_folding;
+mod yaml_language;
 mod yaml_review;
 
 pub use app::BeaconApp;

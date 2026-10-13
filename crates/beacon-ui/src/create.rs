@@ -29,6 +29,7 @@ pub(crate) struct CreateView {
     session: Arc<ClusterSession>,
     kind: Arc<Kind>,
     editor: Entity<EditorState>,
+    assistance: Entity<crate::yaml_assistance::YamlAssistance>,
     baseline: String,
     status: Status,
     _operation: Option<Task<()>>,
@@ -59,11 +60,19 @@ impl CreateView {
             }
         });
         let baseline = editor.read(cx).value().to_string();
+        let assistance = crate::yaml_assistance::YamlAssistance::new(
+            session.clone(),
+            kind.resource.clone(),
+            editor.clone(),
+            window,
+            cx,
+        );
         Self {
             baseline,
             session,
             kind,
             editor,
+            assistance,
             status: Status::Idle,
             _operation: None,
             _review: None,
@@ -281,6 +290,7 @@ impl Render for CreateView {
                             )),
                     ),
             )
+            .child(self.assistance.clone())
             .child(
                 div().flex_1().min_h_0().overflow_hidden().p_2().child(
                     Editor::new(&self.editor)

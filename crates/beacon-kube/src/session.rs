@@ -85,6 +85,12 @@ pub struct ClusterSession {
     discovery: Discovery,
     /// Filled in one kind at a time, as somebody opens them.
     printer_columns: Mutex<PrinterColumns>,
+    schemas: Mutex<
+        std::collections::HashMap<
+            kube::core::GroupVersionKind,
+            (std::time::Instant, Arc<crate::schema::Schema>),
+        >,
+    >,
     /// Filled in one namespace at a time, as somebody looks at one.
     access: Mutex<Access>,
     /// Port forwards outlive whatever view started them, so they live here.
@@ -128,6 +134,7 @@ impl ClusterSession {
             runtime,
             discovery: Discovery::from_kinds(kinds),
             printer_columns: Mutex::new(PrinterColumns::default()),
+            schemas: Mutex::default(),
             access: Mutex::new(Access::default()),
             forwards: Forwards::default(),
             registry,
@@ -246,6 +253,7 @@ impl ClusterSession {
             runtime,
             discovery,
             printer_columns: Mutex::new(PrinterColumns::default()),
+            schemas: Mutex::default(),
             access: Mutex::new(Access::default()),
             forwards: Forwards::default(),
             registry,
@@ -601,6 +609,29 @@ impl ClusterSession {
     }
 
     /// The underlying client, for the operations in [`crate::ops`].
+    /// Schemas are scoped to this connected server and API version. A short
+    /// cache avoids reloading large OpenAPI documents for every object of a kind.
+    pub async fn schema(
+        &self,
+        resource: &ApiResource,
+        reload: bool,
+    ) -> std::result::Result<Arc<crate::schema::Schema>, String> {
+        let gvk =
+            kube::core::GroupVersionKind::gvk(&resource.group, &resource.version, &resource.kind);
+        if !reload
+            && let Some((fetched, schema)) = self.schemas.lock().expect("schema cache").get(&gvk)
+            && fetched.elapsed() < std::time::Duration::from_secs(300)
+        {
+            return Ok(schema.clone());
+        }
+        let schema = crate::schema::load(self, resource).await?;
+        self.schemas
+            .lock()
+            .expect("schema cache")
+            .insert(gvk, (std::time::Instant::now(), schema.clone()));
+        Ok(schema)
+    }
+
     pub fn client(&self) -> &Client {
         &self.client
     }

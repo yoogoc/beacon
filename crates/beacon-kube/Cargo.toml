@@ -25,6 +25,7 @@ portable-pty.workspace = true
 reqwest.workspace = true
 url.workspace = true
 tempfile.workspace = true
+http = "1"
 
 # The example is the headless proof that this crate stands on its own.
 [dev-dependencies]

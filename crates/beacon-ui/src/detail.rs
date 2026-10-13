@@ -200,6 +200,7 @@ pub struct DetailView {
     /// walks past, and an editor is not a place to keep them by default.
     revealed: bool,
     yaml_editor: Entity<EditorState>,
+    yaml_assistance: Option<Entity<crate::yaml_assistance::YamlAssistance>>,
     yaml_baseline: String,
     apply: Apply,
     reviewing: bool,
@@ -283,6 +284,7 @@ impl DetailView {
             _data_theme: None,
             revealed: false,
             yaml_editor,
+            yaml_assistance: None,
             yaml_baseline: String::new(),
             apply: Apply::Idle,
             reviewing: false,
@@ -862,6 +864,16 @@ impl DetailView {
                             editor.set_initial_folded_lines(folds, cx);
                         });
                         view.yaml = Yaml::Ready;
+                        if view.yaml_assistance.is_none() {
+                            view.yaml_assistance =
+                                Some(crate::yaml_assistance::YamlAssistance::new(
+                                    view.session.clone(),
+                                    view.kind.resource.clone(),
+                                    view.yaml_editor.clone(),
+                                    window,
+                                    cx,
+                                ));
+                        }
                     }
                     Ok(Err(error)) => view.yaml = Yaml::Failed(error),
                     Err(error) => view.yaml = Yaml::Failed(error.to_string()),
@@ -2556,6 +2568,7 @@ impl DetailView {
 
                 v_flex()
                     .size_full()
+                    .children(self.yaml_assistance.clone())
                     .child(
                         div().flex_1().overflow_hidden().p_2().child(
                             Editor::new(&self.yaml_editor)
