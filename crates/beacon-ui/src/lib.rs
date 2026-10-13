@@ -30,6 +30,7 @@ mod helm_details;
 mod icons;
 mod ingress_links;
 mod job_actions;
+mod log_workbench;
 mod network;
 mod node_pods;
 mod overview;

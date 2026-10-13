@@ -13,7 +13,8 @@
 use std::{collections::VecDeque, path::PathBuf};
 
 use futures::{
-    AsyncBufReadExt as _, AsyncRead, AsyncReadExt as _, Stream, StreamExt as _, channel::mpsc,
+    AsyncBufReadExt as _, AsyncRead, AsyncReadExt as _, Stream, StreamExt as _, TryStreamExt as _,
+    channel::mpsc,
 };
 use k8s_openapi::api::core::v1::Pod;
 use kube::{Api, api::LogParams};
@@ -41,6 +42,10 @@ pub struct LogOptions {
     /// container is crash-looping is written down.
     pub previous: bool,
     pub timestamps: bool,
+    /// Inclusive server timestamp bounds. Kubernetes accepts the lower bound;
+    /// the upper bound is enforced locally because pods/log has no untilTime.
+    pub since_time: Option<k8s_openapi::jiff::Timestamp>,
+    pub until_time: Option<k8s_openapi::jiff::Timestamp>,
 }
 
 impl LogOptions {
@@ -49,12 +54,13 @@ impl LogOptions {
             container: self.container.clone(),
             // Reading logs without following them is reading a snapshot of
             // something that is still happening.
-            follow: !self.previous,
+            follow: !self.previous && self.until_time.is_none(),
             previous: self.previous,
-            timestamps: self.timestamps,
+            timestamps: self.timestamps || self.since_time.is_some() || self.until_time.is_some(),
+            since_time: self.since_time,
             // Enough to see how something got where it is, without pulling a
             // week of history to show the last minute.
-            tail_lines: Some(2_000),
+            tail_lines: (self.since_time.is_none() && self.until_time.is_none()).then_some(2_000),
             ..Default::default()
         }
     }
@@ -81,7 +87,23 @@ pub async fn download(
         .log_stream(&pod, &options.download_params())
         .await
         .map_err(|error| crate::Error::Api(error).user_message())?;
-    save_stream(stream, path).await
+    if let Some(until) = options.until_time {
+        let filtered = futures::io::BufReader::new(stream)
+            .lines()
+            .try_filter(move |line| futures::future::ready(within_until(line, until)))
+            .map_ok(|line| format!("{line}\n").into_bytes())
+            .into_async_read();
+        save_stream(filtered, path).await
+    } else {
+        save_stream(stream, path).await
+    }
+}
+
+fn within_until(line: &str, until: k8s_openapi::jiff::Timestamp) -> bool {
+    line.split_whitespace()
+        .next()
+        .and_then(|time| time.parse::<k8s_openapi::jiff::Timestamp>().ok())
+        .is_some_and(|time| time <= until)
 }
 
 /// Keep the destination intact until the entire response has been saved.
@@ -239,7 +261,9 @@ pub fn follow(
             let flush = tokio::select! {
                 line = lines.next() => match line {
                     Some(Ok(line)) => {
-                        pending.push(line);
+                        if options.until_time.is_none_or(|until| within_until(&line, until)) {
+                            pending.push(line);
+                        }
                         pending.len() >= BATCH_LIMIT
                     }
                     None => {
@@ -276,7 +300,6 @@ pub fn follow(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use futures::TryStreamExt as _;
 
     fn line(index: usize) -> String {
         format!("line {index}")
@@ -368,12 +391,68 @@ mod tests {
             container: Some("sidecar".into()),
             previous: false,
             timestamps: true,
+            ..Default::default()
         }
         .to_params();
 
         assert_eq!(params.container.as_deref(), Some("sidecar"));
         assert!(params.timestamps);
         assert!(params.tail_lines.is_some(), "a bounded first screen");
+    }
+
+    #[test]
+    fn time_queries_remove_the_initial_tail_and_use_server_timestamps() {
+        let since = "2026-10-13T10:00:00Z".parse().unwrap();
+        let until = "2026-10-13T11:00:00Z".parse().unwrap();
+        let options = LogOptions {
+            since_time: Some(since),
+            until_time: Some(until),
+            ..Default::default()
+        };
+        let params = options.to_params();
+        assert_eq!(params.since_time, Some(since));
+        assert!(params.tail_lines.is_none());
+        assert!(params.timestamps);
+        assert!(!params.follow, "a finished range is a snapshot");
+        assert!(within_until("2026-10-13T11:00:00Z equal", until));
+        assert!(!within_until("2026-10-13T11:00:00.001Z late", until));
+        assert!(!within_until("missing timestamp", until));
+    }
+
+    #[tokio::test]
+    async fn range_download_fetches_since_time_and_excludes_later_lines() {
+        let text =
+            "2026-10-13T10:00:00Z {\"msg\":\"keep\"}\n2026-10-13T11:01:00Z level=info msg=late\n";
+        let (client, server) = log_server(text.into(), "200 OK").await;
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("range.log");
+        download(
+            client,
+            "default".into(),
+            "demo".into(),
+            LogOptions {
+                since_time: Some("2026-10-13T09:00:00Z".parse().unwrap()),
+                until_time: Some("2026-10-13T11:00:00Z".parse().unwrap()),
+                ..Default::default()
+            },
+            path.clone(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            std::fs::read_to_string(path).unwrap(),
+            "2026-10-13T10:00:00Z {\"msg\":\"keep\"}\n"
+        );
+        let request = server.await.unwrap();
+        let uri = request.split_whitespace().nth(1).unwrap();
+        let url = url::Url::parse(&format!("http://mock{uri}")).unwrap();
+        let query: std::collections::BTreeMap<_, _> = url.query_pairs().collect();
+        assert_eq!(
+            query.get("sinceTime").map(|value| value.as_ref()),
+            Some("2026-10-13T09:00:00Z")
+        );
+        assert!(!query.contains_key("tailLines"));
+        assert!(!query.contains_key("untilTime"));
     }
 
     async fn log_server(
@@ -414,6 +493,7 @@ mod tests {
             container: Some("sidecar".into()),
             previous: true,
             timestamps: true,
+            ..Default::default()
         };
         let bytes = tokio::time::timeout(
             std::time::Duration::from_secs(10),

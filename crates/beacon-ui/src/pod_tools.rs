@@ -1,6 +1,8 @@
 //! Pod logs, commands and interactive shells in the independent bottom panel.
 
-use std::{cell::RefCell, collections::VecDeque, path::PathBuf, rc::Rc, sync::Arc};
+#[cfg(test)]
+use std::collections::VecDeque;
+use std::{cell::RefCell, path::PathBuf, rc::Rc, sync::Arc};
 
 use beacon_kube::{
     ClusterSession, DynamicObject, LogBuffer, LogEvent, LogOptions, ObjectRef, Rules,
@@ -53,6 +55,7 @@ pub(crate) struct PodToolsView {
     log_scroll: UniformListScrollHandle,
     log_widths: LogLineWidths,
     log_search: Entity<InputState>,
+    log_workbench: Entity<crate::log_workbench::LogWorkbench>,
     log_display: Rc<RefCell<crate::pod_logs::Display>>,
     log_wrap_scroll: ListState,
     log_wrap: bool,
@@ -67,6 +70,7 @@ pub(crate) struct PodToolsView {
     _exec_task: Option<Task<()>>,
     _container_subscription: Subscription,
     _search_subscription: Subscription,
+    _workbench_subscription: Subscription,
 }
 
 pub(crate) struct PodToolsClosed;
@@ -184,11 +188,19 @@ fn log_filename(
 pub(crate) struct LogLineWidths {
     wrapped_font: Option<(Font, Pixels)>,
     font: Option<(Font, Pixels)>,
+    #[cfg(test)]
     dropped: usize,
+    #[cfg(test)]
     widths: VecDeque<Pixels>,
+    projected: std::collections::BTreeMap<usize, (SharedString, Pixels)>,
 }
 
-fn render_log_row(row: &crate::pod_logs::Row, wrap: bool, cx: &App) -> AnyElement {
+fn render_log_row(
+    row: &crate::pod_logs::Row,
+    wrap: bool,
+    workbench: Option<Entity<crate::log_workbench::LogWorkbench>>,
+    cx: &App,
+) -> AnyElement {
     let highlights = row
         .matches
         .iter()
@@ -203,25 +215,60 @@ fn render_log_row(row: &crate::pod_logs::Row, wrap: bool, cx: &App) -> AnyElemen
             )
         })
         .collect();
-    div()
+    let id = row.id;
+    h_flex()
         .id(("pod-log-line", row.id))
+        .gap_1()
+        .items_start()
         .px_3()
         .min_h(px(18.))
         .font_family("monospace")
         .text_xs()
         .when(wrap, |row| row.w_full())
         .when(!wrap, |row| row.whitespace_nowrap())
-        .child(crate::copyable_text::highlighted_text(
-            "line",
-            row.text.clone(),
-            highlights,
+        .when_some(workbench, |line, workbench| {
+            let inspect = workbench.clone();
+            line.child(
+                Button::new(("inspect-log", id))
+                    .xsmall()
+                    .ghost()
+                    .label("›")
+                    .tooltip("Inspect fields and raw log")
+                    .on_click(move |_, window, cx| {
+                        inspect.update(cx, |view, cx| view.inspect(id, window, cx))
+                    }),
+            )
+            .child(
+                Button::new(("bookmark-log", id))
+                    .xsmall()
+                    .ghost()
+                    .label(if row.bookmarked { "★" } else { "☆" })
+                    .tooltip("Bookmark this log line")
+                    .on_click(move |_, _, cx| {
+                        workbench.update(cx, |view, cx| view.bookmark(id, cx))
+                    }),
+            )
+            .child(
+                div()
+                    .w(px(52.))
+                    .flex_shrink_0()
+                    .text_color(cx.theme().tone(match row.record.level {
+                        crate::pod_logs::Level::Error => Tone::Critical,
+                        crate::pod_logs::Level::Warning => Tone::Warning,
+                        _ => Tone::Unknown,
+                    }))
+                    .child(row.record.level.label()),
+            )
+        })
+        .child(div().when(wrap, |text| text.flex_1().min_w_0()).child(
+            crate::copyable_text::highlighted_text("line", row.text.clone(), highlights),
         ))
         .test_support()
         .into_any_element()
 }
 
 pub(crate) struct LogCanvas<'a> {
-    pub(crate) logs: &'a LogBuffer,
+    pub(crate) workbench: Option<Entity<crate::log_workbench::LogWorkbench>>,
     pub(crate) display: Rc<RefCell<crate::pod_logs::Display>>,
     pub(crate) wrap: bool,
     pub(crate) wrapped: &'a ListState,
@@ -232,13 +279,13 @@ pub(crate) struct LogCanvas<'a> {
 impl LogCanvas<'_> {
     pub(crate) fn render(&mut self, window: &mut Window, cx: &App) -> AnyElement {
         let count = self.display.borrow().rows.len();
-        let dropped = self.logs.dropped();
         let wrapped_font = (window.text_style().font(), window.rem_size());
         if self.widths.wrapped_font.as_ref() != Some(&wrapped_font) {
             self.wrapped.remeasure();
             self.widths.wrapped_font = Some(wrapped_font);
         }
         let display = self.display.clone();
+        let workbench = self.workbench.clone();
         if self.wrap {
             div()
                 .relative()
@@ -251,7 +298,7 @@ impl LogCanvas<'_> {
                             .borrow()
                             .rows
                             .get(index)
-                            .map(|row| render_log_row(row, true, cx))
+                            .map(|row| render_log_row(row, true, workbench.clone(), cx))
                             .unwrap_or_else(|| div().into_any_element())
                     })
                     .size_full()
@@ -265,8 +312,11 @@ impl LogCanvas<'_> {
                 ..window.text_style().font()
             };
             let font_size = window.rem_size() * 0.75;
-            self.widths
-                .widest(self.logs, font.clone(), font_size, |line| {
+            let widest = self.widths.widest_display(
+                &self.display.borrow(),
+                font.clone(),
+                font_size,
+                |line| {
                     window
                         .text_system()
                         .shape_line(
@@ -283,21 +333,13 @@ impl LogCanvas<'_> {
                             None,
                         )
                         .width
-                });
-            let widest = self
-                .display
-                .borrow()
-                .rows
-                .iter()
-                .enumerate()
-                .map(|(index, row)| (index, self.widths.widths[row.id - dropped]))
-                .reduce(|a, b| if b.1 > a.1 { b } else { a })
-                .map(|(index, _)| index);
+                },
+            );
             let list = uniform_list("log-lines", count, move |range, _, cx| {
                 let display = display.borrow();
                 range
                     .filter_map(|index| display.rows.get(index))
-                    .map(|row| render_log_row(row, false, cx))
+                    .map(|row| render_log_row(row, false, workbench.clone(), cx))
                     .collect()
             })
             .with_width_from_item(widest)
@@ -319,6 +361,42 @@ impl LogCanvas<'_> {
 }
 
 impl LogLineWidths {
+    fn widest_display(
+        &mut self,
+        display: &crate::pod_logs::Display,
+        font: Font,
+        size: Pixels,
+        mut measure: impl FnMut(&str) -> Pixels,
+    ) -> Option<usize> {
+        let font = (font, size);
+        if self.font.as_ref() != Some(&font) {
+            self.projected.clear();
+            self.font = Some(font);
+        }
+        let ids = display
+            .rows
+            .iter()
+            .map(|row| row.id)
+            .collect::<std::collections::BTreeSet<_>>();
+        self.projected.retain(|id, _| ids.contains(id));
+        display
+            .rows
+            .iter()
+            .enumerate()
+            .map(|(index, row)| {
+                let cached = self
+                    .projected
+                    .entry(row.id)
+                    .or_insert_with(|| (row.text.clone(), measure(&row.text)));
+                if cached.0 != row.text {
+                    *cached = (row.text.clone(), measure(&row.text));
+                }
+                (index, cached.1)
+            })
+            .reduce(|a, b| if b.1 > a.1 { b } else { a })
+            .map(|(index, _)| index)
+    }
+    #[cfg(test)]
     fn widest(
         &mut self,
         logs: &LogBuffer,
@@ -406,6 +484,34 @@ impl PodToolsView {
                 cx.notify();
             }
         });
+        let log_display: Rc<RefCell<crate::pod_logs::Display>> = Rc::default();
+        let log_workbench = crate::log_workbench::LogWorkbench::new(
+            log_display.clone(),
+            log_search.clone(),
+            window,
+            cx,
+        );
+        let workbench_subscription =
+            cx.subscribe_in(&log_workbench, window, |view, _, event, window, cx| {
+                match event {
+                    crate::log_workbench::Changed::Filter => {
+                        view.update_log_display(cx);
+                        view.set_log_follow(false);
+                    }
+                    crate::log_workbench::Changed::Range(since, until) => {
+                        view.set_log_options(
+                            LogOptions {
+                                since_time: *since,
+                                until_time: *until,
+                                ..view.log_options.clone()
+                            },
+                            window,
+                            cx,
+                        );
+                    }
+                }
+                cx.notify();
+            });
         let mut this = Self {
             session,
             target: ObjectRef::of(&object),
@@ -424,7 +530,8 @@ impl PodToolsView {
             log_scroll: UniformListScrollHandle::new(),
             log_widths: LogLineWidths::default(),
             log_search,
-            log_display: Rc::default(),
+            log_display,
+            log_workbench,
             log_wrap_scroll: ListState::new(0, ListAlignment::Top, px(300.)),
             log_wrap: false,
             log_follow: true,
@@ -438,6 +545,7 @@ impl PodToolsView {
             _exec_task: None,
             _container_subscription: subscription,
             _search_subscription: search_subscription,
+            _workbench_subscription: workbench_subscription,
         };
         this.select(tab, window, cx);
         this
@@ -693,7 +801,18 @@ impl PodToolsView {
         self.logs.clear();
         self.log_widths = LogLineWidths::default();
         self.log_scroll = UniformListScrollHandle::new();
-        *self.log_display.borrow_mut() = Default::default();
+        self.log_display.borrow_mut().reset_stream();
+        self.log_display.borrow_mut().set_source(format!(
+            "{}/{}:{}{}",
+            namespace,
+            self.target.name,
+            self.log_options.container.as_deref().unwrap_or("default"),
+            if self.log_options.previous {
+                " (previous)"
+            } else {
+                ""
+            }
+        ));
         self.log_wrap_scroll.reset(0);
         self.log_follow = true;
         self.log_wrap_scroll.set_follow_mode(FollowMode::Tail);
@@ -756,10 +875,14 @@ impl PodToolsView {
         from_bottom <= px(24.)
     }
 
-    fn update_log_display(&mut self, cx: &App) {
+    fn update_log_display(&mut self, cx: &mut App) {
         let old_top = self.unwrapped_log_top();
-        let query = self.log_search.read(cx).value();
-        let change = self.log_display.borrow_mut().update(&self.logs, &query);
+        let filter = self.log_workbench.read(cx).filter(cx);
+        let change = self
+            .log_display
+            .borrow_mut()
+            .update_with(&self.logs, &filter);
+        self.log_workbench.update(cx, |view, cx| view.refresh(cx));
         if change.reset {
             self.log_scroll = UniformListScrollHandle::new();
             self.log_wrap_scroll
@@ -862,12 +985,14 @@ impl PodToolsView {
         let dropped = self.logs.dropped();
 
         let body: AnyElement = match &self.log_status {
-            LogStatus::Failed(error) => self.notice(error.clone(), Tone::Critical, cx),
+            LogStatus::Failed(error) if count == 0 => {
+                self.notice(error.clone(), Tone::Critical, cx)
+            }
             LogStatus::Unopened => self.notice("Opening the stream…", Tone::Progressing, cx),
-            _ if total == 0 => self.notice("Nothing logged yet.", Tone::Unknown, cx),
+            _ if total == 0 && count == 0 => self.notice("Nothing logged yet.", Tone::Unknown, cx),
             _ if count == 0 => self.notice("No log lines match this search.", Tone::Unknown, cx),
             _ => LogCanvas {
-                logs: &self.logs,
+                workbench: Some(self.log_workbench.clone()),
                 display: self.log_display.clone(),
                 wrap: self.log_wrap,
                 wrapped: &self.log_wrap_scroll,
@@ -958,9 +1083,9 @@ impl PodToolsView {
                         Button::new("download-logs")
                             .xsmall()
                             .ghost()
-                            .label("Download")
+                            .label("Export all…")
                             .disabled(self.download_active() || self.log_options.container.is_none())
-                            .tooltip("Save this container's complete available logs; choose a folder and filename")
+                            .tooltip("Export this container's complete available logs for the time range; ignores local filters. Choose a folder and filename")
                             .on_click(cx.listener(|view, _, window, cx| view.download_logs(window, cx))),
                     )
                     .when(matches!(self.download, Download::Running(_)), |this| {
@@ -978,7 +1103,7 @@ impl PodToolsView {
                             .xsmall()
                             .ghost()
                             .label("Copy")
-                            .tooltip("Copy displayed log lines, including the current search filter")
+                            .tooltip("Copy matching retained raw log lines; selected display fields do not remove original data")
                             .on_click(cx.listener(|view, _, _, cx| {
                                 cx.write_to_clipboard(ClipboardItem::new_string(
                                     view.log_display.borrow().text(),
@@ -997,8 +1122,11 @@ impl PodToolsView {
                         },
                     )),
             )
+            .child(self.log_workbench.clone())
+            .when(matches!(self.log_status, LogStatus::Failed(_)) && count > 0, |pane| pane.child(div().px_3().py_1().text_xs().text_color(cx.theme().danger).child(crate::copyable_text::copyable_text("pod-log-stream-error", match &self.log_status { LogStatus::Failed(error) => error.clone(), _ => String::new() }))))
             .children(self.render_download_status(cx))
             .child(div().flex_1().min_size_0().overflow_hidden().child(body))
+            .children(self.log_workbench.read(cx).inspector())
             .into_any_element()
     }
 
@@ -1215,7 +1343,7 @@ mod rendering_tests {
         fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
             div().id("test-log-pane").w(self.width).h(px(350.)).child(
                 LogCanvas {
-                    logs: &self.logs,
+                    workbench: None,
                     display: self.display.clone(),
                     wrap: self.wrap,
                     wrapped: &self.wrapped,
@@ -1225,6 +1353,103 @@ mod rendering_tests {
                 .render(window, cx),
             )
         }
+    }
+
+    #[::core::prelude::v1::test]
+    fn structured_controls_apply_to_pod_logs_without_losing_previous_or_container() {
+        use crate::feature_test_support as support;
+        let cx = &mut support::context();
+        let object = serde_json::json!({"apiVersion":"v1","kind":"Pod","metadata":{"name":"demo","namespace":"default","uid":"pod-log-demo"},"spec":{"containers":[{"name":"app"},{"name":"sidecar"}]}});
+        let (fixture, session) = support::fixture(cx, "structured-pod", vec![object.clone()]);
+        let object = Arc::new(serde_json::from_value(object).unwrap());
+        let (window, view) = cx.update(|cx| {
+            gpui_kit::open_window(
+                WindowOptions {
+                    window_bounds: Some(WindowBounds::Windowed(Bounds::new(
+                        point(px(0.), px(0.)),
+                        size(px(1400.), px(900.)),
+                    ))),
+                    ..Default::default()
+                },
+                cx,
+                |window, cx| {
+                    window.set_view_retention(false);
+                    cx.new(|cx| {
+                        PodToolsView::new(session, object, None, PodToolTab::Logs, window, cx)
+                    })
+                },
+            )
+            .unwrap()
+        });
+        support::settle(cx, |cx| {
+            view.read_with(cx, |view, _| view.log_status == LogStatus::Ended)
+        });
+        cx.update_window(window, |_, window, cx| {
+            view.update(cx, |view, cx| {
+                view.logs.extend(
+                    [
+                        "{\"level\":\"error\",\"msg\":\"failed\"}",
+                        "level=info msg=ready",
+                    ]
+                    .map(str::to_string),
+                );
+                view.update_log_display(cx);
+            });
+            window.render_frame(cx);
+            window.click("log-level-Error", cx);
+            window.render_frame(cx);
+            assert!(window.find(("inspect-log", 1usize)).visible());
+            window.click("previous", cx);
+        })
+        .unwrap();
+        support::settle(cx, |cx| {
+            view.read_with(cx, |view, _| view.log_status == LogStatus::Ended)
+        });
+        assert!(view.read_with(cx, |view, _| view.log_options.previous));
+        assert_eq!(
+            view.read_with(cx, |view, _| view.log_options.container.clone())
+                .as_deref(),
+            Some("app")
+        );
+        cx.update_window(window, |_, _, cx| {
+            let workbench = view.read(cx).log_workbench.clone();
+            workbench.update(cx, |_, cx| {
+                cx.emit(crate::log_workbench::Changed::Range(
+                    Some("2026-10-09T00:00:00Z".parse().unwrap()),
+                    Some("2026-10-11T00:00:00Z".parse().unwrap()),
+                ))
+            });
+        })
+        .unwrap();
+        support::settle(cx, |cx| {
+            view.read_with(cx, |view, _| view.log_status == LogStatus::Ended)
+        });
+        let requests = fixture.requests.lock().unwrap();
+        let uri = requests
+            .iter()
+            .find(|(uri, _)| uri.contains("sinceTime"))
+            .unwrap()
+            .0
+            .split_whitespace()
+            .nth(1)
+            .unwrap();
+        let url = url::Url::parse(&format!("http://fixture{uri}")).unwrap();
+        let query = url
+            .query_pairs()
+            .collect::<std::collections::BTreeMap<_, _>>();
+        assert_eq!(
+            query.get("container").map(|value| value.as_ref()),
+            Some("app")
+        );
+        assert_eq!(
+            query.get("previous").map(|value| value.as_ref()),
+            Some("true")
+        );
+        assert_eq!(
+            query.get("timestamps").map(|value| value.as_ref()),
+            Some("true")
+        );
+        assert!(!query.contains_key("tailLines"));
     }
 
     #[::core::prelude::v1::test]
@@ -1466,6 +1691,7 @@ mod tests {
             container: Some("app".into()),
             previous: true,
             timestamps: true,
+            ..Default::default()
         };
         assert_eq!(
             log_filename(

@@ -26,6 +26,9 @@ pub(crate) struct AggregateLogs {
     namespaces: Vec<Option<String>>,
     selector: Entity<InputState>,
     search: Entity<InputState>,
+    workbench: Entity<crate::log_workbench::LogWorkbench>,
+    since: Option<beacon_columns::Timestamp>,
+    until: Option<beacon_columns::Timestamp>,
     container: Entity<SelectState<SearchableVec<String>>>,
     container_names: Vec<String>,
     selected_container: Option<String>,
@@ -66,6 +69,9 @@ pub(crate) fn open(
         container.update(cx, |state, cx| {
             state.set_selected_value(&ALL.to_owned(), window, cx)
         });
+        let display: Rc<RefCell<crate::pod_logs::Display>> = Rc::default();
+        let workbench =
+            crate::log_workbench::LogWorkbench::new(display.clone(), search.clone(), window, cx);
         let mut view = AggregateLogs {
             session,
             namespaces,
@@ -82,7 +88,10 @@ pub(crate) fn open(
             streams: BTreeMap::new(),
             errors: BTreeMap::new(),
             logs: LogBuffer::new(),
-            display: Rc::default(),
+            display,
+            workbench: workbench.clone(),
+            since: None,
+            until: None,
             scroll: UniformListScrollHandle::new(),
             wrapped: ListState::new(0, ListAlignment::Top, px(300.)),
             widths: LogLineWidths::default(),
@@ -117,6 +126,26 @@ pub(crate) fn open(
                 }
             },
         ));
+        view._subscriptions.push(cx.subscribe_in(
+            &workbench,
+            window,
+            |view, _, event, window, cx| {
+                match event {
+                    crate::log_workbench::Changed::Filter => {
+                        view.follow = false;
+                        view.update_display(cx);
+                    }
+                    crate::log_workbench::Changed::Range(since, until) => {
+                        view.since = *since;
+                        view.until = *until;
+                        view.clear_logs();
+                        view.streams.clear();
+                        view.sync(window, cx);
+                    }
+                }
+                cx.notify();
+            },
+        ));
         view.load(window, cx);
         view
     });
@@ -134,7 +163,7 @@ pub(crate) fn open(
 impl AggregateLogs {
     fn clear_logs(&mut self) {
         self.logs.clear();
-        *self.display.borrow_mut() = Default::default();
+        self.display.borrow_mut().reset_stream();
         self.widths = LogLineWidths::default();
         self.scroll = UniformListScrollHandle::new();
         self.wrapped.reset(0);
@@ -251,6 +280,8 @@ impl AggregateLogs {
                     container: Some(source.container.clone()),
                     timestamps: true,
                     previous: self.previous,
+                    since_time: self.since,
+                    until_time: self.until,
                 },
             );
             let identity = source.clone();
@@ -308,11 +339,10 @@ impl AggregateLogs {
             self.wrapped.scroll_to_end();
         }
     }
-    fn update_display(&mut self, cx: &App) {
-        let change = self
-            .display
-            .borrow_mut()
-            .update(&self.logs, &self.search.read(cx).value());
+    fn update_display(&mut self, cx: &mut App) {
+        let filter = self.workbench.read(cx).filter(cx);
+        let change = self.display.borrow_mut().update_with(&self.logs, &filter);
+        self.workbench.update(cx, |view, cx| view.refresh(cx));
         if change.reset {
             self.scroll = UniformListScrollHandle::new();
             self.wrapped.reset(self.display.borrow().rows.len());
@@ -343,6 +373,8 @@ impl AggregateLogs {
         let bridge = Bridge::global(cx).clone();
         let session = self.session.clone();
         let previous = self.previous;
+        let since_time = self.since;
+        let until_time = self.until;
         self.downloading = true;
         self.message = Some("Choose a download folder…".into());
         self._download = Some(cx.spawn_in(window, async move |this, cx| {
@@ -392,6 +424,8 @@ impl AggregateLogs {
                         container: Some(source.container.clone()),
                         previous,
                         timestamps: true,
+                        since_time,
+                        until_time,
                     };
                     match session
                         .clone()
@@ -430,7 +464,7 @@ impl AggregateLogs {
 impl Render for AggregateLogs {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let body = LogCanvas {
-            logs: &self.logs,
+            workbench: Some(self.workbench.clone()),
             display: self.display.clone(),
             wrap: self.wrap,
             wrapped: &self.wrapped,
@@ -448,14 +482,16 @@ impl Render for AggregateLogs {
                 .child(Button::new("aggregate-latest").small().ghost().label("Latest").on_click(cx.listener(|view, _, _, cx| { view.follow = true; view.latest(); cx.notify(); })))
                 .child(Button::new("aggregate-wrap").small().ghost().label("Wrap").on_click(cx.listener(|view, _, _, cx| { view.wrap = !view.wrap; if view.follow { view.latest(); } cx.notify(); })))
                 .child(Button::new("aggregate-previous").small().ghost().label(if self.previous { "Previous: on" } else { "Previous" }).on_click(cx.listener(|view, _, window, cx| { view.previous = !view.previous; view.clear_logs(); view.streams.clear(); view.sync(window, cx); })))
-                .child(Button::new("aggregate-copy").small().ghost().label("Copy").on_click(cx.listener(|view, _, _, cx| cx.write_to_clipboard(ClipboardItem::new_string(view.display.borrow().text())))))
-                .child(Button::new("aggregate-download").small().ghost().label("Download…").disabled(self.downloading || self.streams.is_empty()).on_click(cx.listener(|view, _, window, cx| view.download(window, cx))))
+                .child(Button::new("aggregate-copy").small().ghost().label("Copy").tooltip("Copy matching retained raw lines; field projection does not remove original data").on_click(cx.listener(|view, _, _, cx| cx.write_to_clipboard(ClipboardItem::new_string(view.display.borrow().text())))))
+                .child(Button::new("aggregate-download").small().ghost().label("Export all…").tooltip("Download complete available logs for every current source; active time bounds apply").disabled(self.downloading || self.streams.is_empty()).on_click(cx.listener(|view, _, window, cx| view.download(window, cx))))
                 .when(self.downloading, |bar| bar.child(Button::new("aggregate-cancel-download").small().ghost().label("Cancel download").on_click(cx.listener(|view, _, _, cx| { view._download = None; view.downloading = false; view.message = Some("Download cancelled. Completed files remain in the selected folder.".into()); cx.notify(); }))))
                 .child(div().whitespace_nowrap().text_sm().child(format!("{} Pods · {} sources · {} lines · {} dropped", self.pods.iter().map(ResourceStore::len).sum::<usize>(), self.streams.len(), self.display.borrow().rows.len(), self.logs.dropped()))))
+            .child(self.workbench.clone())
             .children(self.message.as_ref().map(|message| copyable_text("aggregate-message", message.clone())))
             .when(self.loading > 0, |view| view.child("Loading matching Pods…"))
             .children(self.errors.iter().enumerate().map(|(index, (source, error))| copyable_text(("aggregate-stream-error", index), format!("{} {error}", source.prefix()))))
             .child(div().flex_1().min_size_0().child(body))
+            .children(self.workbench.read(cx).inspector())
     }
 }
 
@@ -465,6 +501,63 @@ mod integration_tests {
     use crate::feature_test_support as support;
     use gpui_kit::test::TestWindowExt as _;
     use serde_json::json;
+    #[::core::prelude::v1::test]
+    fn structured_filters_inspect_source_and_ranges_reach_every_aggregate_stream() {
+        let cx = &mut support::context();
+        let pod = json!({"apiVersion":"v1","kind":"Pod","metadata":{"name":"web","namespace":"default","uid":"aggregate-structured","labels":{"app":"web"}},"spec":{"containers":[{"name":"app"},{"name":"sidecar"}]},"status":{"containerStatuses":[{"name":"app","state":{"running":{}}},{"name":"sidecar","state":{"running":{}}}]}});
+        let (fixture, session) = support::fixture(cx, "structured-aggregate", vec![pod]);
+        let window = support::window(cx);
+        let view = cx
+            .update_window(window, |_, window, cx| {
+                open(
+                    session,
+                    vec![Some("default".into())],
+                    "app=web".into(),
+                    window,
+                    cx,
+                )
+            })
+            .unwrap();
+        support::settle(cx, |cx| view.read_with(cx, |view, _| view.logs.len() == 2));
+        cx.update_window(window, |_, window, cx| {
+            view.update(cx, |view, cx| { view.logs.extend(["[default/web:app] 2026-10-10T10:00:00Z {\"level\":\"error\",\"msg\":\"failed\"}", "[default/web:sidecar] 2026-10-10T10:00:01Z level=info msg=ready"].map(str::to_string)); view.update_display(cx); });
+            window.render_frame(cx); window.click("log-level-Error", cx); window.render_frame(cx);
+        }).unwrap();
+        assert_eq!(
+            view.read_with(cx, |view, _| view.display.borrow().rows.len()),
+            1
+        );
+        assert_eq!(
+            view.read_with(cx, |view, _| view.display.borrow().rows[0]
+                .record
+                .source
+                .clone())
+                .as_deref(),
+            Some("default/web:app")
+        );
+        cx.update_window(window, |_, _, cx| {
+            let workbench = view.read(cx).workbench.clone();
+            workbench.update(cx, |_, cx| {
+                cx.emit(crate::log_workbench::Changed::Range(
+                    Some("2026-10-09T00:00:00Z".parse().unwrap()),
+                    Some("2026-10-11T00:00:00Z".parse().unwrap()),
+                ))
+            });
+        })
+        .unwrap();
+        support::settle(cx, |_| {
+            fixture
+                .requests
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|(uri, _)| uri.contains("sinceTime"))
+                .count()
+                == 2
+        });
+        assert_eq!(view.read_with(cx, |view, _| view.streams.len()), 2);
+    }
+
     #[::core::prelude::v1::test]
     fn matching_new_pods_and_restarted_containers_join_live_logs() {
         let cx = &mut support::context();
