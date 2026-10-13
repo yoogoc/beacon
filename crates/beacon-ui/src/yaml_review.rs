@@ -319,13 +319,17 @@ impl Render for ReviewView {
             )
             .child(
                 div()
+                    .id("yaml-review-diff")
+                    .test_support()
                     .flex_1()
                     .min_h_0()
                     .overflow_hidden()
                     .rounded_md()
                     .border_1()
                     .border_color(cx.theme().border)
-                    .child(Diff::new(&self.diff).size_full()),
+                    // Keep both columns inside the viewport even when an annotation
+                    // or Secret value would otherwise determine the entire row width.
+                    .child(Diff::new(&self.diff).soft_wrap(true).size_full()),
             )
             .child(
                 h_flex()
@@ -373,6 +377,86 @@ impl Render for ReviewView {
                             ),
                     ),
             )
+    }
+}
+
+#[cfg(all(test, feature = "ui-tests"))]
+mod rendering_tests {
+    use super::*;
+    use crate::feature_test_support as support;
+    use gpui_kit::test::TestWindowExt as _;
+    use serde_json::json;
+
+    #[::core::prelude::v1::test]
+    fn split_review_keeps_both_long_yaml_values_visible_and_copies_the_original_line() {
+        let cx = &mut support::context();
+        let directory = tempfile::tempdir().unwrap();
+        support::workspace(cx, directory.path());
+        let window = support::window(cx);
+        let before = json!({
+            "apiVersion": "v1", "kind": "ConfigMap",
+            "metadata": {"name": "review", "namespace": "default"},
+            "data": {"setting": "original-value-".repeat(40)},
+        });
+        let mut after = before.clone();
+        after["data"]["setting"] = json!("modified-value-".repeat(40));
+        let yaml = canonical_yaml(after.clone()).unwrap();
+        let line = yaml
+            .lines()
+            .position(|line| line.contains("modified-value-"))
+            .unwrap();
+        cx.update_window(window, |_, window, cx| {
+            window.resize(size(px(1400.), px(1000.)));
+            open(
+                Preview::apply(before, after).unwrap(),
+                "ConfigMap / default / review".into(),
+                false,
+                false,
+                window,
+                cx,
+            );
+        })
+        .unwrap();
+        for width in [1400., 1000., 700.] {
+            cx.update_window(window, |_, window, cx| {
+                window.resize(size(px(width), px(1000.)));
+                window.render_frame(cx);
+                window.render_frame(cx);
+                let viewport = window.find("yaml-review-diff").bounds();
+                let old = window.within(("old", line)).find("source");
+                let new = window.within(("new", line)).find("source");
+                assert!(old.visible(), "current YAML is hidden at {width}");
+                assert!(new.visible(), "proposed YAML is hidden at {width}");
+                assert!(old.bounds().right() <= viewport.center().x + px(1.));
+                assert!(new.bounds().left() >= viewport.center().x);
+                assert!(
+                    new.bounds().right() <= viewport.right(),
+                    "proposed YAML extends outside the viewer at {width}: {:?} / {viewport:?}",
+                    new.bounds()
+                );
+                assert_eq!(new.label(), yaml.lines().nth(line));
+                window.within(("new", line)).click(("line", line), cx);
+                window.press(
+                    if cfg!(target_os = "macos") {
+                        "cmd-c"
+                    } else {
+                        "ctrl-c"
+                    },
+                    cx,
+                );
+                assert_eq!(
+                    cx.read_from_clipboard().unwrap().text().unwrap(),
+                    format!("{}\n", yaml.lines().nth(line).unwrap())
+                );
+                window.click("diff-unified", cx);
+                window.render_frame(cx);
+                window.click("diff-split", cx);
+                window.render_frame(cx);
+                window.render_frame(cx);
+                assert!(window.within(("new", line)).find("source").visible());
+            })
+            .unwrap();
+        }
     }
 }
 

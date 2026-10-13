@@ -31,7 +31,7 @@ impl Ask {
             operation: Operation::Delete,
             target: targets[0].clone(),
             kind,
-            bulk_targets: Some(targets),
+            bulk_targets: (targets.len() > 1).then_some(targets),
         }
     }
 
@@ -40,7 +40,7 @@ impl Ask {
             return format!("Delete {} {} resources?", targets.len(), self.kind);
         }
         match self.operation {
-            Operation::Delete => format!("Delete this {}?", self.kind),
+            Operation::Delete => format!("Delete {}?", self.kind),
             Operation::Scale { .. } => format!("Scale this {}", self.kind),
             _ => self.operation.describe(),
         }
@@ -51,11 +51,7 @@ impl Ask {
             return "The resources listed below will be deleted. There is no undo. Controller-owned resources may be recreated.".into();
         }
         match self.operation {
-            Operation::Delete => format!(
-                "{} will be deleted. There is no undo — if a controller owns it, \
-                 it will be recreated; if not, it is gone.",
-                self.target
-            ),
+            Operation::Delete => "Cannot be undone.".into(),
             _ => self.target.to_string(),
         }
     }
@@ -120,6 +116,53 @@ impl Prompt {
         if let Some(operation) = self.resolve(cx) {
             cx.emit(PromptEvent::Confirmed(operation));
         }
+    }
+
+    fn render_single_target(&self, cx: &App) -> Option<AnyElement> {
+        if !self.ask.is_destructive() || self.ask.bulk_targets.is_some() {
+            return None;
+        }
+        let fields = [
+            match self.ask.target.namespace.as_deref() {
+                Some(namespace) => ("Namespace", namespace, "delete-namespace"),
+                None => ("Scope", "Cluster-scoped", "delete-scope"),
+            },
+            ("Name", self.ask.target.name.as_str(), "delete-name"),
+        ];
+        Some(
+            v_flex()
+                .w_full()
+                .p_3()
+                .gap_2()
+                .rounded_md()
+                .border_1()
+                .border_color(cx.theme().danger.opacity(0.2))
+                .bg(cx.theme().danger.opacity(0.06))
+                .children(fields.into_iter().map(|(label, value, id)| {
+                    h_flex()
+                        .w_full()
+                        .items_start()
+                        .gap_3()
+                        .child(
+                            div()
+                                .w(px(88.))
+                                .flex_shrink_0()
+                                .text_sm()
+                                .text_color(cx.theme().muted_foreground)
+                                .child(label),
+                        )
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w_0()
+                                .text_sm()
+                                .font_weight(FontWeight::SEMIBOLD)
+                                .text_color(cx.theme().danger)
+                                .child(crate::copyable_text::copyable_text(id, value.to_owned())),
+                        )
+                }))
+                .into_any_element(),
+        )
     }
 
     fn render_targets(&self, cx: &App) -> Option<AnyElement> {
@@ -218,6 +261,7 @@ impl Render for Prompt {
                     .font_weight(FontWeight::SEMIBOLD)
                     .child(self.ask.title()),
             )
+            .children(self.render_single_target(cx))
             .child(
                 div()
                     .text_sm()
