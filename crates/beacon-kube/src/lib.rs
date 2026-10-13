@@ -10,8 +10,6 @@ pub mod aggregate_logs;
 pub mod argo;
 pub mod config;
 pub mod connection;
-#[cfg(any(windows, test))]
-mod credentials;
 pub mod data;
 pub mod debug;
 pub mod discovery;

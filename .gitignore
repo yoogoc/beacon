@@ -1,5 +1,4 @@
 /target
 /vendor/gpui-base/Cargo.lock
-/vendor/kube-client/Cargo.lock
 **/*.rs.bk
 .DS_Store

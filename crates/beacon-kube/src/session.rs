@@ -183,8 +183,6 @@ impl ClusterSession {
         let mut config = Config::from_custom_kubeconfig(config_copy, &options)
             .await
             .map_err(|error| Error::connect(&id, &error))?;
-        #[cfg(windows)]
-        crate::credentials::prepare(&mut config.auth_info);
         connection
             .proxy
             .apply(&mut config)

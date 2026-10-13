@@ -11,6 +11,12 @@ fn main() -> anyhow::Result<()> {
     if let Some(result) = beacon_updater::helper_main() {
         return result;
     }
+    #[cfg(windows)]
+    {
+        // Opt into kube-rs's built-in console suppression for exec credentials.
+        // SAFETY: logging, Tokio and GPUI have not started any threads yet.
+        unsafe { std::env::set_var("KUBE_RS_UNSTABLE_CREATE_NO_WINDOW", "1") };
+    }
     // GPUI Fast 0.1.5 underflowed while rebasing retained paint ranges.
     // Preserve the supported fallback across upgrades for every window.
     // An explicit value remains available for renderer diagnostics.
