@@ -74,6 +74,9 @@ pub struct ClusterSession {
     /// The exact Kubernetes git version returned during connection, including vendor suffixes.
     version: String,
     client: Client,
+    /// Writes surface 429/503/504 to the operation owner, which can distinguish
+    /// a safe eviction retry from an ambiguous generated-name POST.
+    write_client: Client,
     connection: crate::connection::ConnectionOptions,
     transport: crate::connection::Transport,
     #[cfg(any(test, feature = "test-support"))]
@@ -95,8 +98,10 @@ impl ClusterSession {
     #[cfg(any(test, feature = "test-support"))]
     pub fn for_testing(id: ClusterId, server: String, kinds: Vec<crate::Kind>) -> Self {
         let runtime = tokio::runtime::Handle::current();
-        let client = Client::try_from(Config::new(server.parse().expect("fixture URL")))
-            .expect("fixture client");
+        let mut client_config = Config::new(server.parse().expect("fixture URL"));
+        let client = Client::try_from(client_config.clone()).expect("fixture client");
+        client_config.default_retry = false;
+        let write_client = Client::try_from(client_config).expect("fixture write client");
         let health = Arc::new(HealthState::new(Health::Connected));
         let registry = Arc::new(Registry::new(
             client.clone(),
@@ -115,6 +120,7 @@ impl ClusterSession {
             server,
             version: "v1.37.0-fixture".into(),
             client,
+            write_client,
             connection: crate::connection::ConnectionOptions::default(),
             transport,
             #[cfg(any(test, feature = "test-support"))]
@@ -192,7 +198,10 @@ impl ClusterSession {
             })?;
         let server = config.cluster_url.to_string();
 
-        let client = Client::try_from(config).map_err(|error| Error::connect(&id, &error))?;
+        let client =
+            Client::try_from(config.clone()).map_err(|error| Error::connect(&id, &error))?;
+        config.default_retry = false;
+        let write_client = Client::try_from(config).map_err(|error| Error::connect(&id, &error))?;
 
         // Connecting has to mean something. Without this the first failure
         // surfaces as an empty table, attributed to the resource kind rather
@@ -229,6 +238,7 @@ impl ClusterSession {
             server,
             version: version.git_version,
             client,
+            write_client,
             connection,
             transport,
             #[cfg(any(test, feature = "test-support"))]
@@ -293,7 +303,7 @@ impl ClusterSession {
                     .unwrap_or_else(|| "this cluster".into()),
             });
         }
-        ops::create(&self.client, &kind.resource, &object, dry_run).await
+        ops::create(&self.write_client, &kind.resource, &object, dry_run).await
     }
 
     /// Runs one write operation.
@@ -311,6 +321,37 @@ impl ClusterSession {
     ) -> Result<Applied> {
         let namespace = namespace.as_deref();
         match operation {
+            Operation::NodeCordon { .. } | Operation::NodeDrain => {
+                if !resource.group.is_empty() || resource.kind != "Node" || namespace.is_some() {
+                    return Err(Error::Manifest(
+                        "Node maintenance requires a cluster-scoped Node".into(),
+                    ));
+                }
+                let draining = operation == Operation::NodeDrain;
+                let plan =
+                    crate::node_maintenance::prepare(self.clone(), name, None, draining).await?;
+                if let Operation::NodeCordon { unschedulable } = operation {
+                    return Ok(Applied::Ok(Box::new(
+                        crate::node_maintenance::cordon(self, &plan, unschedulable).await?,
+                    )));
+                }
+                let (sender, _) = futures::channel::mpsc::unbounded();
+                let node = plan.node.clone();
+                let report = crate::node_maintenance::drain(
+                    self.clone(),
+                    plan,
+                    Default::default(),
+                    Default::default(),
+                    sender,
+                )
+                .await?;
+                if !report.complete() {
+                    return Err(Error::Manifest(report.summary()));
+                }
+                Ok(Applied::Ok(Box::new(
+                    self.get_object(resource, None, node).await?,
+                )))
+            }
             Operation::RunJob | Operation::CronJobSuspend { .. } => {
                 let kind = self
                     .discovery()
@@ -562,6 +603,10 @@ impl ClusterSession {
     /// The underlying client, for the operations in [`crate::ops`].
     pub fn client(&self) -> &Client {
         &self.client
+    }
+
+    pub(crate) fn write_client(&self) -> &Client {
+        &self.write_client
     }
 
     /// Everything this cluster can show.

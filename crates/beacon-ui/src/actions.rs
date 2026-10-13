@@ -68,14 +68,22 @@ pub fn available_for_target(
         Operation::CronJobSuspend {
             suspend: !suspended,
         },
+        Operation::NodeCordon {
+            unschedulable: !suspended,
+        },
+        Operation::NodeDrain,
         Operation::Delete,
     ]
     .into_iter()
     .filter(|operation| operation.applies_to(group, name))
     .map(|operation| {
         let allowed = rules.is_none_or(|rules| {
-            if matches!(operation, Operation::CronJobSuspend { .. })
-                && let Some(target) = target
+            if matches!(
+                operation,
+                Operation::CronJobSuspend { .. }
+                    | Operation::NodeCordon { .. }
+                    | Operation::NodeDrain
+            ) && let Some(target) = target
             {
                 return rules.allows_named(
                     operation.verb(),
@@ -177,6 +185,13 @@ fn label(operation: &Operation) -> String {
         Operation::RunJob => "Rerun as new Job…".to_string(),
         Operation::CronJobSuspend { suspend: true } => "Suspend schedule…".to_string(),
         Operation::CronJobSuspend { suspend: false } => "Resume schedule…".to_string(),
+        Operation::NodeCordon {
+            unschedulable: true,
+        } => "Cordon…".into(),
+        Operation::NodeCordon {
+            unschedulable: false,
+        } => "Uncordon…".into(),
+        Operation::NodeDrain => "Drain…".into(),
     }
 }
 
@@ -186,9 +201,14 @@ fn label(operation: &Operation) -> String {
 /// has to take to whoever grants them access.
 fn refusal(operation: &Operation, kind: &Kind) -> String {
     format!(
-        "You do not have {} on {} in this namespace",
+        "You do not have {} on {} in {}",
         operation.verb(),
-        operation.resource(&kind.resource.plural)
+        operation.resource(&kind.resource.plural),
+        if kind.namespaced {
+            "this namespace"
+        } else {
+            "this cluster"
+        }
     )
 }
 
@@ -399,6 +419,27 @@ mod tests {
                 .find(|choice| matches!(choice.operation, Operation::CronJobSuspend { .. }))
                 .unwrap()
                 .allowed
+        );
+    }
+
+    #[test]
+    fn node_scheduling_actions_reflect_state_and_cluster_permissions() {
+        let mut node = kind("", "Node", "nodes");
+        node.namespaced = false;
+        assert_eq!(
+            labels(&available_for(&node, None, 1, false)),
+            ["Cordon…", "Drain…", "Delete"]
+        );
+        assert_eq!(
+            labels(&available_for(&node, None, 1, true)),
+            ["Uncordon…", "Drain…", "Delete"]
+        );
+        let read = rules(&[("get", "", "nodes")]);
+        let choices = available_for_target(&node, Some(&read), 1, false, Some("node-a"));
+        assert!(!choices.iter().any(|choice| choice.allowed));
+        assert_eq!(
+            choices[0].tooltip(),
+            Some("You do not have patch on nodes in this cluster")
         );
     }
 }

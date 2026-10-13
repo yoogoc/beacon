@@ -289,7 +289,7 @@ pub async fn execute(session: Arc<ClusterSession>, plan: &Plan) -> Result<Dynami
                 .as_deref()
                 .ok_or_else(|| Error::Manifest("missing namespace".into()))?;
             let api: Api<DynamicObject> = Api::namespaced_with(
-                session.client().clone(),
+                session.write_client().clone(),
                 namespace,
                 &plan.source_kind.resource,
             );

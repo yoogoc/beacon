@@ -46,6 +46,10 @@ pub enum Operation {
     CronJobSuspend {
         suspend: bool,
     },
+    NodeCordon {
+        unschedulable: bool,
+    },
+    NodeDrain,
     Apply,
 }
 
@@ -56,9 +60,12 @@ impl Operation {
             Self::Delete => verbs::DELETE,
             Self::RunJob => verbs::CREATE,
             // Everything else is a PATCH, including Server-Side Apply.
-            Self::Restart | Self::Scale { .. } | Self::Apply | Self::CronJobSuspend { .. } => {
-                verbs::PATCH
-            }
+            Self::Restart
+            | Self::Scale { .. }
+            | Self::Apply
+            | Self::CronJobSuspend { .. }
+            | Self::NodeCordon { .. }
+            | Self::NodeDrain => verbs::PATCH,
         }
     }
 
@@ -83,6 +90,7 @@ impl Operation {
             Self::Delete | Self::Apply => true,
             Self::RunJob => matches!((group, kind), ("batch", "Job" | "CronJob")),
             Self::CronJobSuspend { .. } => (group, kind) == ("batch", "CronJob"),
+            Self::NodeCordon { .. } | Self::NodeDrain => (group, kind) == ("", "Node"),
             Self::Restart => matches!(
                 (group, kind),
                 ("apps", "Deployment" | "StatefulSet" | "DaemonSet")
@@ -105,6 +113,13 @@ impl Operation {
             Self::RunJob => "Create a new Job".to_string(),
             Self::CronJobSuspend { suspend: true } => "Suspend schedule".to_string(),
             Self::CronJobSuspend { suspend: false } => "Resume schedule".to_string(),
+            Self::NodeCordon {
+                unschedulable: true,
+            } => "Cordon Node".into(),
+            Self::NodeCordon {
+                unschedulable: false,
+            } => "Uncordon Node".into(),
+            Self::NodeDrain => "Drain Node".into(),
         }
     }
 }

@@ -484,7 +484,11 @@ impl ResourceTable {
             replicas,
             object
                 .data
-                .pointer("/spec/suspend")
+                .pointer(if group.is_empty() && name == "Node" {
+                    "/spec/unschedulable"
+                } else {
+                    "/spec/suspend"
+                })
                 .and_then(serde_json::Value::as_bool)
                 .unwrap_or(false),
             object.metadata.name.as_deref(),

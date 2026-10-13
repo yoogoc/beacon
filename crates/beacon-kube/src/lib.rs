@@ -26,6 +26,7 @@ pub mod labels;
 pub mod logs;
 pub mod metrics;
 pub mod network;
+pub mod node_maintenance;
 pub mod ops;
 pub mod overview;
 pub mod rbac;

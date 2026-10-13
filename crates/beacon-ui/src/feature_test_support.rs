@@ -48,7 +48,7 @@ pub(crate) fn kind(group: &str, name: &str, plural: &str) -> Kind {
             &GroupVersionKind::gvk(group, "v1", name),
             plural,
         ),
-        namespaced: !matches!(name, "Namespace" | "Node"),
+        namespaced: !matches!(name, "Namespace" | "Node" | "PersistentVolume"),
         verbs: vec!["get".into(), "list".into(), "watch".into(), "patch".into()],
     }
 }
@@ -78,6 +78,9 @@ pub(crate) fn fixture(
             kind("", "Secret", "secrets"),
             job_kind,
             kind("batch", "CronJob", "cronjobs"),
+            kind("policy", "PodDisruptionBudget", "poddisruptionbudgets"),
+            kind("", "PersistentVolumeClaim", "persistentvolumeclaims"),
+            kind("", "PersistentVolume", "persistentvolumes"),
         ];
         let session = Arc::new(ClusterSession::for_testing(
             ClusterId::new(id),

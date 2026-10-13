@@ -197,11 +197,17 @@ async fn serve(
         "clusterrolebindings" => "ClusterRoleBinding",
         "jobs" => "Job",
         "cronjobs" => "CronJob",
+        "poddisruptionbudgets" => "PodDisruptionBudget",
+        "persistentvolumeclaims" => "PersistentVolumeClaim",
+        "persistentvolumes" => "PersistentVolume",
         _ => "Unknown",
     };
     let selector = query
         .get("labelSelector")
         .and_then(|query| crate::labels::LabelSelector::parse(query).ok());
+    let node_field = query
+        .get("fieldSelector")
+        .and_then(|selector| selector.strip_prefix("spec.nodeName="));
     let matches = |object: &Value| {
         object["kind"] == kind
             && namespace.is_none_or(|namespace| {
@@ -216,6 +222,9 @@ async fn serve(
                     .cloned()
                     .and_then(|labels| serde_json::from_value(labels).ok());
                 selector.matches(labels.as_ref())
+            })
+            && node_field.is_none_or(|node| {
+                object.pointer("/spec/nodeName").and_then(Value::as_str) == Some(node)
             })
     };
     if resource == "selfsubjectrulesreviews" {
@@ -234,6 +243,73 @@ async fn serve(
         };
         let status=objects.lock().unwrap().iter().find(|object|object["kind"]==kind).map(|object|object["status"].clone()).unwrap_or_else(|| if kind=="SelfSubjectReview"{json!({"userInfo":{"username":"alice","groups":["team","system:authenticated"]}})}else{json!({"allowed":true,"reason":"Fixture permission granted"})});
         response(&mut stream,"200 OK",json!({"apiVersion":if kind=="SelfSubjectReview"{"authentication.k8s.io/v1"}else{"authorization.k8s.io/v1"},"kind":kind,"spec":request["spec"],"status":status}).to_string(),"application/json").await;
+        return;
+    }
+    if method == "POST" && resource == "pods" && parts.get(index + 2) == Some(&"eviction") {
+        let name = name.unwrap_or_default();
+        let refused = {
+            let policy = denied.lock().unwrap();
+            policy.contains("pods/eviction") || policy.contains(&format!("pods/{name}/eviction"))
+        };
+        if refused {
+            response(&mut stream,"403 Forbidden",json!({"apiVersion":"v1","kind":"Status","status":"Failure","reason":"Forbidden","code":403,"message":"Fixture refuses pods/eviction"}).to_string(),"application/json").await;
+            return;
+        }
+        let object = objects
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|object| {
+                matches(object)
+                    && object.pointer("/metadata/name").and_then(Value::as_str) == Some(name)
+            })
+            .cloned();
+        let Some(object) = object else {
+            response(&mut stream,"404 Not Found",json!({"apiVersion":"v1","kind":"Status","status":"Failure","reason":"NotFound","code":404,"message":"Pod already gone"}).to_string(),"application/json").await;
+            return;
+        };
+        if request["apiVersion"] != "policy/v1"
+            || request["kind"] != "Eviction"
+            || request.pointer("/deleteOptions/preconditions/uid")
+                != object.pointer("/metadata/uid")
+        {
+            response(&mut stream,"409 Conflict",json!({"apiVersion":"v1","kind":"Status","status":"Failure","reason":"Conflict","code":409,"message":"Eviction requires reviewed UID in deleteOptions"}).to_string(),"application/json").await;
+            return;
+        }
+        let pod: crate::DynamicObject = serde_json::from_value(object.clone()).unwrap();
+        let budgets: Vec<crate::DynamicObject> = objects
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|object| object["kind"] == "PodDisruptionBudget")
+            .filter_map(|object| serde_json::from_value(object.clone()).ok())
+            .filter(|pdb| crate::node_maintenance::pdb_matches(pdb, &pod))
+            .collect();
+        if budgets.len() > 1 {
+            response(&mut stream,"500 Internal Server Error",json!({"apiVersion":"v1","kind":"Status","status":"Failure","reason":"InternalError","code":500,"message":"multiple PodDisruptionBudgets match this Pod"}).to_string(),"application/json").await;
+            return;
+        }
+        if budgets
+            .iter()
+            .any(|pdb| crate::node_maintenance::pdb_blocks(pdb, &pod))
+        {
+            response(&mut stream,"429 Too Many Requests",json!({"apiVersion":"v1","kind":"Status","status":"Failure","reason":"TooManyRequests","code":429,"message":"PodDisruptionBudget blocks eviction"}).to_string(),"application/json").await;
+            return;
+        }
+        if !query.contains_key("dryRun") {
+            objects.lock().unwrap().retain(|existing| {
+                !matches(existing)
+                    || existing.pointer("/metadata/uid") != object.pointer("/metadata/uid")
+            });
+            let _ = events.send(json!({"type":"DELETED","object":object}));
+        }
+        response(
+            &mut stream,
+            "201 Created",
+            json!({"apiVersion":"v1","kind":"Status","status":"Success","code":201}).to_string(),
+            "application/json",
+        )
+        .await;
         return;
     }
     if method == "POST" && resource == "jobs" && name.is_none() {
@@ -350,6 +426,10 @@ async fn serve(
                 .unwrap()
                 .extend(containers);
             object["status"]["ephemeralContainerStatuses"] = json!(statuses);
+        } else if kind == "Node" {
+            if let Some(unschedulable) = request.pointer("/spec/unschedulable") {
+                object["spec"]["unschedulable"] = unschedulable.clone();
+            }
         } else if kind == "CronJob" {
             if let Some(suspend) = request.pointer("/spec/suspend") {
                 object["spec"]["suspend"] = suspend.clone();

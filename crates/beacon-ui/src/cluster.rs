@@ -165,6 +165,7 @@ pub struct ClusterView {
     /// An editable manifest bound to this cluster and resource kind.
     creation: Option<Entity<CreateView>>,
     job_action: Option<Entity<crate::job_actions::JobActions>>,
+    node_action: Option<Entity<crate::node_actions::NodeActions>>,
     /// What the last write said, for the toolbar.
     outcome: Option<Outcome>,
     bulk_deleting: bool,
@@ -347,6 +348,7 @@ impl ClusterView {
             prompt: None,
             creation: None,
             job_action: None,
+            node_action: None,
             outcome: None,
             bulk_deleting: false,
             mode: Mode::Objects,
@@ -751,7 +753,18 @@ impl ClusterView {
             .read(cx)
             .delegate()
             .object(&selected)
-            .and_then(|object| object.data.pointer("/spec/suspend")?.as_bool())
+            .and_then(|object| {
+                object
+                    .data
+                    .pointer(
+                        if kind.resource.group.is_empty() && kind.resource.kind == "Node" {
+                            "/spec/unschedulable"
+                        } else {
+                            "/spec/suspend"
+                        },
+                    )?
+                    .as_bool()
+            })
             .unwrap_or(false);
         crate::actions::available_for_target(
             &kind,
@@ -782,6 +795,56 @@ impl ClusterView {
         let Some(kind) = self.kind.clone() else {
             return;
         };
+
+        if matches!(
+            operation,
+            Operation::NodeCordon { .. } | Operation::NodeDrain
+        ) {
+            if self.node_action.is_some()
+                || self.job_action.is_some()
+                || self.prompt.is_some()
+                || self.creation.is_some()
+            {
+                return;
+            }
+            let uid = self
+                .table
+                .read(cx)
+                .delegate()
+                .object(&target)
+                .and_then(|object| object.metadata.uid.clone());
+            let action = cx.new(|cx| {
+                crate::node_actions::NodeActions::new(
+                    self.session.clone(),
+                    kind,
+                    target,
+                    uid,
+                    operation,
+                    window,
+                    cx,
+                )
+            });
+            cx.subscribe_in(
+                &action,
+                window,
+                |view, _, event: &crate::node_actions::NodeEvent, _, cx| {
+                    view.node_action = None;
+                    if let crate::node_actions::NodeEvent::Open { kind, target } = event {
+                        cx.emit(ResourceRequested {
+                            kind: kind.clone(),
+                            scope: target.namespace.iter().cloned().collect(),
+                            new_tab: false,
+                            target: Some(target.clone()),
+                        });
+                    }
+                    cx.notify();
+                },
+            )
+            .detach();
+            self.node_action = Some(action);
+            cx.notify();
+            return;
+        }
 
         if matches!(
             operation,
@@ -2856,6 +2919,17 @@ impl Render for ClusterView {
                     .bg(cx.theme().background.opacity(0.75))
                     .child(action)
             }))
+            .children(self.node_action.clone().map(|action| {
+                div()
+                    .absolute()
+                    .inset_0()
+                    .occlude()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .bg(cx.theme().background.opacity(0.75))
+                    .child(action)
+            }))
             .into_any_element()
     }
 }
@@ -2876,6 +2950,83 @@ mod integration_tests {
                     .map(|label| (label.to_owned(), item.disabled().unwrap_or(false)))
             })
             .collect()
+    }
+
+    #[::core::prelude::v1::test]
+    fn node_menus_open_review_and_cancellation_does_not_cordon() {
+        let cx = &mut support::context();
+        let directory = tempfile::tempdir().unwrap();
+        support::workspace(cx, directory.path());
+        let node = json!({"apiVersion":"v1","kind":"Node","metadata":{"name":"node-a","uid":"node-uid","resourceVersion":"1"},"spec":{"unschedulable":true}});
+        let (fixture, session) = support::fixture(cx, "node-menu-fixture", vec![node.clone()]);
+        let (window, view) = cx.update(|cx| {
+            gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
+                window.set_view_retention(false);
+                cx.new(|cx| {
+                    ClusterView::new(
+                        session,
+                        None,
+                        Some(Arc::new(support::kind("", "Node", "nodes"))),
+                        None,
+                        false,
+                        window,
+                        cx,
+                    )
+                })
+            })
+            .unwrap()
+        });
+        support::settle(cx, |cx| {
+            view.read_with(cx, |view, cx| {
+                view.counts(cx).0 == 1 && view.rules.is_some()
+            })
+        });
+        view.update(cx, |view, cx| {
+            view.table.update(cx, |state, cx| {
+                let table = state.delegate_mut();
+                let mut layout = table.layout_snapshot();
+                layout.hidden = table
+                    .column_choices()
+                    .into_iter()
+                    .filter(|(_, name, _, _)| !matches!(name.as_str(), "Name" | "Status"))
+                    .map(|(id, _, _, _)| id)
+                    .collect();
+                table.apply_layout(layout);
+                cx.notify();
+            })
+        });
+        cx.update_window(window, |_, window, cx| {
+            window.render_frame(cx);
+            window.click(("resource-actions", 0usize), cx);
+            let entries = menu(window);
+            assert!(entries.iter().any(|(name, _)| name == "Uncordon…"));
+            assert!(entries.iter().any(|(name, _)| name == "Drain…"));
+            let item = gpui_kit::base::test_support::snapshots(window)
+                .into_iter()
+                .find(|item| item.role() == Some(Role::MenuItem) && item.label() == Some("Drain…"))
+                .unwrap();
+            window.click(item.path().last().unwrap().clone(), cx);
+        })
+        .unwrap();
+        support::render_until(cx, window, |window| {
+            window
+                .try_find("node-drain-table")
+                .is_some_and(|item| item.visible())
+        });
+        cx.update_window(window, |_, window, cx| {
+            window.click("node-maintenance-close", cx);
+        })
+        .unwrap();
+        assert!(view.read_with(cx, |view, _| view.node_action.is_none()));
+        assert_eq!(fixture.object("Node", "node-a"), node);
+        assert!(
+            !fixture
+                .requests
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|(line, _)| line.starts_with("PATCH") || line.contains("/eviction"))
+        );
     }
 
     #[::core::prelude::v1::test]

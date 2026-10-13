@@ -37,9 +37,9 @@
 
 ### 05 · Node 维护
 
-- [ ] 增加 Cordon / Uncordon 操作。
-- [ ] Drain 前展示受影响 Pod、PDB 阻塞、DaemonSet 和本地存储情况。
-- [ ] 显示驱逐进度、各目标结果与失败原因。
+- [x] 增加 Cordon / Uncordon 操作。
+- [x] Drain 前展示受影响 Pod、PDB 阻塞、DaemonSet 和本地存储情况。
+- [x] 显示驱逐进度、各目标结果与失败原因。
 
 ### 06 · YAML Schema 智能编辑
 

@@ -32,6 +32,7 @@ mod ingress_links;
 mod job_actions;
 mod log_workbench;
 mod network;
+mod node_actions;
 mod node_pods;
 mod overview;
 pub mod palette;
