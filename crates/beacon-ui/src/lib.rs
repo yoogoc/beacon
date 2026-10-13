@@ -25,6 +25,7 @@ pub mod detail;
 #[cfg(all(test, feature = "ui-tests"))]
 mod feature_test_support;
 mod filters;
+mod global_search;
 mod helm_details;
 mod icons;
 mod ingress_links;

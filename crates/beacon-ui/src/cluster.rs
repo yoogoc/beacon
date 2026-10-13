@@ -837,6 +837,17 @@ impl ClusterView {
         }
     }
 
+    pub(crate) fn toggle_favorite(
+        &mut self,
+        favorite: crate::global_search::Favorite,
+        cx: &mut Context<Self>,
+    ) {
+        if let Err(error) = crate::global_search::toggle_resource(favorite, cx) {
+            self.outcome = Some(Outcome::Failed(format!("Could not save favorite: {error}")));
+        }
+        cx.notify();
+    }
+
     fn start_create(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(kind) = self.kind.clone().filter(|kind| kind.supports("create")) else {
             return;

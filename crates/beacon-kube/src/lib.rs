@@ -30,6 +30,7 @@ pub mod overview;
 pub mod relationships;
 pub mod resources;
 pub mod rollout;
+pub mod search;
 pub mod session;
 pub mod shell_env;
 pub mod sources;

@@ -165,6 +165,7 @@ pub(crate) struct Preferences {
     pub updates: beacon_updater::Preferences,
     pub resources: BTreeMap<String, crate::table_preferences::ResourcePreferences>,
     pub kubeconfigs: beacon_kube::sources::Preferences,
+    pub favorites: crate::global_search::Favorites,
 }
 impl Preferences {
     pub fn yaml_folding(&self, id: &ClusterId) -> crate::yaml_folding::YamlFolding {
@@ -323,6 +324,28 @@ pub(crate) fn save_resource(
     )?;
     store.update(cx, |state, cx| {
         state.preferences = preferences;
+        cx.notify();
+    });
+    Ok(())
+}
+
+/// Favorites are navigation preferences; saving them does not reconnect clusters or reapply themes.
+pub(crate) fn save_favorites(
+    favorites: crate::global_search::Favorites,
+    cx: &mut App,
+) -> Result<(), String> {
+    let store = store(cx);
+    let mut preferences = store.read(cx).preferences.clone();
+    preferences.favorites = favorites;
+    let directory = store.read(cx).directory.clone();
+    std::fs::create_dir_all(&directory).map_err(|error| error.to_string())?;
+    atomic_write(
+        &directory.join("settings.json"),
+        &serde_json::to_vec_pretty(&preferences).map_err(|error| error.to_string())?,
+    )?;
+    store.update(cx, |state, cx| {
+        state.preferences = preferences;
+        cx.emit(Changed(None));
         cx.notify();
     });
     Ok(())

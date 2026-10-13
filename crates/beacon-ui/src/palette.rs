@@ -103,6 +103,7 @@ pub enum Action {
     OpenAppLogs,
     OpenShortcuts,
     OpenSettings,
+    GlobalSearch,
     NewTab,
     CloseTab,
     SplitRight,
@@ -116,10 +117,11 @@ pub enum Action {
 }
 
 impl Action {
-    const ALL: [Self; 13] = [
+    const ALL: [Self; 14] = [
         Self::OpenAppLogs,
         Self::OpenShortcuts,
         Self::OpenSettings,
+        Self::GlobalSearch,
         Self::NewTab,
         Self::CloseTab,
         Self::SplitRight,
@@ -137,6 +139,7 @@ impl Action {
             Self::OpenAppLogs => "Open app logs",
             Self::OpenShortcuts => "Keyboard shortcuts",
             Self::OpenSettings => "Application settings",
+            Self::GlobalSearch => "Search all connected clusters / favorites",
             Self::NewTab => "Open another tab on this cluster",
             Self::CloseTab => "Close this tab",
             Self::SplitRight => "Split right — side by side",

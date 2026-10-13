@@ -51,6 +51,7 @@ gpui_kit::actions!(
     beacon,
     [
         TogglePalette,
+        GlobalSearch,
         OpenAppLogs,
         OpenShortcuts,
         OpenSettings,
@@ -82,6 +83,7 @@ fn application_menu() -> impl IntoElement {
             .label("Menu")
             .dropdown_menu(|menu, _, _| {
                 menu.menu("Settings…", Box::new(OpenSettings))
+                    .menu("Search & favorites…", Box::new(GlobalSearch))
                     .menu("Kubeconfig sources…", Box::new(OpenKubeconfigSources))
                     .menu("Check for updates…", Box::new(CheckForUpdates))
                     .menu("App logs", Box::new(OpenAppLogs))
@@ -127,6 +129,7 @@ pub fn init(log_directory: PathBuf, cx: &mut App) {
         ]),
         Menu::new("File").items([MenuItem::action("Close", CloseTab)]),
         Menu::new("View").items([
+            MenuItem::action("Search & favorites…", GlobalSearch),
             MenuItem::action("Split right", SplitRight),
             MenuItem::action("Split down", SplitDown),
             MenuItem::action("Move tab to new window", DetachTab),
@@ -147,6 +150,7 @@ pub fn init(log_directory: PathBuf, cx: &mut App) {
         KeyBinding::new(&format!("{modifier}-,"), OpenSettings, None),
         KeyBinding::new(&format!("{modifier}-q"), Quit, None),
         KeyBinding::new(&format!("{modifier}-k"), TogglePalette, None),
+        KeyBinding::new(&format!("{modifier}-shift-f"), GlobalSearch, None),
         KeyBinding::new(&format!("{modifier}-shift-l"), OpenAppLogs, None),
         KeyBinding::new(&format!("{modifier}-t"), NewTab, None),
         KeyBinding::new(&format!("{modifier}-w"), CloseTab, None),
@@ -1617,6 +1621,51 @@ impl BeaconApp {
         }
     }
 
+    fn open_global_search(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let origin = window.window_handle();
+        let app = cx.entity().downgrade();
+        cx.defer(move |cx| match crate::global_search::open(cx) {
+            Ok(search) => {
+                cx.subscribe(
+                    &search,
+                    move |_, event: &crate::global_search::OpenRequested, cx| {
+                        let _ = origin.update(cx, |_, window, cx| {
+                            let _ = app.update(cx, |app, cx| match event {
+                                crate::global_search::OpenRequested::Cluster(cluster) => {
+                                    app.go_to(cluster.clone(), window, cx)
+                                }
+                                crate::global_search::OpenRequested::Resource {
+                                    cluster,
+                                    kind,
+                                    target,
+                                } => {
+                                    if !app.connections.read(cx).sessions.contains_key(cluster) {
+                                        return;
+                                    }
+                                    app.go_to_kind(
+                                        cluster.clone(),
+                                        kind.clone(),
+                                        target.namespace.iter().cloned().collect(),
+                                        window,
+                                        cx,
+                                    );
+                                    if let Some(view) = app.cluster() {
+                                        view.update(cx, |view, cx| {
+                                            view.reveal_owner(target.clone(), window, cx)
+                                        });
+                                    }
+                                    window.activate_window();
+                                }
+                            });
+                        });
+                    },
+                )
+                .detach();
+            }
+            Err(error) => tracing::error!(%error,"could not open global search"),
+        });
+    }
+
     /// Opens the palette, or closes it if it is already open.
     fn toggle_palette(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.palette_open {
@@ -1706,6 +1755,10 @@ impl BeaconApp {
                 crate::preferences::application(cx);
                 return;
             }
+            Choice::Action(palette::Action::GlobalSearch) => {
+                self.open_global_search(window, cx);
+                return;
+            }
             Choice::Action(palette::Action::OpenShortcuts) => {
                 crate::shortcuts::open(cx);
                 cx.notify();
@@ -1748,6 +1801,7 @@ impl BeaconApp {
             | Choice::Action(
                 palette::Action::ToggleTheme
                 | palette::Action::OpenSettings
+                | palette::Action::GlobalSearch
                 | palette::Action::OpenAppLogs
                 | palette::Action::OpenShortcuts
                 | palette::Action::NewTab
@@ -1975,6 +2029,7 @@ impl BeaconApp {
                     .get(id.as_str())
                     .map(|c| c.icon.clone())
                     .unwrap_or_default();
+                let favorite_cluster = self.preferences.favorites.clusters.contains(id.as_str());
                 let mut description = self.cluster_description(&id);
                 if let Some(source) = catalog.source_for(&id) {
                     description.push_str(&format!("\nSource: {}", source.name));
@@ -2081,16 +2136,31 @@ impl BeaconApp {
                             })
                     })
                     .context_menu(move |menu, _, _| {
+                        let favorite_id = menu_target.clone();
                         let target = menu_target.clone();
                         let view = menu_view.clone();
                         let reconnect_target = menu_target.clone();
                         let reconnect_view = menu_view.clone();
                         let settings_target = menu_target.clone();
-                        menu.item(PopupMenuItem::new("Cluster settings…").on_click(
-                            move |_, _, cx| {
+                        menu.item(
+                            PopupMenuItem::new(if favorite_cluster {
+                                "Remove favorite"
+                            } else {
+                                "Add to favorites"
+                            })
+                            .on_click(move |_, _, cx| {
+                                if let Err(error) =
+                                    crate::global_search::toggle_cluster(&favorite_id, cx)
+                                {
+                                    tracing::error!(%error,"could not save cluster favorite");
+                                }
+                            }),
+                        )
+                        .item(
+                            PopupMenuItem::new("Cluster settings…").on_click(move |_, _, cx| {
                                 crate::preferences::cluster(settings_target.clone(), cx)
-                            },
-                        ))
+                            }),
+                        )
                         .separator()
                         .item(
                             PopupMenuItem::new("Disconnect")
@@ -3061,6 +3131,11 @@ impl Render for BeaconApp {
             .on_drag_move(cx.listener(Self::drag_move))
             .on_action(
                 cx.listener(|view, _: &TogglePalette, window, cx| view.toggle_palette(window, cx)),
+            )
+            .on_action(
+                cx.listener(|view, _: &GlobalSearch, window, cx| {
+                    view.open_global_search(window, cx)
+                }),
             )
             .on_action(cx.listener(|view, _: &NewTab, window, cx| view.new_tab(window, cx)))
             .on_action(

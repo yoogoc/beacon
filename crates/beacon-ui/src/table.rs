@@ -323,6 +323,15 @@ impl ResourceTable {
         let group = kind.resource.group.as_str();
         let name = kind.resource.kind.as_str();
         let is_pod = group.is_empty() && name == "Pod";
+        let favorite =
+            crate::global_search::Favorite::new(cluster.read(cx).session().id(), &kind, &target);
+        let saved = crate::settings::store(cx)
+            .read(cx)
+            .preferences
+            .favorites
+            .resources
+            .contains(&favorite);
+        let favorite_view = view.clone();
 
         menu = menu
             .label(format!("{name} · {}", target.name))
@@ -332,6 +341,17 @@ impl ResourceTable {
                 &target,
                 DetailTab::Overview,
             ));
+        menu = menu.item(
+            PopupMenuItem::new(if saved {
+                "Remove favorite"
+            } else {
+                "Add to favorites"
+            })
+            .on_click(move |_, _, cx| {
+                let _ =
+                    favorite_view.update(cx, |view, cx| view.toggle_favorite(favorite.clone(), cx));
+            }),
+        );
 
         if data::is_keyed(group, name) {
             menu = menu.item(detail_item("View data", &view, &target, DetailTab::Data));
