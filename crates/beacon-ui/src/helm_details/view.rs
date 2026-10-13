@@ -81,6 +81,96 @@ impl HelmDetails {
             )
             .child(
                 h_flex()
+                    .gap_2()
+                    .flex_wrap()
+                    .child(
+                        Button::new("helm-upgrade")
+                            .small()
+                            .outline()
+                            .label("Upgrade")
+                            .disabled(
+                                self.loading
+                                    || self
+                                        .history
+                                        .as_ref()
+                                        .and_then(|history| history.revisions.first())
+                                        .is_none_or(|record| record.revision.is_none()),
+                            )
+                            .on_click(cx.listener(|view, _, window, cx| {
+                                if let Some(revision) = view
+                                    .history
+                                    .as_ref()
+                                    .and_then(|history| history.revisions.first())
+                                    .and_then(|record| record.revision.as_ref())
+                                {
+                                    view.manage(
+                                        beacon_kube::helm::lifecycle::Change::Upgrade(
+                                            beacon_kube::helm::lifecycle::Chart {
+                                                reference: revision.chart_name.clone(),
+                                                version: revision.chart_version.clone(),
+                                                repository: String::new(),
+                                            },
+                                        ),
+                                        window,
+                                        cx,
+                                    );
+                                }
+                            })),
+                    )
+                    .child(
+                        Button::new("helm-rollback")
+                            .small()
+                            .outline()
+                            .label("Rollback to this revision")
+                            .disabled(
+                                self.loading
+                                    || self.selected().is_none()
+                                    || self
+                                        .history
+                                        .as_ref()
+                                        .and_then(|history| history.revisions.first())
+                                        .is_some_and(|record| {
+                                            Some(record.number)
+                                                == self
+                                                    .selected()
+                                                    .map(|revision| revision.summary.revision)
+                                        }),
+                            )
+                            .on_click(cx.listener(|view, _, window, cx| {
+                                if let Some(revision) = view.selected() {
+                                    view.manage(
+                                        beacon_kube::helm::lifecycle::Change::Rollback(
+                                            revision.summary.revision,
+                                        ),
+                                        window,
+                                        cx,
+                                    );
+                                }
+                            })),
+                    )
+                    .child(
+                        Button::new("helm-uninstall")
+                            .small()
+                            .outline()
+                            .label("Uninstall")
+                            .disabled(
+                                self.loading
+                                    || self
+                                        .history
+                                        .as_ref()
+                                        .is_none_or(|history| history.revisions.is_empty()),
+                            )
+                            .on_click(cx.listener(|view, _, window, cx| {
+                                view.manage(
+                                    beacon_kube::helm::lifecycle::Change::Uninstall,
+                                    window,
+                                    cx,
+                                )
+                            })),
+                    ),
+            )
+            .child(
+                h_flex()
                     .gap_3()
                     .p_3()
                     .rounded_md()

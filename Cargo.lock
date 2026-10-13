@@ -707,6 +707,7 @@ dependencies = [
  "portable-pty",
  "reqwest",
  "serde",
+ "serde-saphyr 1.3.0",
  "serde_json",
  "tempfile",
  "thiserror 2.0.20",

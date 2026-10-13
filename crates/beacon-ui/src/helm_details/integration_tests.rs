@@ -4,7 +4,7 @@ use base64::{Engine as _, engine::general_purpose::STANDARD};
 use gpui_kit::test::TestWindowExt as _;
 use serde_json::{Value, json};
 
-fn stored(number: i64, status: &str) -> Value {
+pub(super) fn stored(number: i64, status: &str) -> Value {
     let payload = json!({
         "name":"web", "namespace":"default", "version":number,
         "info":{"status":status,"last_deployed":format!("2026-10-{number:02}T10:00:00Z")},

@@ -9,7 +9,7 @@ pub(super) struct Prepared {
     pub text: String,
     pub files: Option<Vec<DiffFile>>,
 }
-fn conceal(value: &mut Value) {
+pub(super) fn conceal(value: &mut Value) {
     match value {
         Value::Object(map) => map.values_mut().for_each(conceal),
         Value::Array(items) => items.iter_mut().for_each(conceal),
@@ -19,7 +19,7 @@ fn conceal(value: &mut Value) {
         }
     }
 }
-fn secret_documents(value: &mut Value) -> bool {
+pub(super) fn secret_documents(value: &mut Value) -> bool {
     if value["kind"] == "Secret" {
         for field in ["data", "stringData"] {
             if let Some(data) = value.get_mut(field).and_then(Value::as_object_mut) {
@@ -152,6 +152,7 @@ mod tests {
             first_deployed: None,
             description: String::new(),
             notes: String::new(),
+            hooks: vec![],
             values: json!({"password":"private-value", "replicas": number}),
             manifest: format!(
                 "apiVersion: v1\nkind: Secret\nmetadata:\n  name: credentials\ndata:\n  token: private-base64-{number}\n---\napiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: web\nspec:\n  replicas: {number}\n"

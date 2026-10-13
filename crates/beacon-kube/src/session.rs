@@ -81,6 +81,8 @@ pub struct ClusterSession {
     transport: crate::connection::Transport,
     #[cfg(any(test, feature = "test-support"))]
     files_program: Option<std::path::PathBuf>,
+    #[cfg(any(test, feature = "test-support"))]
+    helm_program: Option<std::path::PathBuf>,
     runtime: tokio::runtime::Handle,
     discovery: Discovery,
     /// Filled in one kind at a time, as somebody opens them.
@@ -131,6 +133,8 @@ impl ClusterSession {
             transport,
             #[cfg(any(test, feature = "test-support"))]
             files_program: None,
+            #[cfg(any(test, feature = "test-support"))]
+            helm_program: None,
             runtime,
             discovery: Discovery::from_kinds(kinds),
             printer_columns: Mutex::new(PrinterColumns::default()),
@@ -258,6 +262,8 @@ impl ClusterSession {
             transport,
             #[cfg(any(test, feature = "test-support"))]
             files_program: None,
+            #[cfg(any(test, feature = "test-support"))]
+            helm_program: None,
             runtime,
             discovery,
             printer_columns: Mutex::new(PrinterColumns::default()),
@@ -525,6 +531,34 @@ impl ClusterSession {
     }
     pub(crate) fn file_transport(&self) -> &crate::connection::Transport {
         &self.transport
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn with_helm_test_program(mut self, program: std::path::PathBuf) -> Self {
+        self.helm_program = Some(program);
+        self
+    }
+
+    pub(crate) fn helm_program(&self) -> std::path::PathBuf {
+        #[cfg(any(test, feature = "test-support"))]
+        if let Some(program) = &self.helm_program {
+            return program.clone();
+        }
+        if let Some(paths) = std::env::var_os("PATH") {
+            for path in std::env::split_paths(&paths) {
+                let program = path.join(if cfg!(windows) { "helm.exe" } else { "helm" });
+                if program.is_file() {
+                    return program;
+                }
+            }
+        }
+        for path in ["/opt/homebrew/bin/helm", "/usr/local/bin/helm"] {
+            let path = std::path::PathBuf::from(path);
+            if path.is_file() {
+                return path;
+            }
+        }
+        std::path::PathBuf::from("helm")
     }
 
     /// Runs a one-shot command in a container.

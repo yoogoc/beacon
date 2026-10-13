@@ -26,6 +26,8 @@ use serde_json::Value;
 
 use crate::Result;
 
+pub mod lifecycle;
+
 /// The Secret type Helm writes.
 const RELEASE_TYPE: &str = "helm.sh/release.v1";
 
@@ -73,6 +75,7 @@ pub struct Revision {
     pub description: String,
     pub values: Value,
     pub manifest: String,
+    pub hooks: Vec<String>,
     pub notes: String,
 }
 
@@ -236,6 +239,17 @@ fn read_revision(
         summary,
         values,
         manifest,
+        hooks: value
+            .get("hooks")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(|hook| {
+                hook.get("manifest")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned)
+            })
+            .collect(),
     })
 }
 

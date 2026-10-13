@@ -1,5 +1,6 @@
 //! Read-only Helm release inspector. Storage reads use Beacon's authenticated client.
 mod content;
+mod operation;
 mod view;
 
 use crate::{bridge::Bridge, copyable_text::copyable_text};
@@ -98,6 +99,56 @@ impl Focusable for HelmDetails {
     }
 }
 
+pub(crate) fn pending(cx: &App) -> Vec<String> {
+    operation::pending(cx)
+}
+
+#[derive(Default)]
+pub(crate) struct ReleaseEvents {
+    pub generations: std::collections::BTreeMap<beacon_kube::ClusterId, u64>,
+}
+struct SharedReleaseEvents(Entity<ReleaseEvents>);
+impl Global for SharedReleaseEvents {}
+pub(crate) fn events(cx: &mut App) -> Entity<ReleaseEvents> {
+    if !cx.has_global::<SharedReleaseEvents>() {
+        let events = cx.new(|_| ReleaseEvents::default());
+        cx.set_global(SharedReleaseEvents(events));
+    }
+    cx.global::<SharedReleaseEvents>().0.clone()
+}
+fn changed(session: &ClusterSession, cx: &mut App) {
+    events(cx).update(cx, |events, cx| {
+        let generation = events.generations.entry(session.id().clone()).or_default();
+        *generation = generation.wrapping_add(1);
+        cx.notify();
+    });
+}
+
+pub(crate) fn install(
+    session: Arc<ClusterSession>,
+    namespace: String,
+    window: &mut Window,
+    cx: &mut App,
+    done: impl FnMut(&mut App) + 'static,
+) {
+    operation::open(
+        session,
+        Identity {
+            name: String::new(),
+            namespace,
+        },
+        beacon_kube::helm::lifecycle::Change::Install(beacon_kube::helm::lifecycle::Chart {
+            reference: String::new(),
+            version: String::new(),
+            repository: String::new(),
+        }),
+        serde_json::json!({}),
+        window,
+        cx,
+        done,
+    );
+}
+
 pub(crate) fn open(
     session: Arc<ClusterSession>,
     identity: Identity,
@@ -139,6 +190,34 @@ fn open_window(
     )
 }
 impl HelmDetails {
+    fn manage(
+        &mut self,
+        change: beacon_kube::helm::lifecycle::Change,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let values = self
+            .history
+            .as_ref()
+            .and_then(|history| history.revisions.first())
+            .and_then(|record| record.revision.as_ref())
+            .map_or_else(|| serde_json::json!({}), |revision| revision.values.clone());
+        let weak = cx.entity().downgrade();
+        let origin = window.window_handle();
+        operation::open(
+            self.session.clone(),
+            self.identity.clone(),
+            change,
+            values,
+            window,
+            cx,
+            move |cx| {
+                let _ = origin.update(cx, |_, window, cx| {
+                    let _ = weak.update(cx, |view, cx| view.load(window, cx));
+                });
+            },
+        );
+    }
     fn new(
         session: Arc<ClusterSession>,
         identity: Identity,
@@ -202,6 +281,30 @@ impl HelmDetails {
                 },
             ));
         }
+        let releases = events(cx);
+        let release_generation = std::cell::Cell::new(
+            releases
+                .read(cx)
+                .generations
+                .get(view.session.id())
+                .copied()
+                .unwrap_or_default(),
+        );
+        view._subscriptions.push(cx.observe_in(
+            &releases,
+            window,
+            move |view, events, window, cx| {
+                let generation = events
+                    .read(cx)
+                    .generations
+                    .get(view.session.id())
+                    .copied()
+                    .unwrap_or_default();
+                if generation != release_generation.replace(generation) {
+                    view.load(window, cx);
+                }
+            },
+        ));
         view.load(window, cx);
         view
     }
@@ -225,10 +328,17 @@ impl HelmDetails {
                 match result {
                     Ok(Ok(history)) => {
                         let first = history.revisions.first().map_or(0, |record| record.number);
+                        let previous_latest = view
+                            .history
+                            .as_ref()
+                            .and_then(|history| history.revisions.first())
+                            .map_or(0, |record| record.number);
+                        let follow_latest = view.revision == previous_latest;
                         if !history
                             .revisions
                             .iter()
                             .any(|record| record.number == view.revision)
+                            || follow_latest
                         {
                             view.revision = first;
                         }
@@ -238,6 +348,11 @@ impl HelmDetails {
                             .filter(|record| record.revision.is_some())
                             .map(|record| record.number)
                             .collect();
+                        if view.from == view.to && view.to == previous_latest && readable.len() > 1
+                        {
+                            view.to = readable[0];
+                            view.from = readable[1];
+                        }
                         if !readable.contains(&view.to) {
                             view.to = readable.first().copied().unwrap_or(0);
                         }

@@ -546,6 +546,30 @@ async fn serve(
         .filter(|object| matches(object))
         .cloned()
         .collect();
+    if method == "POST"
+        && name.is_none()
+        && request["kind"] == kind
+        && request
+            .pointer("/metadata/name")
+            .and_then(Value::as_str)
+            .is_some()
+    {
+        let mut created = request.clone();
+        created["metadata"]["resourceVersion"] = json!("1");
+        created["metadata"]["uid"] = json!("created-fixture");
+        if !query.contains_key("dryRun") {
+            objects.lock().unwrap().push(created.clone());
+            let _ = events.send(json!({"type":"ADDED","object":created.clone()}));
+        }
+        response(
+            &mut stream,
+            "201 Created",
+            created.to_string(),
+            "application/json",
+        )
+        .await;
+        return;
+    }
     let Some(name) = name else {
         response(&mut stream,"200 OK",json!({"apiVersion":"v1","kind":"List","metadata":{"resourceVersion":"1"},"items":listed}).to_string(),"application/json").await;
         return;
@@ -769,5 +793,66 @@ os.execv('/bin/sh',argv)
     }
     pub fn pod(&self) -> Value {
         json!({"apiVersion":"v1","kind":"Pod","metadata":{"name":"file-pod","namespace":"default","uid":"file-uid","resourceVersion":"1"},"spec":{"containers":[{"name":"app","image":"fixture"},{"name":"sidecar","image":"fixture"}],"initContainers":[{"name":"finished-init","image":"fixture"}]},"status":{"phase":"Running","containerStatuses":[{"name":"app","image":"fixture","imageID":"fixture","ready":true,"restartCount":0,"containerID":"fixture://app","state":{"running":{}}},{"name":"sidecar","image":"fixture","imageID":"fixture","ready":true,"restartCount":0,"containerID":"fixture://sidecar","state":{"running":{}}}],"initContainerStatuses":[{"name":"finished-init","image":"fixture","imageID":"fixture","ready":false,"restartCount":0,"containerID":"fixture://init","state":{"terminated":{"exitCode":0}}}]}})
+    }
+}
+
+/// A fake Helm CLI that only writes to its loopback API fixture.
+#[cfg(unix)]
+pub struct HelmFixture {
+    pub directory: tempfile::TempDir,
+    pub program: std::path::PathBuf,
+    pub records: std::path::PathBuf,
+}
+#[cfg(unix)]
+impl HelmFixture {
+    pub fn new() -> Self {
+        use std::os::unix::fs::PermissionsExt as _;
+        let directory = tempfile::tempdir().unwrap();
+        let program = directory.path().join("helm");
+        let records = directory.path().join("calls.jsonl");
+        let script = r#"#!/usr/bin/env python3
+import sys,json,pathlib,os,urllib.request,urllib.parse,base64
+root=pathlib.Path(__file__).parent
+args=sys.argv[1:]
+(root/'calls.jsonl').open('a').write(json.dumps({'args':args,'proxy':os.environ.get('HTTPS_PROXY'),'config':pathlib.Path(args[args.index('--kubeconfig')+1]).read_text()})+'\n')
+namespace=args[3]
+config=json.loads(pathlib.Path(args[5]).read_text())
+server=config['clusters'][0]['cluster']['server']
+assert urllib.parse.urlparse(server).hostname in ('127.0.0.1','localhost')
+args=args[6:]
+if args[0]=='version': print('v3.18.0+fixture')
+elif args[0]=='search': print(json.dumps([{'name':'repo/web','version':'2.0.0','app_version':'v2'}]))
+elif args[0]=='pull': (pathlib.Path(args[args.index('--destination')+1])/'web-2.0.0.tgz').write_text('frozen-chart')
+elif args[0]=='show': print('')
+elif '--dry-run=server' in args:
+ print(json.dumps({'name':args[1],'namespace':namespace,'chart':{'metadata':{'version':'2.0.0'}},'manifest':'apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: web\nspec:\n  replicas: 2\n---\napiVersion: v1\nkind: Secret\nmetadata:\n  name: credentials\ndata:\n  token: private-base64\n'}))
+elif (root/'fail').exists():
+ print('Error: mocked permission failure private-password private-base64',file=sys.stderr);sys.exit(1)
+else:
+ path='/api/v1/namespaces/'+namespace+'/secrets'
+ current=json.load(urllib.request.urlopen(server+path))['items']
+ number=max([int(item['metadata'].get('labels',{}).get('version','0')) for item in current]+[0])+1
+ values={'password':'private-password'}
+ if '--values' in args: values=json.loads(pathlib.Path(args[args.index('--values')+1]).read_text())
+ release={'name':args[1],'namespace':namespace,'version':number,'info':{'status':'uninstalled' if args[0]=='uninstall' else 'deployed'},'chart':{'metadata':{'name':'web','version':'2.0.0','appVersion':'v2'}},'config':values,'manifest':'apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: web\nspec:\n  replicas: 2\n'}
+ payload=base64.b64encode(base64.b64encode(json.dumps(release).encode())).decode()
+ secret={'apiVersion':'v1','kind':'Secret','type':'helm.sh/release.v1','metadata':{'name':'sh.helm.release.v1.'+args[1]+'.v'+str(number),'namespace':namespace,'labels':{'owner':'helm','name':args[1],'version':str(number)}},'data':{'release':payload}}
+ urllib.request.urlopen(urllib.request.Request(server+path,data=json.dumps(secret).encode(),headers={'Content-Type':'application/json'},method='POST')).read()
+ print(json.dumps(release))
+"#;
+        std::fs::write(&program, script).unwrap();
+        std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o700)).unwrap();
+        Self {
+            directory,
+            program,
+            records,
+        }
+    }
+}
+
+#[cfg(unix)]
+impl Default for HelmFixture {
+    fn default() -> Self {
+        Self::new()
     }
 }

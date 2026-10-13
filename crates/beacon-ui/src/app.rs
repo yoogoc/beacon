@@ -197,7 +197,7 @@ pub(crate) struct UpdateBlockers {
 }
 pub(crate) fn update_blockers(cx: &App) -> UpdateBlockers {
     let mut blockers = UpdateBlockers {
-        edits: Vec::new(),
+        edits: crate::helm_details::pending(cx),
         shells: 0,
         forwards: 0,
     };

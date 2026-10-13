@@ -373,6 +373,32 @@ impl ClusterView {
         };
 
         this.listen(window, cx);
+        let release_events = crate::helm_details::events(cx);
+        let release_generation = std::cell::Cell::new(
+            release_events
+                .read(cx)
+                .generations
+                .get(this.session.id())
+                .copied()
+                .unwrap_or_default(),
+        );
+        this._subscriptions.push(cx.observe_in(
+            &release_events,
+            window,
+            move |view, events, window, cx| {
+                let generation = events
+                    .read(cx)
+                    .generations
+                    .get(view.session.id())
+                    .copied()
+                    .unwrap_or_default();
+                if generation != release_generation.replace(generation)
+                    && view.mode == Mode::Releases
+                {
+                    view.load_releases(window, cx);
+                }
+            },
+        ));
         this.load_rules(window, cx);
         this.watch_health(window, cx);
         this.watch_namespaces(window, cx);
@@ -2232,7 +2258,45 @@ impl ClusterView {
                 .into_any_element(),
         };
 
-        rows
+        v_flex()
+            .size_full()
+            .min_size_0()
+            .child(
+                h_flex()
+                    .px_3()
+                    .py_2()
+                    .justify_between()
+                    .items_center()
+                    .border_b_1()
+                    .border_color(cx.theme().border)
+                    .child("Helm releases")
+                    .child(
+                        Button::new("helm-install-chart")
+                            .small()
+                            .primary()
+                            .icon(IconName::Plus)
+                            .label("Install chart")
+                            .on_click(cx.listener(|view, _, window, cx| {
+                                let origin = window.window_handle();
+                                let weak = cx.entity().downgrade();
+                                crate::helm_details::install(
+                                    view.session.clone(),
+                                    view.only_namespace().unwrap_or_else(|| "default".into()),
+                                    window,
+                                    cx,
+                                    move |cx| {
+                                        let _ = origin.update(cx, |_, window, cx| {
+                                            let _ = weak.update(cx, |view, cx| {
+                                                view.load_releases(window, cx)
+                                            });
+                                        });
+                                    },
+                                );
+                            })),
+                    ),
+            )
+            .child(div().flex_1().min_size_0().child(rows))
+            .into_any_element()
     }
 
     fn render_forwards(&self, cx: &mut Context<Self>) -> AnyElement {
