@@ -195,6 +195,7 @@ The detailed guides below are currently written in Chinese.
 | [User guide](docs/USAGE.md) | Tabs, namespaces, filters, details, Pod tools, resource operations, settings, and logs. |
 | [Developer guide](docs/DEVELOPMENT.md) | Build dependencies, checks, headless validation, UI screenshots, and development conventions. |
 | [Design notes](docs/DESIGN.md) | Initial architecture, technology choices, and milestones. |
+| [TODO list](docs/TODO.md) | Prioritized feature plans, implementation scope, and quality tasks. |
 | [Packaging and distribution](docs/PACKAGING.md) | Platform artifacts, CI releases, signing, and verification status. |
 
 The project declares **Apache-2.0** in its Cargo metadata. See the [icon notes](crates/beacon-ui/assets/README.md) for UI icon sources and licensing.

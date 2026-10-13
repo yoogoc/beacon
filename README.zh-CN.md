@@ -188,6 +188,7 @@ cargo test --workspace
 | [使用指南](docs/USAGE.md) | 标签页、命名空间、筛选、详情、Pod 工具、资源操作、配置和日志。 |
 | [开发指南](docs/DEVELOPMENT.md) | 构建依赖、检查命令、无界面验证、UI 截图和开发约定。 |
 | [设计文档](docs/DESIGN.md) | 初始架构设计、技术选型与里程碑。 |
+| [TODO 清单](docs/TODO.md) | 功能优先级、实现范围与质量任务。 |
 | [打包与分发](docs/PACKAGING.md) | 各平台产物、CI 发布流程、签名和验证情况。 |
 
 项目在 Cargo 元数据中声明使用 **Apache-2.0**。界面图标的来源和许可见
