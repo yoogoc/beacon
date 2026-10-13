@@ -164,6 +164,7 @@ pub struct ClusterView {
     prompt: Option<Entity<Prompt>>,
     /// An editable manifest bound to this cluster and resource kind.
     creation: Option<Entity<CreateView>>,
+    job_action: Option<Entity<crate::job_actions::JobActions>>,
     /// What the last write said, for the toolbar.
     outcome: Option<Outcome>,
     bulk_deleting: bool,
@@ -345,6 +346,7 @@ impl ClusterView {
             rules: None,
             prompt: None,
             creation: None,
+            job_action: None,
             outcome: None,
             bulk_deleting: false,
             mode: Mode::Objects,
@@ -744,7 +746,20 @@ impl ClusterView {
             .and_then(|object| object.data.get("spec")?.get("replicas")?.as_i64())
             .unwrap_or(1) as i32;
 
-        crate::actions::available(&kind, self.rules.as_deref(), replicas)
+        let suspended = self
+            .table
+            .read(cx)
+            .delegate()
+            .object(&selected)
+            .and_then(|object| object.data.pointer("/spec/suspend")?.as_bool())
+            .unwrap_or(false);
+        crate::actions::available_for_target(
+            &kind,
+            self.rules.as_deref(),
+            replicas,
+            suspended,
+            Some(&selected.name),
+        )
     }
 
     /// Starts an operation, asking first when it needs asking.
@@ -767,6 +782,52 @@ impl ClusterView {
         let Some(kind) = self.kind.clone() else {
             return;
         };
+
+        if matches!(
+            operation,
+            Operation::RunJob | Operation::CronJobSuspend { .. }
+        ) {
+            if self.job_action.is_some() || self.prompt.is_some() || self.creation.is_some() {
+                return;
+            }
+            let uid = self
+                .table
+                .read(cx)
+                .delegate()
+                .object(&target)
+                .and_then(|object| object.metadata.uid.clone());
+            let action = cx.new(|cx| {
+                crate::job_actions::JobActions::new(
+                    self.session.clone(),
+                    kind,
+                    target,
+                    uid,
+                    operation,
+                    window,
+                    cx,
+                )
+            });
+            cx.subscribe_in(
+                &action,
+                window,
+                |view, _, event: &crate::job_actions::JobActionEvent, _, cx| {
+                    view.job_action = None;
+                    if let crate::job_actions::JobActionEvent::Open { kind, target } = event {
+                        cx.emit(ResourceRequested {
+                            kind: kind.clone(),
+                            scope: target.namespace.iter().cloned().collect(),
+                            new_tab: false,
+                            target: Some(target.clone()),
+                        });
+                    }
+                    cx.notify();
+                },
+            )
+            .detach();
+            self.job_action = Some(action);
+            cx.notify();
+            return;
+        }
 
         // Restarting is disruptive but not destructive, and it is exactly what
         // the menu item says. Deleting has no undo; scaling needs a number.
@@ -2766,6 +2827,17 @@ impl Render for ClusterView {
                     .bg(cx.theme().background.opacity(0.75))
                     .child(creation)
             }))
+            .children(self.job_action.clone().map(|action| {
+                div()
+                    .absolute()
+                    .inset_0()
+                    .occlude()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .bg(cx.theme().background.opacity(0.75))
+                    .child(action)
+            }))
             .into_any_element()
     }
 }
@@ -2786,6 +2858,134 @@ mod integration_tests {
                     .map(|label| (label.to_owned(), item.disabled().unwrap_or(false)))
             })
             .collect()
+    }
+
+    #[::core::prelude::v1::test]
+    fn cronjob_row_and_context_actions_review_cancel_and_navigate_to_the_created_job() {
+        let cx = &mut support::context();
+        let directory = tempfile::tempdir().unwrap();
+        support::workspace(cx, directory.path());
+        let cron = json!({"apiVersion":"batch/v1","kind":"CronJob","metadata":{"name":"schedule","namespace":"default","uid":"cron-uid","resourceVersion":"1"},"spec":{"schedule":"* * * * *","suspend":true,"jobTemplate":{"spec":{"template":{"spec":{"restartPolicy":"Never","containers":[{"name":"app","image":"busybox"}]}}}}}});
+        let (fixture, session) =
+            support::fixture(cx, "job-actions-row-fixture", vec![cron.clone()]);
+        let (window, view) = cx.update(|cx| {
+            gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
+                window.set_view_retention(false);
+                cx.new(|cx| {
+                    ClusterView::new(
+                        session,
+                        Some("default".into()),
+                        Some(Arc::new(support::kind("batch", "CronJob", "cronjobs"))),
+                        None,
+                        false,
+                        window,
+                        cx,
+                    )
+                })
+            })
+            .unwrap()
+        });
+        support::settle(cx, |cx| {
+            view.read_with(cx, |view, cx| {
+                view.counts(cx).0 == 1 && view.rules.is_some()
+            })
+        });
+        let dropdown = cx
+            .update_window(window, |_, window, cx| {
+                window.render_frame(cx);
+                window.click(("resource-actions", 0usize), cx);
+                menu(window)
+            })
+            .unwrap();
+        assert!(
+            dropdown
+                .iter()
+                .any(|(label, disabled)| label == "Run now…" && !disabled)
+        );
+        assert!(
+            dropdown
+                .iter()
+                .any(|(label, _)| label == "Resume schedule…")
+        );
+        let context = cx
+            .update_window(window, |_, window, cx| {
+                window.press("escape", cx);
+                window.right_click(("row", 0usize), cx);
+                menu(window)
+            })
+            .unwrap();
+        assert_eq!(dropdown, context);
+        cx.update_window(window, |_, window, cx| {
+            let item = gpui_kit::base::test_support::snapshots(window)
+                .into_iter()
+                .find(|item| {
+                    item.role() == Some(Role::MenuItem) && item.label() == Some("Run now…")
+                })
+                .unwrap();
+            window.click(item.path().last().unwrap().clone(), cx);
+        })
+        .unwrap();
+        support::render_until(cx, window, |window| {
+            window
+                .try_find("job-action-preview")
+                .is_some_and(|item| item.visible())
+        });
+        cx.update_window(window, |_, window, cx| {
+            window.click("job-action-cancel", cx);
+        })
+        .unwrap();
+        assert!(view.read_with(cx, |view, _| view.job_action.is_none()));
+        assert!(
+            !fixture
+                .requests
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|(line, _)| line.starts_with("POST /apis/batch/") && !line.contains("dryRun"))
+        );
+        cx.update_window(window, |_, window, cx| {
+            view.update(cx, |view, cx| {
+                view.start_for(
+                    ObjectRef::new(Some("default".into()), "schedule"),
+                    Operation::RunJob,
+                    window,
+                    cx,
+                )
+            });
+        })
+        .unwrap();
+        support::render_until(cx, window, |window| {
+            window
+                .try_find("job-action-preview")
+                .is_some_and(|item| item.visible())
+        });
+        let requested = Arc::new(std::sync::Mutex::new(None));
+        let observed = requested.clone();
+        cx.update(|cx| {
+            cx.subscribe(&view, move |_, event: &ResourceRequested, _| {
+                *observed.lock().unwrap() =
+                    Some((event.kind.resource.kind.clone(), event.target.clone()));
+            })
+            .detach()
+        });
+        cx.update_window(window, |_, window, cx| {
+            window.click("job-action-confirm", cx);
+        })
+        .unwrap();
+        support::render_until(cx, window, |window| {
+            window
+                .try_find("job-action-open")
+                .is_some_and(|item| item.visible())
+        });
+        cx.update_window(window, |_, window, cx| {
+            window.click("job-action-open", cx);
+        })
+        .unwrap();
+        assert!(view.read_with(cx, |view, _| view.job_action.is_none()));
+        let (kind, target) = requested.lock().unwrap().clone().unwrap();
+        assert_eq!(kind, "Job");
+        assert!(target.unwrap().name.starts_with("schedule-manual-"));
+        assert_eq!(fixture.object("CronJob", "schedule"), cron);
     }
 
     #[::core::prelude::v1::test]

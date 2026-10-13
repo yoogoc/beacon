@@ -20,6 +20,7 @@ mod file_exec;
 pub mod files;
 pub mod forward;
 pub mod helm;
+pub mod jobs;
 mod kubectl;
 pub mod labels;
 pub mod logs;

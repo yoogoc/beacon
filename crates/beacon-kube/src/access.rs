@@ -67,6 +67,21 @@ impl Rules {
             .any(|rule| matches(rule, verb, group, resource))
     }
 
+    /// A name-restricted grant applies only to the exact object being changed.
+    /// Resource names are literal; unlike verbs and resources, `*` is not a
+    /// wildcard here. This cannot answer a create question for generated names.
+    pub fn allows_named(&self, verb: &str, group: &str, resource: &str, name: &str) -> bool {
+        self.incomplete
+            || self.rules.iter().any(|rule| {
+                contains(&rule.verbs, verb)
+                    && contains(rule.api_groups.as_deref().unwrap_or_default(), group)
+                    && resources_match(rule.resources.as_deref().unwrap_or_default(), resource)
+                    && rule.resource_names.as_ref().is_none_or(|names| {
+                        names.is_empty() || names.iter().any(|allowed| allowed == name)
+                    })
+            })
+    }
+
     /// Whether the answer is a guess. The UI says so rather than pretending.
     pub fn is_incomplete(&self) -> bool {
         self.incomplete
@@ -250,6 +265,24 @@ mod tests {
         narrowed.resource_names = Some(vec!["only-this-one".into()]);
 
         assert!(!rules(vec![narrowed]).allows("delete", "", "pods"));
+    }
+
+    #[test]
+    fn named_grants_match_only_the_reviewed_object() {
+        let mut named = rule(&["patch"], &["batch"], &["cronjobs"]);
+        named.resource_names = Some(vec!["allowed-schedule".into()]);
+        let grants = rules(vec![named]);
+        assert!(grants.allows_named("patch", "batch", "cronjobs", "allowed-schedule"));
+        assert!(!grants.allows_named("patch", "batch", "cronjobs", "other-schedule"));
+        assert!(!grants.allows_named("create", "batch", "jobs", "allowed-schedule"));
+        let mut literal = rule(&["patch"], &["batch"], &["cronjobs"]);
+        literal.resource_names = Some(vec!["*".into()]);
+        assert!(!rules(vec![literal]).allows_named(
+            "patch",
+            "batch",
+            "cronjobs",
+            "allowed-schedule"
+        ));
     }
 
     /// A webhook authorizer cannot enumerate its rules. Disabling everything

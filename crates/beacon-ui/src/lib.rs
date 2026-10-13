@@ -29,6 +29,7 @@ mod global_search;
 mod helm_details;
 mod icons;
 mod ingress_links;
+mod job_actions;
 mod network;
 mod node_pods;
 mod overview;

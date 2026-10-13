@@ -38,18 +38,52 @@ impl Choice {
 /// `replicas` is the object's current replica count, so that a scale prompt can
 /// open on the number that is actually set.
 pub fn available(kind: &Kind, rules: Option<&Rules>, replicas: i32) -> Vec<Choice> {
+    available_for(kind, rules, replicas, false)
+}
+
+/// Schedule actions reflect the object's current suspension state.
+pub fn available_for(
+    kind: &Kind,
+    rules: Option<&Rules>,
+    replicas: i32,
+    suspended: bool,
+) -> Vec<Choice> {
+    available_for_target(kind, rules, replicas, suspended, None)
+}
+
+pub fn available_for_target(
+    kind: &Kind,
+    rules: Option<&Rules>,
+    replicas: i32,
+    suspended: bool,
+    target: Option<&str>,
+) -> Vec<Choice> {
     let group = kind.resource.group.as_str();
     let name = kind.resource.kind.as_str();
 
     [
         Operation::Restart,
         Operation::Scale { replicas },
+        Operation::RunJob,
+        Operation::CronJobSuspend {
+            suspend: !suspended,
+        },
         Operation::Delete,
     ]
     .into_iter()
     .filter(|operation| operation.applies_to(group, name))
     .map(|operation| {
         let allowed = rules.is_none_or(|rules| {
+            if matches!(operation, Operation::CronJobSuspend { .. })
+                && let Some(target) = target
+            {
+                return rules.allows_named(
+                    operation.verb(),
+                    group,
+                    &operation.resource(&kind.resource.plural),
+                    target,
+                );
+            }
             rules.allows(
                 operation.verb(),
                 group,
@@ -58,7 +92,11 @@ pub fn available(kind: &Kind, rules: Option<&Rules>, replicas: i32) -> Vec<Choic
         });
 
         Choice {
-            label: label(&operation),
+            label: if operation == Operation::RunJob && name == "CronJob" {
+                "Run now…".into()
+            } else {
+                label(&operation)
+            },
             blocked_because: (!allowed).then(|| refusal(&operation, kind)),
             allowed,
             operation,
@@ -136,6 +174,9 @@ fn label(operation: &Operation) -> String {
         // menu item that opens a prompt should.
         Operation::Scale { .. } => "Scale…".to_string(),
         Operation::Apply => "Apply".to_string(),
+        Operation::RunJob => "Rerun as new Job…".to_string(),
+        Operation::CronJobSuspend { suspend: true } => "Suspend schedule…".to_string(),
+        Operation::CronJobSuspend { suspend: false } => "Resume schedule…".to_string(),
     }
 }
 
@@ -306,5 +347,58 @@ mod tests {
             .expect("scale is offered");
 
         assert_eq!(scale.operation, Operation::Scale { replicas: 7 });
+    }
+
+    #[test]
+    fn job_actions_use_job_creation_permission_and_reflect_schedule_state() {
+        let cron = kind("batch", "CronJob", "cronjobs");
+        let patch_only = rules(&[("patch", "batch", "cronjobs")]);
+        let choices = available_for(&cron, Some(&patch_only), 1, true);
+        let run = choices
+            .iter()
+            .find(|choice| choice.operation == Operation::RunJob)
+            .unwrap();
+        assert_eq!(run.label, "Run now…");
+        assert!(!run.allowed);
+        assert_eq!(
+            run.tooltip(),
+            Some("You do not have create on jobs in this namespace")
+        );
+        let schedule = choices
+            .iter()
+            .find(|choice| matches!(choice.operation, Operation::CronJobSuspend { .. }))
+            .unwrap();
+        assert_eq!(
+            schedule.operation,
+            Operation::CronJobSuspend { suspend: false }
+        );
+        assert!(schedule.allowed);
+        assert_eq!(schedule.label, "Resume schedule…");
+        let job = kind("batch", "Job", "jobs");
+        assert_eq!(
+            labels(&available(&job, None, 1)),
+            ["Rerun as new Job…", "Delete"]
+        );
+        assert_eq!(
+            labels(&available_for(&cron, None, 1, false)),
+            ["Run now…", "Suspend schedule…", "Delete"]
+        );
+        let named: Rules = serde_json::from_value(serde_json::json!({"resourceRules":[{"verbs":["patch"],"apiGroups":["batch"],"resources":["cronjobs"],"resourceNames":["daily"]}]})).unwrap();
+        let enabled = available_for_target(&cron, Some(&named), 1, false, Some("daily"));
+        assert!(
+            enabled
+                .iter()
+                .find(|choice| matches!(choice.operation, Operation::CronJobSuspend { .. }))
+                .unwrap()
+                .allowed
+        );
+        let disabled = available_for_target(&cron, Some(&named), 1, false, Some("hourly"));
+        assert!(
+            !disabled
+                .iter()
+                .find(|choice| matches!(choice.operation, Operation::CronJobSuspend { .. }))
+                .unwrap()
+                .allowed
+        );
     }
 }

@@ -437,11 +437,12 @@ impl ResourceTable {
                 DetailTab::History,
             ));
         }
-        if group == "apps"
+        if (group == "apps"
             && matches!(
                 name,
                 "Deployment" | "StatefulSet" | "DaemonSet" | "ReplicaSet"
-            )
+            ))
+            || (group == "batch" && name == "Job")
         {
             let logs_view = view.clone();
             let logs_target = target.clone();
@@ -468,7 +469,17 @@ impl ResourceTable {
                     .update(cx, |view, cx| view.compare_for(&compare_target, window, cx));
             }),
         );
-        let choices = actions::available(&kind, rules.as_deref(), replicas);
+        let choices = actions::available_for_target(
+            &kind,
+            rules.as_deref(),
+            replicas,
+            object
+                .data
+                .pointer("/spec/suspend")
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(false),
+            object.metadata.name.as_deref(),
+        );
         if !choices.is_empty() {
             menu = menu.separator();
         }

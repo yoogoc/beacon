@@ -41,6 +41,11 @@ pub enum Operation {
     Scale {
         replicas: i32,
     },
+    /// Create a fresh Job from a Job or CronJob template.
+    RunJob,
+    CronJobSuspend {
+        suspend: bool,
+    },
     Apply,
 }
 
@@ -49,8 +54,11 @@ impl Operation {
     pub fn verb(&self) -> &'static str {
         match self {
             Self::Delete => verbs::DELETE,
+            Self::RunJob => verbs::CREATE,
             // Everything else is a PATCH, including Server-Side Apply.
-            Self::Restart | Self::Scale { .. } | Self::Apply => verbs::PATCH,
+            Self::Restart | Self::Scale { .. } | Self::Apply | Self::CronJobSuspend { .. } => {
+                verbs::PATCH
+            }
         }
     }
 
@@ -61,6 +69,7 @@ impl Operation {
     pub fn resource(&self, plural: &str) -> String {
         match self {
             Self::Scale { .. } => format!("{plural}/scale"),
+            Self::RunJob => "jobs".to_owned(),
             _ => plural.to_string(),
         }
     }
@@ -72,6 +81,8 @@ impl Operation {
     pub fn applies_to(&self, group: &str, kind: &str) -> bool {
         match self {
             Self::Delete | Self::Apply => true,
+            Self::RunJob => matches!((group, kind), ("batch", "Job" | "CronJob")),
+            Self::CronJobSuspend { .. } => (group, kind) == ("batch", "CronJob"),
             Self::Restart => matches!(
                 (group, kind),
                 ("apps", "Deployment" | "StatefulSet" | "DaemonSet")
@@ -91,6 +102,9 @@ impl Operation {
             Self::Restart => "Restart".to_string(),
             Self::Scale { replicas } => format!("Scale to {replicas}"),
             Self::Apply => "Apply".to_string(),
+            Self::RunJob => "Create a new Job".to_string(),
+            Self::CronJobSuspend { suspend: true } => "Suspend schedule".to_string(),
+            Self::CronJobSuspend { suspend: false } => "Resume schedule".to_string(),
         }
     }
 }

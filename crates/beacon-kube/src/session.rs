@@ -311,6 +311,29 @@ impl ClusterSession {
     ) -> Result<Applied> {
         let namespace = namespace.as_deref();
         match operation {
+            Operation::RunJob | Operation::CronJobSuspend { .. } => {
+                let kind = self
+                    .discovery()
+                    .kinds()
+                    .iter()
+                    .find(|kind| kind.resource == resource)
+                    .cloned()
+                    .ok_or_else(|| Error::Manifest("source kind is unavailable".into()))?;
+                let plan = crate::jobs::prepare(
+                    self.clone(),
+                    kind,
+                    crate::ObjectRef {
+                        namespace: namespace.map(str::to_owned),
+                        name,
+                    },
+                    None,
+                    operation,
+                )
+                .await?;
+                Ok(Applied::Ok(Box::new(
+                    crate::jobs::execute(self, &plan).await?,
+                )))
+            }
             Operation::Delete => {
                 ops::delete(&self.client, &resource, namespace, &name).await?;
                 Ok(Applied::Ok(Box::new(DynamicObject::new(&name, &resource))))

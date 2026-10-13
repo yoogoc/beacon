@@ -13,6 +13,7 @@ pub struct Fixture {
     objects: Arc<Mutex<Vec<Value>>>,
     refuse_exec: Arc<std::sync::atomic::AtomicBool>,
     denied: Arc<Mutex<std::collections::HashSet<String>>>,
+    rules: Arc<Mutex<Value>>,
     events: broadcast::Sender<Value>,
     task: tokio::task::JoinHandle<()>,
 }
@@ -33,6 +34,10 @@ impl Fixture {
         let exec_policy = refuse_exec.clone();
         let denied = Arc::new(Mutex::new(std::collections::HashSet::new()));
         let denied_resources = denied.clone();
+        let rules = Arc::new(Mutex::new(
+            json!([{"verbs":["*"],"apiGroups":["*"],"resources":["*"]}]),
+        ));
+        let granted_rules = rules.clone();
         let recorded = requests.clone();
         let changes = events.clone();
         let task = tokio::spawn(async move {
@@ -41,8 +46,8 @@ impl Fixture {
                 tokio::select! {
                     accepted = listener.accept() => {
                         let Ok((stream,_)) = accepted else { break; };
-                        let store = store.clone(); let recorded = recorded.clone(); let changes = changes.clone(); let exec_policy = exec_policy.clone(); let denied_resources = denied_resources.clone();
-                        connections.spawn(async move { serve(stream,store,recorded,changes,exec_policy,denied_resources).await; });
+                        let store = store.clone(); let recorded = recorded.clone(); let changes = changes.clone(); let exec_policy = exec_policy.clone(); let denied_resources = denied_resources.clone(); let granted_rules = granted_rules.clone();
+                        connections.spawn(async move { serve(stream,store,recorded,changes,exec_policy,denied_resources,granted_rules).await; });
                     }
                     _ = connections.join_next(), if !connections.is_empty() => {}
                 }
@@ -54,6 +59,7 @@ impl Fixture {
             objects,
             refuse_exec,
             denied,
+            rules,
             events,
             task,
         }
@@ -64,6 +70,9 @@ impl Fixture {
     }
     pub fn deny(&self, resource: &str) {
         self.denied.lock().unwrap().insert(resource.to_owned());
+    }
+    pub fn rules(&self, resource_rules: Value) {
+        *self.rules.lock().unwrap() = resource_rules;
     }
     pub fn put(&self, object: Value) {
         let mut objects = self.objects.lock().unwrap();
@@ -108,6 +117,7 @@ async fn serve(
     events: broadcast::Sender<Value>,
     refuse_exec: Arc<std::sync::atomic::AtomicBool>,
     denied: Arc<Mutex<std::collections::HashSet<String>>>,
+    rules: Arc<Mutex<Value>>,
 ) {
     let mut header = Vec::new();
     while !header.ends_with(b"\r\n\r\n") {
@@ -181,6 +191,8 @@ async fn serve(
         "namespaces" => "Namespace",
         "configmaps" => "ConfigMap",
         "secrets" => "Secret",
+        "jobs" => "Job",
+        "cronjobs" => "CronJob",
         _ => "Unknown",
     };
     let selector = query
@@ -203,7 +215,56 @@ async fn serve(
             })
     };
     if resource == "selfsubjectrulesreviews" {
-        response(&mut stream,"200 OK",json!({"apiVersion":"authorization.k8s.io/v1","kind":"SelfSubjectRulesReview","status":{"incomplete":false,"resourceRules":[{"verbs":["*"],"apiGroups":["*"],"resources":["*"]}],"nonResourceRules":[]}}).to_string(),"application/json").await;
+        let granted = rules.lock().unwrap().clone();
+        response(&mut stream,"200 OK",json!({"apiVersion":"authorization.k8s.io/v1","kind":"SelfSubjectRulesReview","status":{"incomplete":false,"resourceRules":granted,"nonResourceRules":[]}}).to_string(),"application/json").await;
+        return;
+    }
+    if method == "POST" && resource == "jobs" && name.is_none() {
+        let mut object = request.clone();
+        if object["apiVersion"] != "batch/v1"
+            || object["kind"] != "Job"
+            || object.pointer("/spec/selector").is_some()
+            || object.pointer("/metadata/uid").is_some()
+            || object.pointer("/metadata/resourceVersion").is_some()
+            || object.pointer("/status").is_some()
+        {
+            response(&mut stream, "422 Unprocessable Entity", json!({"apiVersion":"v1","kind":"Status","status":"Failure","code":422,"reason":"Invalid","message":"new Job retains old execution identity"}).to_string(), "application/json").await;
+            return;
+        }
+        let generated = format!(
+            "{}{:05}",
+            object
+                .pointer("/metadata/generateName")
+                .and_then(Value::as_str)
+                .unwrap_or("job-"),
+            objects.lock().unwrap().len()
+        );
+        let name = object
+            .pointer("/metadata/name")
+            .and_then(Value::as_str)
+            .unwrap_or(&generated)
+            .to_owned();
+        object["metadata"]["name"] = json!(name);
+        object["metadata"]["namespace"] = json!(namespace.unwrap_or("default"));
+        object["metadata"]["uid"] = json!(format!("uid-{name}"));
+        object["metadata"]["resourceVersion"] = json!("1");
+        object["spec"]["selector"] =
+            json!({"matchLabels":{"batch.kubernetes.io/controller-uid":format!("uid-{name}")}});
+        object["spec"]["template"]["metadata"]["labels"]["batch.kubernetes.io/controller-uid"] =
+            json!(format!("uid-{name}"));
+        object["spec"]["template"]["metadata"]["labels"]["batch.kubernetes.io/job-name"] =
+            json!(name);
+        if !query.contains_key("dryRun") {
+            objects.lock().unwrap().push(object.clone());
+            let _ = events.send(json!({"type":"ADDED","object":object.clone()}));
+        }
+        response(
+            &mut stream,
+            "201 Created",
+            object.to_string(),
+            "application/json",
+        )
+        .await;
         return;
     }
     if query.get("watch").is_some_and(|watch| watch == "true") {
@@ -272,6 +333,10 @@ async fn serve(
                 .unwrap()
                 .extend(containers);
             object["status"]["ephemeralContainerStatuses"] = json!(statuses);
+        } else if kind == "CronJob" {
+            if let Some(suspend) = request.pointer("/spec/suspend") {
+                object["spec"]["suspend"] = suspend.clone();
+            }
         } else if let Some(template) = request.pointer("/spec/template") {
             let mut template = template.clone();
             template.as_object_mut().unwrap().remove("$patch");

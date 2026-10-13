@@ -60,6 +60,8 @@ pub(crate) fn fixture(
     let runtime = cx.read(|cx| crate::bridge::Bridge::global(cx).handle());
     runtime.block_on(async move {
         let fixture = Fixture::start(objects).await;
+        let mut job_kind = kind("batch", "Job", "jobs");
+        job_kind.verbs.push("create".into());
         let kinds = vec![
             kind("", "Pod", "pods"),
             kind("", "Node", "nodes"),
@@ -74,6 +76,8 @@ pub(crate) fn fixture(
             kind("", "Namespace", "namespaces"),
             kind("", "ConfigMap", "configmaps"),
             kind("", "Secret", "secrets"),
+            job_kind,
+            kind("batch", "CronJob", "cronjobs"),
         ];
         let session = Arc::new(ClusterSession::for_testing(
             ClusterId::new(id),
