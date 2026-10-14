@@ -19,7 +19,7 @@ use serde_json::{Value, json};
 
 use crate::{Error, Kind, ObjectRef, Result, access::verbs};
 
-/// An object selected for deletion, pinned to the UID that was shown.
+/// An object selected for a bulk operation, pinned to the UID that was shown.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DeleteTarget {
     pub reference: ObjectRef,
@@ -264,6 +264,66 @@ pub async fn restart(
     Ok(())
 }
 
+/// Restart the reviewed Deployment incarnation with optimistic concurrency.
+/// A failed UID check, paused rollout or permission denial affects only this target.
+pub async fn restart_selected(
+    client: &kube::Client,
+    resource: &ApiResource,
+    target: &DeleteTarget,
+    now: &str,
+) -> Result<DynamicObject> {
+    if resource.group != "apps" || resource.kind != "Deployment" || target.uid.is_empty() {
+        return Err(Error::Manifest(
+            "Bulk restart requires a selected Deployment UID.".into(),
+        ));
+    }
+    let namespace = target
+        .reference
+        .namespace
+        .as_deref()
+        .ok_or_else(|| Error::Manifest("A Deployment restart requires a namespace.".into()))?;
+    let api = api(client, resource, Some(namespace));
+    let current = api.get(&target.reference.name).await?;
+    if current.metadata.uid.as_deref() != Some(&target.uid) {
+        return Err(Error::Manifest(
+            "The Deployment was replaced after selection. Select it again before restarting."
+                .into(),
+        ));
+    }
+    if current.metadata.deletion_timestamp.is_some() {
+        return Err(Error::Manifest("The Deployment is terminating.".into()));
+    }
+    if current
+        .data
+        .pointer("/spec/paused")
+        .and_then(Value::as_bool)
+        == Some(true)
+    {
+        return Err(Error::Manifest(
+            "The Deployment is paused. Resume it before restarting.".into(),
+        ));
+    }
+    let version = current
+        .metadata
+        .resource_version
+        .as_deref()
+        .filter(|version| !version.is_empty())
+        .ok_or_else(|| Error::Manifest("The Deployment has no resourceVersion.".into()))?;
+    let patch = json!({
+        "metadata": {"uid": target.uid, "resourceVersion": version},
+        "spec": {"template": {"metadata": {"annotations": {"kubectl.kubernetes.io/restartedAt": now}}}}
+    });
+    let restarted = api
+        .patch(
+            &target.reference.name,
+            &PatchParams::default(),
+            &Patch::Merge(patch),
+        )
+        .await?;
+    tracing::info!(kind = %resource.kind, target = %target.reference, "restarted selected Deployment");
+    Ok(restarted)
+}
+
 pub async fn scale(
     client: &kube::Client,
     resource: &ApiResource,
@@ -444,6 +504,9 @@ fn manager_and_rest(fragment: &str) -> Option<(String, &str)> {
     let (manager, after) = rest.split_once('"')?;
     (!manager.is_empty()).then(|| (manager.to_string(), after))
 }
+
+#[cfg(test)]
+mod bulk_restart_tests;
 
 #[cfg(test)]
 mod tests {

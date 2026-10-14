@@ -1,4 +1,4 @@
-//! A single resource toolbar, measured within its own workspace pane.
+//! Resource filters and an independent checked-selection action row.
 use super::*;
 use gpui_kit::assets::IconName as Glyph;
 use gpui_kit::base::ElementExt as _;
@@ -14,16 +14,11 @@ pub(super) enum Layout {
 }
 
 impl Layout {
-    fn for_width(width: Pixels, fields: usize, selected: usize) -> Self {
-        // PVC has several facets; selection also adds bulk actions. Keep
-        // those reachable in a menu rather than squeezing the name search.
+    fn for_width(width: Pixels, fields: usize) -> Self {
+        // PVC has several facets. Bulk actions live on their own row, so
+        // checking resources does not squeeze the name search or filters.
         let extra = fields.saturating_sub(1) as f32;
-        let bulk = match selected {
-            0 => 0.,
-            2 => 320.,
-            _ => 220.,
-        };
-        let width = f32::from(width) - bulk;
+        let width = f32::from(width);
         if width >= 1200. + extra * 140. {
             Self::Full
         } else if width >= 880. + extra * 140. {
@@ -213,7 +208,7 @@ impl ClusterView {
                     .filter(|kind| kind.namespaced)
                     .map(|_| self.render_namespace_picker(layout, cx)),
             )
-            .child(self.render_bulk_and_logs(layout, false, cx))
+            .child(self.render_log_action(layout, false, cx))
             .into_any_element()
     }
 
@@ -284,14 +279,14 @@ impl ClusterView {
                                     .filter(|kind| kind.namespaced)
                                     .map(|_| view.render_namespace_picker(Layout::Full, cx)),
                             )
-                            .child(view.render_bulk_and_logs(Layout::Full, true, cx))
+                            .child(view.render_log_action(Layout::Full, true, cx))
                             .into_any_element()
                     })
                     .unwrap_or_else(|_| div().into_any_element())
             })
     }
 
-    fn render_bulk_and_logs(
+    fn render_log_action(
         &self,
         layout: Layout,
         vertical: bool,
@@ -299,7 +294,6 @@ impl ClusterView {
     ) -> impl IntoElement {
         // Reuse the toolbar's action handling without mounting a second set
         // of filter triggers (which would share popover IDs).
-        let selected = self.table.read(cx).delegate().selected_count();
         h_flex()
             .gap_2()
             .items_center()
@@ -328,52 +322,112 @@ impl ClusterView {
                     )
                 },
             )
-            .when(self.mode == Mode::Objects && selected > 0, |menu| {
-                menu.child(div().text_xs().child(format!("{selected} selected")))
-                    .child(
-                        Button::new("clear-selected")
-                            .small()
-                            .ghost()
-                            .icon(IconName::Close)
-                            .when(vertical, |button| button.label("Clear selection"))
-                            .accessibility_label("Clear selection")
-                            .tooltip("Clear selection")
-                            .on_click(cx.listener(|view, _, _, cx| {
-                                view.table.update(cx, |table, cx| {
-                                    table.delegate_mut().clear_selected();
-                                    cx.notify();
-                                });
+    }
+
+    pub(super) fn render_selection_toolbar(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let selected = self.table.read(cx).delegate().selected_count();
+        if self.mode != Mode::Objects || selected == 0 {
+            return None;
+        }
+        let compact = matches!(
+            self.toolbar_layout.get(),
+            Layout::Minimal | Layout::Overflow
+        );
+        Some(
+            h_flex()
+                .id("resource-selection-toolbar")
+                .role(Role::Toolbar)
+                .aria_label("Selected resource actions")
+                .test_support()
+                .w_full()
+                .min_w_0()
+                .flex_shrink_0()
+                .px_3()
+                .py_1p5()
+                .gap_2()
+                .items_center()
+                .border_b_1()
+                .border_color(cx.theme().border)
+                .bg(cx.theme().muted.opacity(0.35))
+                .child(
+                    div()
+                        .min_w_0()
+                        .text_xs()
+                        .truncate()
+                        .child(format!("{selected} selected")),
+                )
+                .child(
+                    Button::new("clear-selected")
+                        .small()
+                        .ghost()
+                        .icon(IconName::Close)
+                        .accessibility_label("Clear selection")
+                        .tooltip("Clear selection")
+                        .on_click(cx.listener(|view, _, _, cx| {
+                            view.table.update(cx, |table, cx| {
+                                table.delegate_mut().clear_selected();
                                 cx.notify();
-                            })),
+                            });
+                            cx.notify();
+                        })),
+                )
+                .when(selected == 2, |bar| {
+                    bar.child(
+                        Button::new("compare-selected")
+                            .small()
+                            .outline()
+                            .icon(Icon::new(Glyph::Columns3))
+                            .when(!compact, |button| button.label("Compare"))
+                            .accessibility_label("Compare selected resources")
+                            .tooltip("Compare the two selected resources")
+                            .on_click(
+                                cx.listener(|view, _, window, cx| {
+                                    view.compare_selected(window, cx)
+                                }),
+                            ),
                     )
-                    .when(selected == 2, |menu| {
-                        menu.child(
-                            Button::new("compare-selected")
+                })
+                .when(
+                    self.kind.as_ref().is_some_and(|kind| {
+                        kind.resource.group == "apps" && kind.resource.kind == "Deployment"
+                    }),
+                    |bar| {
+                        bar.child(
+                            Button::new("restart-selected")
                                 .small()
                                 .outline()
-                                .icon(Icon::new(Glyph::Columns3))
-                                .label("Compare")
-                                .accessibility_label("Compare selected resources")
-                                .tooltip("Compare the two selected resources")
+                                .icon(IconName::RefreshCw)
+                                .when(!compact, |button| button.label("Restart"))
+                                .accessibility_label("Restart selected Deployments")
+                                .tooltip("Restart Pods using each Deployment's update strategy")
+                                .disabled(
+                                    !self.may_restart_selected(cx)
+                                        || self.bulk_deleting
+                                        || self.bulk_restart.is_some(),
+                                )
                                 .on_click(cx.listener(|view, _, window, cx| {
-                                    view.toolbar_open = false;
-                                    view.compare_selected(window, cx);
+                                    view.start_restart_selected(window, cx)
                                 })),
                         )
-                    })
-                    .child(
-                        Button::new("delete-selected")
-                            .small()
-                            .danger()
-                            .icon(Icon::new(Glyph::Trash))
-                            .label("Delete selected")
-                            .disabled(!self.may_delete() || self.bulk_deleting)
-                            .on_click(cx.listener(|view, _, window, cx| {
-                                view.toolbar_open = false;
-                                view.start_delete_selected(window, cx);
-                            })),
-                    )
-            })
+                    },
+                )
+                .child(
+                    Button::new("delete-selected")
+                        .small()
+                        .danger()
+                        .icon(Icon::new(Glyph::Trash))
+                        .when(!compact, |button| button.label("Delete selected"))
+                        .accessibility_label("Delete selected resources")
+                        .tooltip("Delete selected resources")
+                        .disabled(
+                            !self.may_delete() || self.bulk_deleting || self.bulk_restart.is_some(),
+                        )
+                        .on_click(cx.listener(|view, _, window, cx| {
+                            view.start_delete_selected(window, cx)
+                        })),
+                )
+                .into_any_element(),
+        )
     }
 
     fn render_toolbar_notice(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
@@ -469,11 +523,6 @@ impl ClusterView {
             .as_ref()
             .map(|kind| Field::for_kind(kind).len())
             .unwrap_or(0);
-        let selected = if self.mode == Mode::Objects {
-            self.table.read(cx).delegate().selected_count()
-        } else {
-            0
-        };
         h_flex()
             .id("resource-toolbar")
             .role(Role::Toolbar)
@@ -490,7 +539,7 @@ impl ClusterView {
             .border_b_1()
             .border_color(cx.theme().border)
             .on_prepaint(move |bounds, _, cx| {
-                let next = Layout::for_width(bounds.size.width, fields, selected);
+                let next = Layout::for_width(bounds.size.width, fields);
                 if measured.replace(next) != next {
                     cx.notify(entity);
                 }
@@ -543,6 +592,9 @@ impl ClusterView {
             })
     }
 }
+
+#[cfg(all(test, feature = "ui-tests"))]
+mod bulk_restart_tests;
 
 #[cfg(all(test, feature = "ui-tests"))]
 mod integration_tests {

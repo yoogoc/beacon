@@ -481,6 +481,34 @@ impl ClusterSession {
             .await
     }
 
+    /// Per-namespace, per-name permission checks and one independent result per Deployment.
+    pub async fn restart_many(
+        self: Arc<Self>,
+        resource: ApiResource,
+        targets: Vec<DeleteTarget>,
+    ) -> Vec<(DeleteTarget, Result<DynamicObject>)> {
+        let now = k8s_openapi::jiff::Timestamp::now().to_string();
+        stream::iter(targets).map(|target| {
+            let session = self.clone();
+            let resource = resource.clone();
+            let now = now.clone();
+            async move {
+                let operation = async {
+                    let rules = session.clone().rules(target.reference.namespace.clone()).await;
+                    for verb in ["get", "patch"] {
+                        if !rules.allows_named(verb, &resource.group, &resource.plural, &target.reference.name) {
+                            return Err(Error::Manifest(format!("Forbidden: cannot {verb} resource \"{}\" in API group \"{}\" in the namespace \"{}\".", resource.plural, resource.group, target.reference.namespace.as_deref().unwrap_or_default())));
+                        }
+                    }
+                    ops::restart_selected(&session.write_client, &resource, &target, &now).await
+                };
+                let result = tokio::time::timeout(std::time::Duration::from_secs(30), operation).await
+                    .unwrap_or_else(|_| Err(Error::Manifest("Restart request timed out. Refresh the Deployment before retrying.".into())));
+                (target, result)
+            }
+        }).buffer_unordered(4).collect().await
+    }
+
     /// Opens a port forward. `local_port` of 0 asks for any free port.
     ///
     /// The forward belongs to the session, so it survives navigating away from

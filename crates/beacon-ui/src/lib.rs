@@ -11,6 +11,7 @@ mod app_logs;
 mod argo;
 mod argo_node;
 pub mod bridge;
+mod bulk_restart;
 pub mod catalog;
 pub mod cluster;
 mod cluster_overview;

@@ -111,6 +111,23 @@ async fn response(stream: &mut TcpStream, status: &str, body: String, content_ty
     let _ = stream.write_all(header.as_bytes()).await;
 }
 
+fn merge_fixture_patch(target: &mut Value, patch: &Value) {
+    if let Some(fields) = patch.as_object() {
+        if !target.is_object() {
+            *target = json!({});
+        }
+        for (key, value) in fields {
+            if value.is_null() {
+                target.as_object_mut().unwrap().remove(key);
+            } else {
+                merge_fixture_patch(&mut target[key], value);
+            }
+        }
+    } else {
+        *target = patch.clone();
+    }
+}
+
 /// Only the RFC 6902 operations used by reviewed Workflow changes are needed by
 /// this fixture. Apply them to a private copy so failed tests never partially
 /// persist a patch, just as an API server rejects the entire request.
@@ -654,9 +671,13 @@ async fn serve(
                     object["spec"]["suspend"] = suspend.clone();
                 }
             } else if let Some(template) = request.pointer("/spec/template") {
-                let mut template = template.clone();
-                template.as_object_mut().unwrap().remove("$patch");
-                object["spec"]["template"] = template;
+                if template.get("$patch").and_then(Value::as_str) == Some("replace") {
+                    let mut template = template.clone();
+                    template.as_object_mut().unwrap().remove("$patch");
+                    object["spec"]["template"] = template;
+                } else {
+                    merge_fixture_patch(&mut object["spec"]["template"], template);
+                }
             } else if matches!(kind, "ConfigMap" | "Secret") {
                 if request["apiVersion"] != object["apiVersion"]
                     || request["kind"] != object["kind"]

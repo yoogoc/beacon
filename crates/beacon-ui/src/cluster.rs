@@ -171,6 +171,7 @@ pub struct ClusterView {
     /// What the last write said, for the toolbar.
     outcome: Option<Outcome>,
     bulk_deleting: bool,
+    bulk_restart: Option<Entity<crate::bulk_restart::BulkRestart>>,
     mode: Mode,
     releases: Releases,
     overview: Option<Entity<crate::cluster_overview::OverviewView>>,
@@ -223,6 +224,16 @@ impl EventEmitter<crate::pod_files::FilesRequested> for ClusterView {}
 impl ClusterView {
     pub(crate) fn pending_edits(&self, cx: &App) -> Vec<String> {
         let mut edits = Vec::new();
+        if self
+            .bulk_restart
+            .as_ref()
+            .is_some_and(|view| view.read(cx).busy())
+        {
+            edits.push(format!(
+                "{}: restarting selected Deployments",
+                self.session.id().display_name()
+            ));
+        }
         if self
             .forward_dialog
             .as_ref()
@@ -364,6 +375,7 @@ impl ClusterView {
             workflow_action: None,
             outcome: None,
             bulk_deleting: false,
+            bulk_restart: None,
             mode: Mode::Objects,
             releases: Releases::Unopened,
             overview: None,
@@ -784,6 +796,9 @@ impl ClusterView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.bulk_restart.is_some() {
+            return;
+        }
         let Some(kind) = self.kind.clone() else {
             return;
         };
@@ -1040,7 +1055,11 @@ impl ClusterView {
         let Some(kind) = self.kind.clone().filter(|kind| kind.supports("create")) else {
             return;
         };
-        if self.mode != Mode::Objects || self.creation.is_some() || self.prompt.is_some() {
+        if self.mode != Mode::Objects
+            || self.creation.is_some()
+            || self.prompt.is_some()
+            || self.bulk_restart.is_some()
+        {
             return;
         }
         let namespace = self.only_namespace();
@@ -1089,7 +1108,11 @@ impl ClusterView {
             return;
         };
         let targets = self.table.read(cx).delegate().selected_targets();
-        if targets.is_empty() || !self.may_delete() || self.bulk_deleting {
+        if targets.is_empty()
+            || !self.may_delete()
+            || self.bulk_deleting
+            || self.bulk_restart.is_some()
+        {
             return;
         }
         let ask = Ask::bulk_delete(
@@ -1122,6 +1145,87 @@ impl ClusterView {
         )
         .detach();
         self.prompt = Some(prompt);
+        cx.notify();
+    }
+
+    fn may_restart_selected(&self, cx: &App) -> bool {
+        self.kind.as_ref().is_some_and(|kind| {
+            kind.resource.group == "apps"
+                && kind.resource.kind == "Deployment"
+                && kind.supports("patch")
+                && (self.only_namespace().is_none()
+                    || self.rules.as_deref().is_none_or(|rules| {
+                        self.table
+                            .read(cx)
+                            .delegate()
+                            .selected_targets()
+                            .iter()
+                            .any(|target| {
+                                ["get", "patch"].into_iter().all(|verb| {
+                                    rules.allows_named(
+                                        verb,
+                                        "apps",
+                                        "deployments",
+                                        &target.reference.name,
+                                    )
+                                })
+                            })
+                    }))
+        })
+    }
+
+    pub(crate) fn start_restart_selected(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        if self.mode != Mode::Objects
+            || !self.may_restart_selected(cx)
+            || self.bulk_deleting
+            || self.bulk_restart.is_some()
+            || self.prompt.is_some()
+            || self.creation.is_some()
+        {
+            return;
+        }
+        let Some(kind) = self.kind.clone() else {
+            return;
+        };
+        let targets = self.table.read(cx).delegate().selected_targets();
+        if targets.is_empty() {
+            return;
+        }
+        let dialog = cx.new(|_| {
+            crate::bulk_restart::BulkRestart::new(self.session.clone(), kind.clone(), targets)
+        });
+        cx.subscribe(
+            &dialog,
+            move |view, _, event: &crate::bulk_restart::Event, cx| {
+                match event {
+                    crate::bulk_restart::Event::Closed => view.bulk_restart = None,
+                    crate::bulk_restart::Event::Completed { restarted, failed } => {
+                        if view.shows_kind(&kind) {
+                            view.table.update(cx, |table, cx| {
+                                // The watch owns row updates; an older operation response
+                                // must not overwrite a newer rollout or a replacement UID.
+                                table.delegate_mut().remove_selected(restarted);
+                                cx.notify();
+                            });
+                        }
+                        view.outcome = Some(if *failed == 0 {
+                            Outcome::Done(format!(
+                                "Restart requested for {} Deployments",
+                                restarted.len()
+                            ))
+                        } else {
+                            Outcome::Failed(format!(
+                                "Restart requested for {}; {failed} failed. See restart results.",
+                                restarted.len()
+                            ))
+                        });
+                    }
+                }
+                cx.notify();
+            },
+        )
+        .detach();
+        self.bulk_restart = Some(dialog);
         cx.notify();
     }
 
@@ -1408,6 +1512,13 @@ impl ClusterView {
     /// wrong is Escape killing the panel out from under somebody in vim, and
     /// asking the panel directly is something a reader can check.
     pub fn close_detail(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(dialog) = &self.bulk_restart {
+            if !dialog.read(cx).busy() {
+                self.bulk_restart = None;
+                cx.notify();
+            }
+            return;
+        }
         if self.mode == Mode::Overview {
             if let Some(overview) = &self.overview {
                 overview.update(cx, |view, cx| view.close_detail(cx));
@@ -2906,6 +3017,7 @@ impl Render for ClusterView {
                 v_flex()
                     .size_full()
                     .child(self.render_toolbar(cx))
+                    .children(self.render_selection_toolbar(cx))
                     .child(div().flex_1().overflow_hidden().child(body)),
             )
             .children(self.prompt.clone().map(|prompt| {
@@ -2917,6 +3029,17 @@ impl Render for ClusterView {
                     .justify_center()
                     .bg(cx.theme().background.opacity(0.75))
                     .child(prompt)
+            }))
+            .children(self.bulk_restart.clone().map(|dialog| {
+                div()
+                    .absolute()
+                    .inset_0()
+                    .occlude()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .bg(cx.theme().background.opacity(0.75))
+                    .child(dialog)
             }))
             .children(self.creation.clone().map(|creation| {
                 div()
