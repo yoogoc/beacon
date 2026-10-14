@@ -39,7 +39,8 @@ jobs:
       version: ${{ needs.prepare.outputs.version }}
 
   package:
-    needs: [prepare, checks]
+    # Build alongside checks. Publication still depends on both succeeding.
+    needs: prepare
     name: ${{ matrix.name }}
     env:
       BEACON_UPDATE_PUBLIC_KEY: ${{ secrets.BEACON_UPDATE_PUBLIC_KEY }}
@@ -151,7 +152,34 @@ jobs:
       # `sh` on Unix and `cmd.exe` on Windows, so no single hook string can
       # expand `--target` on both.
       - name: Build
+        if: matrix.name != 'linux-amd64'
         run: cargo build --locked --release -p beacon --target ${{ matrix.target }}
+
+      # One Cargo invocation shares dependency features and release artifacts
+      # between the application and the verifier needed by the publisher.
+      - name: Build application and update verifier
+        if: matrix.name == 'linux-amd64'
+        run: cargo build --locked --release -p beacon -p beacon-updater --bin beacon --bin verify-update --target ${{ matrix.target }}
+
+      # The publisher uses the same Linux image/architecture and exact commit.
+      # Transfer the signer and verifier instead of compiling them again.
+      - name: Stage publisher tools
+        if: matrix.name == 'linux-amd64'
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/beacon-release-tools"
+          cp "$(command -v cargo-packager)" "$RUNNER_TEMP/beacon-release-tools/cargo-packager"
+          cp target/x86_64-unknown-linux-gnu/release/verify-update "$RUNNER_TEMP/beacon-release-tools/verify-update"
+
+      - name: Upload publisher tools
+        if: matrix.name == 'linux-amd64'
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-tools-linux-amd64
+          path: ${{ runner.temp }}/beacon-release-tools/
+          retention-days: 7
+          compression-level: 1
+          if-no-files-found: error
 
       - name: Verify macOS SDK and deployment target
         if: runner.os == 'macOS'
@@ -252,17 +280,24 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - uses: dtolnay/rust-toolchain@stable
+      - name: Download publisher tools
+        uses: actions/download-artifact@v4
         with:
-          toolchain: "1.98"
-      - uses: Swatinem/rust-cache@v2
-        with:
-          key: update-manifest
-      - name: Install cargo-packager signer
-        run: cargo install cargo-packager --version 0.11.8 --locked
+          name: release-tools-linux-amd64
+          path: ${{ runner.temp }}/beacon-release-tools
+
+      - name: Enable publisher tools
+        shell: bash
+        run: |
+          chmod +x "$RUNNER_TEMP/beacon-release-tools/cargo-packager" "$RUNNER_TEMP/beacon-release-tools/verify-update"
+          printf '%s\n' "$RUNNER_TEMP/beacon-release-tools" >> "$GITHUB_PATH"
+
+      - name: Verify cargo-packager signer
+        run: cargo packager --version
 
       - uses: actions/download-artifact@v4
         with:
+          pattern: beacon-*
           path: artifacts
 
       - name: Build and sign update manifest
@@ -278,7 +313,7 @@ jobs:
           if [ "$RELEASE_PRERELEASE" = "true" ]; then UPDATE_FLAGS+=(--allow-missing); fi
           python scripts/updates.py manifest --artifacts artifacts --repository "$GITHUB_REPOSITORY" --version "$RELEASE_VERSION" --output artifacts/update.json "${UPDATE_FLAGS[@]}"
           cargo packager signer sign artifacts/update.json
-          cargo run --locked -p beacon-updater --bin verify-update -- artifacts
+          verify-update artifacts
 
       - name: Record build provenance and available packages
         env:

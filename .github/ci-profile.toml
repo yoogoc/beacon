@@ -1,0 +1,20 @@
+# CI builds exercise the same code and assertions without spending time
+# optimizing a debug application. Only ci.yml opts into this configuration;
+# local development and release packaging keep the workspace profiles.
+[profile.dev]
+opt-level = 0
+debug = 0
+debug-assertions = true
+overflow-checks = true
+
+[profile.dev.package."*"]
+opt-level = 0
+
+[profile.test]
+opt-level = 0
+debug = 0
+debug-assertions = true
+overflow-checks = true
+
+[profile.test.package."*"]
+opt-level = 0

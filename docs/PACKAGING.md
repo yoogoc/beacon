@@ -149,12 +149,16 @@ kube 走的是 rustls。也没有列 Vulkan 驱动（`mesa-vulkan-drivers` 之�
 打包触发限定在 **push `v*` tag、以及手动 dispatch**。push 到 main 不会自动构建、打包或发布。
 其他分支和 PR 运行 `.github/workflows/ci.yml`；发布标签和手动打包通过可复用的同一 CI 工作流执行检查。
 
-发布依次执行：
+发布流程：
 
 1. `prepare` 校验版本并生成本次构建版本。
-2. `checks` 执行发布脚本测试、格式检查、Clippy，以及 macOS / Linux / Windows 构建和测试。
-3. `package` 将同一个版本写入各平台的 Cargo.toml 和 Cargo.lock，再构建和打包。
-4. `release` 先创建草稿并上传全部可用产物，再公开发布。已公开的同名 Release 不允许被重跑覆盖。
+2. `checks` 与 `package` 并行：前者执行发布脚本测试、格式检查、Clippy，以及 macOS / Linux / Windows 构建和测试；后者将同一个版本写入各平台的 Cargo.toml 和 Cargo.lock，再构建和打包。
+3. `release` 必须等待全部检查和正式版平台打包成功，才创建草稿、上传产物并公开发布。已公开的同名 Release 不允许被重跑覆盖。
+
+CI 使用显式的 `.github/ci-profile.toml`，关闭 debug 构建的优化与调试符号，保留断言、溢出检查和全部构建 / 测试目标。普通 `cargo run` 与正式包继续使用 workspace 的原有 profile。
+Linux amd64 打包任务在同一次 Cargo 构建中编译应用与更新验证器。发布阶段取回该任务已经安装的 `cargo-packager` 和已编译的 `verify-update`，避免再次安装 Rust、编译签名工具和验证器；工具 artifact 与 `beacon-*` 安装包分别下载，工具不会进入 Release 资产或更新清单。
+
+GitHub 的 Actions cache 只能从当前分支 / 标签或默认分支恢复；不同发布标签的缓存不能直接互用。保持 main 推送不自动构建时，首次运行的新标签可能仍需冷编译。上述优化减少检查的编译工作，并让检查与打包重叠，而不是依赖标签之间的缓存命中。
 
 | 触发 | 版本 / 标签 | GitHub 发布状态 |
 | --- | --- | --- |
