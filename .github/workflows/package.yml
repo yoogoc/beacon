@@ -257,6 +257,19 @@ jobs:
     permissions:
       contents: write
     steps:
+      - name: Verify the pushed release tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
+        shell: bash
+        run: |
+          TAG_SHA=$(gh api "repos/$GH_REPO/commits/$RELEASE_TAG" --jq '.sha')
+          if [[ "$TAG_SHA" != "$GITHUB_SHA" ]]; then
+            echo "::error::The release tag no longer points to this workflow's commit."
+            exit 1
+          fi
+
       - name: Refuse to replace a published release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -347,7 +360,8 @@ jobs:
       - uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ needs.prepare.outputs.tag }}
-          target_commitish: ${{ github.sha }}
+          # The verified tag already pins the source. Specifying an old SHA can
+          # require workflows:write when main's workflow files have advanced.
           name: ${{ needs.prepare.outputs.name }}
           body_path: release-notes.md
           # Upload everything to a draft before making it visible to users.
