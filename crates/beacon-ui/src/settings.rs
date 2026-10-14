@@ -166,6 +166,7 @@ pub(crate) struct Preferences {
     pub resources: BTreeMap<String, crate::table_preferences::ResourcePreferences>,
     pub kubeconfigs: beacon_kube::sources::Preferences,
     pub favorites: crate::global_search::Favorites,
+    pub forwards: Vec<crate::forward_dialog::Preset>,
 }
 impl Preferences {
     pub fn yaml_folding(&self, id: &ClusterId) -> crate::yaml_folding::YamlFolding {
@@ -337,6 +338,28 @@ pub(crate) fn save_favorites(
     let store = store(cx);
     let mut preferences = store.read(cx).preferences.clone();
     preferences.favorites = favorites;
+    let directory = store.read(cx).directory.clone();
+    std::fs::create_dir_all(&directory).map_err(|error| error.to_string())?;
+    atomic_write(
+        &directory.join("settings.json"),
+        &serde_json::to_vec_pretty(&preferences).map_err(|error| error.to_string())?,
+    )?;
+    store.update(cx, |state, cx| {
+        state.preferences = preferences;
+        cx.emit(Changed(None));
+        cx.notify();
+    });
+    Ok(())
+}
+
+/// Persist bookmarks only. Restoring a forward always requires an explicit user action.
+pub(crate) fn save_forwards(
+    forwards: Vec<crate::forward_dialog::Preset>,
+    cx: &mut App,
+) -> Result<(), String> {
+    let store = store(cx);
+    let mut preferences = store.read(cx).preferences.clone();
+    preferences.forwards = forwards;
     let directory = store.read(cx).directory.clone();
     std::fs::create_dir_all(&directory).map_err(|error| error.to_string())?;
     atomic_write(

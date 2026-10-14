@@ -413,20 +413,24 @@ impl ResourceTable {
                     let _ = files_view.update(cx, |view, cx| view.open_files(&files_target, cx));
                 },
             ));
-
-            let ports = actions::ports(&object.data);
-            if !ports.is_empty() && target.namespace.is_some() {
-                for port in ports {
-                    let forward_view = view.clone();
-                    let forward_target = target.clone();
-                    menu = menu.item(PopupMenuItem::new(format!("Forward port {port}")).on_click(
-                        move |_, window, cx| {
-                            let _ = forward_view.update(cx, |cluster, cx| {
-                                cluster.start_forward_for(forward_target.clone(), port, window, cx);
-                            });
-                        },
-                    ));
-                }
+        }
+        if beacon_kube::forward::TargetKind::from_resource(group, name).is_some()
+            && target.namespace.is_some()
+        {
+            let ports = crate::forward_dialog::ports(name, &object.data);
+            let mut choices: Vec<_> = ports
+                .into_iter()
+                .map(|port| (format!("Forward port {port}…"), port))
+                .collect();
+            choices.push(("Port forward…".into(), 0));
+            for (label, port) in choices {
+                let forward_view = view.clone();
+                let forward_target = target.clone();
+                menu = menu.item(PopupMenuItem::new(label).on_click(move |_, window, cx| {
+                    let _ = forward_view.update(cx, |cluster, cx| {
+                        cluster.start_forward_for(forward_target.clone(), port, window, cx)
+                    });
+                }));
             }
         }
         menu = menu.item(detail_item("View YAML", &view, &target, DetailTab::Yaml));

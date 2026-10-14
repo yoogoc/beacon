@@ -508,6 +508,17 @@ impl ClusterSession {
         self.forwards.list()
     }
 
+    /// Opens a persistent loopback listener for a logical Pod, Service or Deployment.
+    pub async fn forward_target(
+        self: Arc<Self>,
+        target: crate::forward::Target,
+        local_port: u16,
+    ) -> Result<Forward> {
+        self.forwards
+            .open_target(self.client.clone(), &self.runtime, target, local_port)
+            .await
+    }
+
     pub fn close_forward(&self, id: ForwardId) {
         self.forwards.close(id);
     }

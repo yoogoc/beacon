@@ -13,8 +13,8 @@ use std::{collections::BTreeSet, sync::Arc, time::Duration};
 use crate::selection::checkbox;
 use beacon_columns::ColumnSet;
 use beacon_kube::{
-    Applied, ClusterSession, DeleteTarget, Delta, Forward, Health, Kind, ObjectRef, Operation,
-    Release, ResourceStore, Rules, WatchKey, resources,
+    Applied, ClusterSession, DeleteTarget, Delta, Health, Kind, ObjectRef, Operation, Release,
+    ResourceStore, Rules, WatchKey, resources,
 };
 use gpui_kit::component::WindowExt as _;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
@@ -43,6 +43,7 @@ use crate::prompt::{Ask, Prompt, PromptEvent};
 use crate::table::ResourceTable;
 use crate::theme::{BeaconTheme as _, Tone};
 
+mod forwards;
 mod list_settings;
 mod toolbar;
 
@@ -191,7 +192,7 @@ pub struct ClusterView {
     _bulk_operation: Option<Task<()>>,
     _rules: Option<Task<()>>,
     _metrics: Task<()>,
-    _forward: Option<Task<()>>,
+    forward_dialog: Option<Entity<crate::forward_dialog::ForwardDialog>>,
     _releases: Option<Task<()>>,
     _clock: Task<()>,
     _subscriptions: Vec<Subscription>,
@@ -222,6 +223,16 @@ impl EventEmitter<crate::pod_files::FilesRequested> for ClusterView {}
 impl ClusterView {
     pub(crate) fn pending_edits(&self, cx: &App) -> Vec<String> {
         let mut edits = Vec::new();
+        if self
+            .forward_dialog
+            .as_ref()
+            .is_some_and(|view| view.read(cx).busy())
+        {
+            edits.push(format!(
+                "{}: starting port forward",
+                self.session.id().display_name()
+            ));
+        }
         if self
             .debug_dialogs
             .iter()
@@ -365,7 +376,7 @@ impl ClusterView {
             _bulk_operation: None,
             _rules: None,
             _metrics: Task::ready(()),
-            _forward: None,
+            forward_dialog: None,
             _releases: None,
             _clock: Task::ready(()),
             _subscriptions: Vec::new(),
@@ -636,7 +647,12 @@ impl ClusterView {
         let Some(kind) = self.kind.as_ref() else {
             return Vec::new();
         };
-        if kind.resource.kind != "Pod" || !kind.resource.group.is_empty() {
+        if beacon_kube::forward::TargetKind::from_resource(
+            &kind.resource.group,
+            &kind.resource.kind,
+        )
+        .is_none()
+        {
             return Vec::new();
         }
 
@@ -647,7 +663,7 @@ impl ClusterView {
             .read(cx)
             .delegate()
             .object(&selected)
-            .map(|object| crate::actions::ports(&object.data))
+            .map(|object| crate::forward_dialog::ports(&kind.resource.kind, &object.data))
             .unwrap_or_default()
     }
 
@@ -657,41 +673,6 @@ impl ClusterView {
             return;
         };
         self.start_forward_for(selected, remote_port, window, cx);
-    }
-
-    pub(crate) fn start_forward_for(
-        &mut self,
-        target: ObjectRef,
-        remote_port: u16,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let Some(namespace) = target.namespace.clone() else {
-            return;
-        };
-
-        self.outcome = Some(Outcome::Running(format!("Forwarding port {remote_port}")));
-        self.mode = Mode::Forwards;
-        cx.notify();
-
-        let session = self.session.clone();
-        let pod = target.name.clone();
-        // A local port of 0 asks the operating system for a free one. Picking
-        // a number ourselves means a clash with whatever is already listening.
-        let opening = Bridge::global(cx)
-            .run(async move { session.forward(namespace, pod, remote_port, 0).await });
-
-        self._forward = Some(cx.spawn_in(window, async move |this, cx| {
-            let result = opening.await;
-            let _ = this.update(cx, |view, cx| {
-                view.outcome = Some(match result {
-                    Ok(Ok(forward)) => Outcome::Done(format!("Forwarding {}", forward.address())),
-                    Ok(Err(error)) => Outcome::Failed(error.to_string()),
-                    Err(error) => Outcome::Failed(error.to_string()),
-                });
-                cx.notify();
-            });
-        }));
     }
 
     /// Stops one forward.
@@ -2299,70 +2280,6 @@ impl ClusterView {
             .into_any_element()
     }
 
-    fn render_forwards(&self, cx: &mut Context<Self>) -> AnyElement {
-        let forwards: Vec<Forward> = self.session.forwards();
-
-        if forwards.is_empty() {
-            return self.notice(
-                "Nothing is being forwarded. Select a pod and run “Forward port …” from ⌘K.",
-                cx,
-            );
-        }
-
-        div()
-            .id("forwards")
-            .size_full()
-            .overflow_y_scroll()
-            .child(
-                v_flex()
-                    .w_full()
-                    .children(forwards.into_iter().map(|forward| {
-                        let id = forward.id;
-                        h_flex()
-                            .w_full()
-                            .px_3()
-                            .py_2()
-                            .gap_3()
-                            .items_center()
-                            .border_b_1()
-                            .border_color(cx.theme().border)
-                            .text_sm()
-                            .child(
-                                div()
-                                    .w(px(170.))
-                                    .font_family("monospace")
-                                    .text_color(cx.theme().tone(Tone::Healthy))
-                                    .child(forward.address()),
-                            )
-                            .child(div().flex_1().truncate().child(format!(
-                                "{}/{}:{}",
-                                forward.namespace, forward.pod, forward.remote_port
-                            )))
-                            .child(
-                                div()
-                                    .w(px(120.))
-                                    .text_xs()
-                                    .text_color(cx.theme().muted_foreground)
-                                    .child(match forward.connections {
-                                        0 => "idle".to_string(),
-                                        1 => "1 connection".to_string(),
-                                        many => format!("{many} connections"),
-                                    }),
-                            )
-                            .child(
-                                Button::new(SharedString::from(format!("close-forward-{id}")))
-                                    .xsmall()
-                                    .ghost()
-                                    .label("Stop")
-                                    .on_click(cx.listener(move |view, _, _, cx| {
-                                        view.close_forward(id, cx);
-                                    })),
-                            )
-                    })),
-            )
-            .into_any_element()
-    }
-
     /// A notice for something that has not finished yet. Same shape as
     /// [`Self::notice`] with a spinner, because static text cannot say whether
     /// anything is still happening.
@@ -3032,6 +2949,17 @@ impl Render for ClusterView {
                     .justify_center()
                     .bg(cx.theme().background.opacity(0.75))
                     .child(action)
+            }))
+            .children(self.forward_dialog.clone().map(|dialog| {
+                div()
+                    .absolute()
+                    .inset_0()
+                    .occlude()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .bg(cx.theme().background.opacity(0.75))
+                    .child(dialog)
             }))
             .children(self.node_action.clone().map(|action| {
                 div()

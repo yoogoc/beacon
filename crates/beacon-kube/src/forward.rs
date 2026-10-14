@@ -1,16 +1,9 @@
-//! Port forwarding.
-//!
-//! A forward is a local TCP listener that hands every connection its own
-//! tunnel to a pod. It is the one thing in Beacon that outlives what you are
-//! looking at: you set one up in order to point a browser or a database client
-//! at it, and switching to another resource — or another cluster — must not
-//! tear it down. So forwards live in the session, not in a view, and they are
-//! listed by the session for as long as they run.
-//!
-//! One connection, one tunnel. `kubectl port-forward` works the same way, and
-//! it matters: a tunnel is a WebSocket to the API server, and multiplexing
-//! several client connections onto one would tangle their streams.
-
+//! Session-owned loopback listeners. Logical targets are resolved again after
+//! Pod replacement without rebinding the local port. Stopping a listener also
+//! aborts every in-flight tunnel through it.
+use crate::{Error, Result};
+use k8s_openapi::api::core::v1::Pod;
+use kube::Api;
 use std::{
     collections::HashMap,
     net::{Ipv4Addr, SocketAddr},
@@ -18,40 +11,30 @@ use std::{
         Arc, Mutex,
         atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
     },
+    time::Duration,
 };
-
-use k8s_openapi::api::core::v1::Pod;
-use kube::Api;
-use tokio::net::TcpListener;
-
-use crate::{Error, Result};
-
-/// Identifies one forward for as long as it runs.
+use tokio::{net::TcpListener, task::JoinSet};
+mod target;
+pub use target::{Resolved, Target, TargetKind};
 pub type ForwardId = u64;
 
-/// A running forward, as the UI lists it.
 #[derive(Debug, Clone)]
 pub struct Forward {
     pub id: ForwardId,
     pub namespace: String,
+    pub target: Target,
     pub pod: String,
     pub remote_port: u16,
-    /// The port that was actually bound, which is the one to connect to. Asking
-    /// for 0 means "any free port", and then this is the only place the answer
-    /// exists.
     pub local_port: u16,
-    /// How many client connections are currently tunnelled.
     pub connections: usize,
-    /// Why it stopped, if it did.
     pub failure: Option<String>,
+    pub reconnecting: Option<String>,
+    route: Resolved,
 }
-
 impl Forward {
-    /// What to paste into a browser.
     pub fn address(&self) -> String {
         format!("127.0.0.1:{}", self.local_port)
     }
-
     pub fn describe(&self) -> String {
         format!(
             "{} → {}/{}:{}",
@@ -62,34 +45,24 @@ impl Forward {
         )
     }
 }
-
-/// The shared, mutable part of a running forward.
 struct Running {
-    forward: Mutex<Forward>,
+    forward: Arc<Mutex<Forward>>,
     connections: Arc<AtomicUsize>,
     task: tokio::task::AbortHandle,
 }
-
 impl Drop for Running {
     fn drop(&mut self) {
         self.task.abort();
     }
 }
-
-/// Every forward a cluster session is running.
 #[derive(Default)]
 pub struct Forwards {
     running: Mutex<HashMap<ForwardId, Arc<Running>>>,
     next_id: AtomicU64,
     stopped: AtomicBool,
 }
-
 impl Forwards {
-    /// Opens a local listener and tunnels everything that connects to it.
-    ///
-    /// `local_port` of 0 asks the operating system for a free one, which is
-    /// what the UI offers by default: a port that is already taken is a
-    /// failure at bind time and a confusing one.
+    /// Compatibility entry point for a known Pod/port; new UI uses open_target.
     pub async fn open(
         &self,
         client: kube::Client,
@@ -99,65 +72,95 @@ impl Forwards {
         remote_port: u16,
         local_port: u16,
     ) -> Result<Forward> {
-        let listener = TcpListener::bind(SocketAddr::from((Ipv4Addr::LOCALHOST, local_port)))
+        let target = Target {
+            kind: TargetKind::Pod,
+            namespace,
+            name: pod.clone(),
+            port: remote_port,
+        };
+        target.validate()?;
+        self.listen(
+            client,
+            runtime,
+            target,
+            Resolved {
+                pod,
+                uid: None,
+                port: remote_port,
+            },
+            local_port,
+        )
+        .await
+    }
+    pub async fn open_target(
+        &self,
+        client: kube::Client,
+        runtime: &tokio::runtime::Handle,
+        target: Target,
+        local_port: u16,
+    ) -> Result<Forward> {
+        let route = resolve(&target, &client).await?;
+        self.listen(client, runtime, target, route, local_port)
             .await
-            .map_err(|error| Error::Forward {
-                what: format!("could not listen on 127.0.0.1:{local_port}"),
-                cause: error.to_string(),
-            })?;
-
+    }
+    async fn listen(
+        &self,
+        client: kube::Client,
+        runtime: &tokio::runtime::Handle,
+        target: Target,
+        route: Resolved,
+        local_port: u16,
+    ) -> Result<Forward> {
+        let listener = TcpListener::bind(SocketAddr::from((Ipv4Addr::LOCALHOST, local_port))).await.map_err(|error| Error::Forward {
+            what: format!("could not listen on 127.0.0.1:{local_port}"),
+            cause: if error.kind() == std::io::ErrorKind::AddrInUse { "Port is already in use. Stop its current listener or choose another local port (0 selects a free port).".into() } else { error.to_string() },
+        })?;
         let bound = listener
             .local_addr()
             .map_err(|error| Error::Forward {
-                what: "could not read the local address".to_string(),
+                what: "could not read local address".into(),
                 cause: error.to_string(),
             })?
             .port();
-
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         let connections = Arc::new(AtomicUsize::new(0));
-
         let forward = Forward {
             id,
-            namespace: namespace.clone(),
-            pod: pod.clone(),
-            remote_port,
+            namespace: target.namespace.clone(),
+            target,
+            pod: route.pod.clone(),
+            remote_port: route.port,
             local_port: bound,
             connections: 0,
             failure: None,
+            reconnecting: None,
+            route,
         };
-
+        let state = Arc::new(Mutex::new(forward.clone()));
         let task = runtime.spawn(accept_loop(
             listener,
             client,
-            namespace,
-            pod,
-            remote_port,
+            state.clone(),
             connections.clone(),
         ));
-
-        tracing::info!(forward = %forward.describe(), "forwarding");
-
         let running = Arc::new(Running {
-            forward: Mutex::new(forward.clone()),
+            forward: state,
             connections,
             task: task.abort_handle(),
         });
         let mut forwards = self.running.lock().expect("forwards");
         if self.stopped.load(Ordering::Acquire) {
             return Err(Error::Forward {
-                what: "could not start forwarding".to_string(),
-                cause: "cluster was disconnected".to_string(),
+                what: "could not start forwarding".into(),
+                cause: "cluster was disconnected".into(),
             });
         }
+        tracing::info!(forward = %forward.describe(), "forwarding");
         forwards.insert(id, running);
-
         Ok(forward)
     }
-
-    /// Every forward, with its live connection count.
     pub fn list(&self) -> Vec<Forward> {
-        let mut forwards: Vec<Forward> = self
+        let mut forwards: Vec<_> = self
             .running
             .lock()
             .expect("forwards")
@@ -168,102 +171,112 @@ impl Forwards {
                 forward
             })
             .collect();
-
-        forwards.sort_by_key(|forward| forward.id);
+        forwards.sort_by_key(|f| f.id);
         forwards
     }
-
     pub fn is_empty(&self) -> bool {
         self.running.lock().expect("forwards").is_empty()
     }
-
-    /// Stops the session's forwards and rejects late results from pending opens.
     pub fn stop_all(&self) {
         let mut forwards = self.running.lock().expect("forwards");
         self.stopped.store(true, Ordering::Release);
         forwards.clear();
     }
-
-    /// Stops one forward. Dropping the handle aborts its task, which closes
-    /// the listener and every tunnel through it.
     pub fn close(&self, id: ForwardId) {
-        if let Some(running) = self.running.lock().expect("forwards").remove(&id) {
-            tracing::info!(
-                forward = %running.forward.lock().expect("forward").describe(),
-                "stopped forwarding"
-            );
-        }
+        self.running.lock().expect("forwards").remove(&id);
     }
-
-    /// Stops the forwards pointing at a pod that no longer exists.
-    ///
-    /// A forward to a dead pod accepts connections and then fails each one,
-    /// which looks like a broken service rather than a stale forward.
     pub fn close_for_pod(&self, namespace: &str, pod: &str) {
-        let stale: Vec<ForwardId> = self
-            .list()
-            .into_iter()
-            .filter(|forward| forward.namespace == namespace && forward.pod == pod)
-            .map(|forward| forward.id)
-            .collect();
-
-        for id in stale {
-            self.close(id);
+        // A Service/Deployment listener must survive deletion of its current Pod.
+        for forward in self.list().into_iter().filter(|f| {
+            f.target.kind == TargetKind::Pod && f.namespace == namespace && f.pod == pod
+        }) {
+            self.close(forward.id);
         }
     }
 }
-
-/// Accepts local connections and gives each one its own tunnel.
+async fn resolve(target: &Target, client: &kube::Client) -> Result<Resolved> {
+    tokio::time::timeout(Duration::from_secs(15), target.resolve(client.clone()))
+        .await
+        .map_err(|_| Error::Forward {
+            what: "could not resolve forwarding target".into(),
+            cause: "API request timed out; check the connection and retry.".into(),
+        })?
+}
+fn update_route(state: &Mutex<Forward>, result: &Result<Resolved>) {
+    let mut state = state.lock().expect("forward");
+    match result {
+        Ok(route) => {
+            if state.route != *route {
+                state.failure = None;
+            }
+            state.pod = route.pod.clone();
+            state.remote_port = route.port;
+            state.route = route.clone();
+            state.reconnecting = None;
+        }
+        Err(error) => state.reconnecting = Some(error.user_message()),
+    }
+}
 async fn accept_loop(
     listener: TcpListener,
     client: kube::Client,
-    namespace: String,
-    pod: String,
-    remote_port: u16,
+    state: Arc<Mutex<Forward>>,
     connections: Arc<AtomicUsize>,
 ) {
-    let api: Api<Pod> = Api::namespaced(client, &namespace);
-
+    let target = state.lock().expect("forward").target.clone();
+    let mut tunnels = JoinSet::new();
+    let mut refresh = tokio::time::interval(Duration::from_secs(3));
+    refresh.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    let mut pending = Box::pin(resolve(&target, &client));
+    let mut resolving = true;
     loop {
-        let Ok((mut socket, peer)) = listener.accept().await else {
-            // The listener is gone; so is this forward.
-            return;
-        };
-
-        let api = api.clone();
-        let pod = pod.clone();
-        let connections = connections.clone();
-
-        tokio::spawn(async move {
-            connections.fetch_add(1, Ordering::Relaxed);
-            // The count has to come back down however this ends, including a
-            // panic in the copy below.
-            let _guard = Counted(connections);
-
-            let mut forwarder = match api.portforward(&pod, &[remote_port]).await {
-                Ok(forwarder) => forwarder,
-                Err(error) => {
-                    tracing::warn!(%pod, %peer, %error, "could not open the tunnel");
-                    return;
-                }
-            };
-
-            let Some(mut tunnel) = forwarder.take_stream(remote_port) else {
-                tracing::warn!(%pod, port = remote_port, "the pod did not open that port");
-                return;
-            };
-
-            if let Err(error) = tokio::io::copy_bidirectional(&mut socket, &mut tunnel).await {
-                // A client closing its end mid-request is ordinary, not an
-                // incident.
-                tracing::debug!(%pod, %peer, %error, "tunnel closed");
+        tokio::select! {
+            result = &mut pending, if resolving => { update_route(&state, &result); resolving = false; }
+            _ = refresh.tick(), if !resolving => { pending = Box::pin(resolve(&target, &client)); resolving = true; }
+            _ = tunnels.join_next(), if !tunnels.is_empty() => {}
+            accepted = listener.accept() => {
+                let Ok((mut socket, _peer)) = accepted else { return; };
+                let (client, target, state, connections) = (client.clone(), target.clone(), state.clone(), connections.clone());
+                tunnels.spawn(async move {
+                    connections.fetch_add(1, Ordering::Relaxed);
+                    let _guard = Counted(connections);
+                    let result = resolve(&target, &client).await;
+                    update_route(&state, &result);
+                    let Ok(route) = result else { return; };
+                    let api: Api<Pod> = Api::namespaced(client, &target.namespace);
+                    let mut forwarder = match tokio::time::timeout(Duration::from_secs(15), api.portforward(&route.pod, &[route.port])).await {
+                        Ok(Ok(forwarder)) => Tunnel(forwarder),
+                        result => {
+                            let message = match result { Ok(Err(error)) => crate::Error::from(error).user_message(), Err(_) => "Opening the tunnel timed out.".into(), _ => unreachable!() };
+                            state.lock().expect("forward").failure = Some(message); return;
+                        }
+                    };
+                    let Some(mut tunnel) = forwarder.0.take_stream(route.port) else {
+                        state.lock().expect("forward").failure = Some("The Pod did not open the requested port.".into()); return;
+                    };
+                    state.lock().expect("forward").failure = None;
+                    let remote_error = forwarder.0.take_error(route.port);
+                    tokio::select! {
+                        result = tokio::io::copy_bidirectional(&mut socket, &mut tunnel) => {
+                            if let Err(error) = result { tracing::debug!(%error, "forward connection closed"); }
+                        }
+                        error = async { match remote_error { Some(error) => error.await, None => std::future::pending().await } } => {
+                            if let Some(error) = error { state.lock().expect("forward").failure = Some(error); }
+                        }
+                    }
+                });
             }
-        });
+        }
     }
 }
-
+// kube's Portforwarder owns a detached task; dropping it alone does not abort.
+struct Tunnel(kube::api::Portforwarder);
+impl Drop for Tunnel {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
+}
 struct Counted(Arc<AtomicUsize>);
-
 impl Drop for Counted {
     fn drop(&mut self) {
         self.0.fetch_sub(1, Ordering::Relaxed);
@@ -278,6 +291,18 @@ mod tests {
         Forward {
             id: 0,
             namespace: namespace.to_string(),
+            target: Target {
+                kind: TargetKind::Pod,
+                namespace: namespace.into(),
+                name: pod.into(),
+                port: remote,
+            },
+            route: Resolved {
+                pod: pod.into(),
+                uid: None,
+                port: remote,
+            },
+            reconnecting: None,
             pod: pod.to_string(),
             remote_port: remote,
             local_port: local,
@@ -326,10 +351,10 @@ mod tests {
             forwards.running.lock().expect("forwards").insert(
                 id,
                 Arc::new(Running {
-                    forward: Mutex::new(Forward {
+                    forward: Arc::new(Mutex::new(Forward {
                         id,
                         ..forward(10000 + index as u16, "default", "api", port)
-                    }),
+                    })),
                     connections: Arc::new(AtomicUsize::new(0)),
                     task: task.abort_handle(),
                 }),
@@ -398,10 +423,10 @@ mod tests {
             forwards.running.lock().expect("forwards").insert(
                 id,
                 Arc::new(Running {
-                    forward: Mutex::new(Forward {
+                    forward: Arc::new(Mutex::new(Forward {
                         id,
                         ..forward(10000, "default", pod, port)
-                    }),
+                    })),
                     connections: Arc::new(AtomicUsize::new(0)),
                     task: task.abort_handle(),
                 }),
@@ -415,3 +440,8 @@ mod tests {
         assert_eq!(left[0].pod, "api-2");
     }
 }
+
+#[cfg(all(test, unix))]
+mod native_test;
+#[cfg(test)]
+mod target_tests;
