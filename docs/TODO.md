@@ -61,9 +61,9 @@
 
 ### 09 · RBAC 权限查看与解释
 
-- [ ] 提供 ServiceAccount / User / Group 的权限查看与 Can I 查询。
-- [ ] 展示主体 → Binding → Role / ClusterRole → Rules 的权限来源。
-- [ ] 在 403 错误中解释相关 verb、资源和 subresource，并可跳转到权限详情。
+- [x] 提供 ServiceAccount / User / Group 的权限查看与 Can I 查询。
+- [x] 展示主体 → Binding → Role / ClusterRole → Rules 的权限来源。
+- [x] 在 403 错误中解释相关 verb、资源和 subresource，并可跳转到权限详情。
 
 ### 10 · 全局资源搜索与收藏
 

@@ -909,6 +909,24 @@ impl ClusterView {
         cx.notify();
     }
 
+    pub(crate) fn show_permissions(
+        &mut self,
+        target: ObjectRef,
+        error: Option<String>,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(kind) = self.kind.clone() {
+            crate::permissions::for_resource(
+                self.session.clone(),
+                kind,
+                target,
+                error.as_deref(),
+                "get",
+                cx,
+            );
+        }
+    }
+
     fn start_create(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(kind) = self.kind.clone().filter(|kind| kind.supports("create")) else {
             return;

@@ -300,9 +300,26 @@ impl Render for CreateView {
                     .text_color(cx.theme().tone(tone))
                     .child(crate::copyable_text::copyable_text(
                         "create-status-text",
-                        message,
+                        message.clone(),
                     )),
             )
+            .children(crate::permissions::error_link(
+                "create-permissions",
+                self.session.clone(),
+                &message,
+                beacon_kube::rbac::Query {
+                    verb: "create".into(),
+                    group: self.kind.resource.group.clone(),
+                    resource: self.kind.resource.plural.clone(),
+                    namespace: self.manifest(cx).ok().and_then(|manifest| {
+                        manifest
+                            .pointer("/metadata/namespace")
+                            .and_then(Value::as_str)
+                            .map(str::to_owned)
+                    }),
+                    ..Default::default()
+                },
+            ))
             .child(
                 h_flex()
                     .px_4()

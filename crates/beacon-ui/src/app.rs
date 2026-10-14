@@ -287,6 +287,42 @@ struct WorkspaceWindows {
 }
 impl Global for WorkspaceWindows {}
 
+pub(crate) fn navigate_resource(
+    cluster: &ClusterId,
+    kind: Arc<Kind>,
+    target: beacon_kube::ObjectRef,
+    cx: &mut App,
+) {
+    let workspace = cx
+        .global::<WorkspaceWindows>()
+        .windows
+        .values()
+        .find(|entry| entry.main)
+        .or_else(|| cx.global::<WorkspaceWindows>().windows.values().next())
+        .map(|entry| (entry.handle, entry.view.clone()));
+    if let Some((handle, app)) = workspace {
+        let cluster = cluster.clone();
+        let _ = handle.update(cx, |_, window, cx| {
+            let _ = app.update(cx, |app, cx| {
+                if !app.connections.read(cx).sessions.contains_key(&cluster) {
+                    return;
+                }
+                app.go_to_kind(
+                    cluster,
+                    kind,
+                    target.namespace.iter().cloned().collect(),
+                    window,
+                    cx,
+                );
+                if let Some(view) = app.cluster() {
+                    view.update(cx, |view, cx| view.reveal_owner(target, window, cx));
+                }
+                window.activate_window();
+            });
+        });
+    }
+}
+
 struct WorkspaceWindow {
     view: WeakEntity<BeaconApp>,
     handle: AnyWindowHandle,
@@ -2142,6 +2178,8 @@ impl BeaconApp {
                         let reconnect_target = menu_target.clone();
                         let reconnect_view = menu_view.clone();
                         let settings_target = menu_target.clone();
+                        let permissions_target = menu_target.clone();
+                        let permissions_connections = menu_view.clone();
                         menu.item(
                             PopupMenuItem::new(if favorite_cluster {
                                 "Remove favorite"
@@ -2160,6 +2198,32 @@ impl BeaconApp {
                             PopupMenuItem::new("Cluster settings…").on_click(move |_, _, cx| {
                                 crate::preferences::cluster(settings_target.clone(), cx)
                             }),
+                        )
+                        .item(
+                            PopupMenuItem::new("Permissions…")
+                                .disabled(!connected)
+                                .on_click(move |_, _, cx| {
+                                    let _ = permissions_connections.update(cx, |app, cx| {
+                                        let session = app
+                                            .connections
+                                            .read(cx)
+                                            .sessions
+                                            .get(&permissions_target)
+                                            .cloned();
+                                        if let Some(session) = session {
+                                            crate::permissions::open(
+                                                session,
+                                                beacon_kube::rbac::Subject::Current,
+                                                beacon_kube::rbac::Query {
+                                                    verb: "list".into(),
+                                                    resource: "pods".into(),
+                                                    ..Default::default()
+                                                },
+                                                cx,
+                                            );
+                                        }
+                                    });
+                                }),
                         )
                         .separator()
                         .item(

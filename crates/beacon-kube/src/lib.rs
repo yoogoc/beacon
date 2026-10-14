@@ -28,6 +28,7 @@ pub mod metrics;
 pub mod network;
 pub mod ops;
 pub mod overview;
+pub mod rbac;
 pub mod relationships;
 pub mod resources;
 pub mod rollout;

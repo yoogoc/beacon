@@ -1285,6 +1285,28 @@ impl PodToolsView {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let waiting = tone == Tone::Progressing;
+        let message = message.into();
+        let permissions = crate::permissions::error_link(
+            "pod-tools-permissions",
+            self.session.clone(),
+            &message,
+            beacon_kube::rbac::Query {
+                verb: if self.tab == PodToolTab::Logs {
+                    "get".into()
+                } else {
+                    "create".into()
+                },
+                resource: "pods".into(),
+                subresource: if self.tab == PodToolTab::Logs {
+                    "log".into()
+                } else {
+                    "exec".into()
+                },
+                namespace: self.target.namespace.clone(),
+                name: Some(self.target.name.clone()),
+                ..Default::default()
+            },
+        );
 
         h_flex()
             .size_full()
@@ -1304,6 +1326,7 @@ impl PodToolsView {
                 "pod-tools-notice",
                 message,
             ))
+            .children(permissions)
             .into_any_element()
     }
 }

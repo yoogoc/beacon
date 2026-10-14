@@ -390,6 +390,22 @@ impl ClusterView {
                 })
             });
         notice.map(|(tone, text)| {
+            let session = self.session.clone();
+            let query = beacon_kube::rbac::Query {
+                verb: "get".into(),
+                group: self
+                    .kind
+                    .as_ref()
+                    .map(|kind| kind.resource.group.clone())
+                    .unwrap_or_default(),
+                resource: self
+                    .kind
+                    .as_ref()
+                    .map(|kind| kind.resource.plural.clone())
+                    .unwrap_or_default(),
+                namespace: self.scoped_to.iter().next().cloned(),
+                ..Default::default()
+            };
             let glyph = match tone {
                 Tone::Healthy => Glyph::CircleCheck,
                 Tone::Critical => Glyph::CircleX,
@@ -412,6 +428,12 @@ impl ClusterView {
                         .child(crate::copyable_text::copyable_text(
                             "operation-outcome",
                             text.clone(),
+                        ))
+                        .children(crate::permissions::error_link(
+                            "operation-permissions",
+                            session.clone(),
+                            &text,
+                            query.clone(),
                         ))
                 })
                 .into_any_element()

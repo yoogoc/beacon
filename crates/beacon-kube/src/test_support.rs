@@ -191,6 +191,10 @@ async fn serve(
         "namespaces" => "Namespace",
         "configmaps" => "ConfigMap",
         "secrets" => "Secret",
+        "roles" => "Role",
+        "rolebindings" => "RoleBinding",
+        "clusterroles" => "ClusterRole",
+        "clusterrolebindings" => "ClusterRoleBinding",
         "jobs" => "Job",
         "cronjobs" => "CronJob",
         _ => "Unknown",
@@ -217,6 +221,19 @@ async fn serve(
     if resource == "selfsubjectrulesreviews" {
         let granted = rules.lock().unwrap().clone();
         response(&mut stream,"200 OK",json!({"apiVersion":"authorization.k8s.io/v1","kind":"SelfSubjectRulesReview","status":{"incomplete":false,"resourceRules":granted,"nonResourceRules":[]}}).to_string(),"application/json").await;
+        return;
+    }
+    if matches!(
+        resource,
+        "selfsubjectaccessreviews" | "subjectaccessreviews" | "selfsubjectreviews"
+    ) {
+        let kind = match resource {
+            "selfsubjectaccessreviews" => "SelfSubjectAccessReview",
+            "subjectaccessreviews" => "SubjectAccessReview",
+            _ => "SelfSubjectReview",
+        };
+        let status=objects.lock().unwrap().iter().find(|object|object["kind"]==kind).map(|object|object["status"].clone()).unwrap_or_else(|| if kind=="SelfSubjectReview"{json!({"userInfo":{"username":"alice","groups":["team","system:authenticated"]}})}else{json!({"allowed":true,"reason":"Fixture permission granted"})});
+        response(&mut stream,"200 OK",json!({"apiVersion":if kind=="SelfSubjectReview"{"authentication.k8s.io/v1"}else{"authorization.k8s.io/v1"},"kind":kind,"spec":request["spec"],"status":status}).to_string(),"application/json").await;
         return;
     }
     if method == "POST" && resource == "jobs" && name.is_none() {

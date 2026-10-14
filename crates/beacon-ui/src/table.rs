@@ -332,6 +332,8 @@ impl ResourceTable {
             .resources
             .contains(&favorite);
         let favorite_view = view.clone();
+        let permission_view = view.clone();
+        let permission_target = target.clone();
 
         menu = menu
             .label(format!("{name} · {}", target.name))
@@ -350,6 +352,13 @@ impl ResourceTable {
             .on_click(move |_, _, cx| {
                 let _ =
                     favorite_view.update(cx, |view, cx| view.toggle_favorite(favorite.clone(), cx));
+            }),
+        );
+        menu = menu.item(
+            PopupMenuItem::new("Permissions…").on_click(move |_, _, cx| {
+                let _ = permission_view.update(cx, |view, cx| {
+                    view.show_permissions(permission_target.clone(), None, cx)
+                });
             }),
         );
 

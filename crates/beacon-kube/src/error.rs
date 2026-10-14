@@ -40,7 +40,13 @@ impl Error {
     pub fn user_message(&self) -> String {
         match self {
             Self::Api(kube::Error::Api(status)) => {
-                format!("{} (HTTP {})", status.message, status.code)
+                let mut message = format!("{} (HTTP {})", status.message, status.code);
+                if status.code == 403
+                    && let Some(query) = crate::rbac::denial(&status.message)
+                {
+                    message.push_str(&format!("\nDenied request: {}. Open Permissions to inspect bindings and query access.",query.describe()));
+                }
+                message
             }
             _ => self.to_string(),
         }

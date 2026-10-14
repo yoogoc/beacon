@@ -2668,6 +2668,19 @@ impl DetailView {
                 .text_xs()
                 .text_color(cx.theme().tone(Tone::Critical))
                 .child(copyable_text("apply-error", error.clone()))
+                .children(crate::permissions::error_link(
+                    "apply-permissions",
+                    self.session.clone(),
+                    error,
+                    beacon_kube::rbac::Query {
+                        verb: "patch".into(),
+                        group: self.kind.resource.group.clone(),
+                        resource: self.kind.resource.plural.clone(),
+                        namespace: self.target().namespace.clone(),
+                        name: Some(self.target().name.clone()),
+                        ..Default::default()
+                    },
+                ))
                 .into_any_element(),
             Apply::Refused(conflict) => {
                 v_flex()
