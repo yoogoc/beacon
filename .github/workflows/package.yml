@@ -293,7 +293,7 @@ jobs:
           printf '%s\n' "$RUNNER_TEMP/beacon-release-tools" >> "$GITHUB_PATH"
 
       - name: Verify cargo-packager signer
-        run: cargo packager --version
+        run: cargo-packager packager --version
 
       - uses: actions/download-artifact@v4
         with:
@@ -312,7 +312,7 @@ jobs:
           UPDATE_FLAGS=()
           if [ "$RELEASE_PRERELEASE" = "true" ]; then UPDATE_FLAGS+=(--allow-missing); fi
           python scripts/updates.py manifest --artifacts artifacts --repository "$GITHUB_REPOSITORY" --version "$RELEASE_VERSION" --output artifacts/update.json "${UPDATE_FLAGS[@]}"
-          cargo packager signer sign artifacts/update.json
+          cargo-packager packager signer sign artifacts/update.json
           verify-update artifacts
 
       - name: Record build provenance and available packages
