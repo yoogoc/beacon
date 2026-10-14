@@ -304,7 +304,9 @@ jobs:
               "", "Available packages:",
           ]
           lines.extend(f"- `{path.name}` ({path.parent.name.removeprefix('beacon-')})" for path in packages)
-          Path("release-notes.md").write_text("\n\n".join(lines) + "\n", encoding="utf-8")
+          notes = Path("docs/releases") / f'{os.environ["RELEASE_VERSION"]}.md'
+          changes = notes.read_text(encoding="utf-8").rstrip() + "\n\n" if notes.is_file() else ""
+          Path("release-notes.md").write_text(changes + "\n\n".join(lines) + "\n", encoding="utf-8")
           PY
 
       - uses: softprops/action-gh-release@v2
