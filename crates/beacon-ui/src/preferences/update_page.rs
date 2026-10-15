@@ -528,7 +528,7 @@ impl PreferencesView {
                 .child(heading("Update preferences"))
                 .child(v_flex().w_full().border_1().border_color(cx.theme().border).rounded_lg().overflow_hidden()
                     .child(preference_row("Release channel", if self.updates.channel == Channel::Stable { "Recommended for everyday use." } else { "Includes development releases; never downgrades." }, channel_control, false, cx))
-                    .child(preference_row("Check automatically", "At startup, then every 24 hours.",
+                    .child(preference_row("Check automatically", "At startup, then every hour.",
                         Switch::new("auto-check-updates").accessibility_label("Automatically check for updates").checked(self.updates.auto_check)
                             .on_click(cx.listener(|view, checked, window, cx| { view.updates.auto_check = *checked; view.save_updates(window, cx); })), false, cx))
                     .child(preference_row("Download automatically", "Ask before restarting to install.",

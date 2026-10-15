@@ -6,6 +6,14 @@ use futures::StreamExt as _;
 use gpui_kit::*;
 use std::{path::PathBuf, sync::Arc, time::Duration};
 
+const CHECK_INTERVAL: Duration = Duration::from_secs(60 * 60);
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum CheckKind {
+    Automatic,
+    Manual,
+}
+
 pub(crate) enum Status {
     Idle,
     Checking,
@@ -44,6 +52,7 @@ pub(crate) struct Updater {
     pub receipt: Option<String>,
     cache: PathBuf,
     generation: u64,
+    check_kind: CheckKind,
     abort: Option<tokio::task::AbortHandle>,
     task: Option<Task<()>>,
     timer: Option<Task<()>>,
@@ -83,7 +92,7 @@ pub fn init(cx: &mut App) {
                     view.cancel(cx);
                     view.status = Status::Idle;
                     if preferences.updates.auto_check {
-                        view.check(cx);
+                        view.check_automatically(cx);
                     }
                 } else if download_enabled && matches!(view.status, Status::Available(_)) {
                     view.download(cx);
@@ -95,6 +104,7 @@ pub fn init(cx: &mut App) {
             installation: Installation::detect(),
             cache: cache.clone(),
             generation: 0,
+            check_kind: CheckKind::Automatic,
             last_checked: None,
             receipt: None,
             abort: None,
@@ -125,9 +135,7 @@ pub fn init(cx: &mut App) {
         view.check_automatically(cx);
         view.timer = Some(cx.spawn(async move |this, cx| {
             loop {
-                cx.background_executor()
-                    .timer(Duration::from_secs(24 * 60 * 60))
-                    .await;
+                cx.background_executor().timer(CHECK_INTERVAL).await;
                 if this
                     .update(cx, |view, cx| view.check_automatically(cx))
                     .is_err()
@@ -153,7 +161,17 @@ impl Updater {
                 Status::Idle | Status::Current | Status::Failed { .. }
             )
         {
-            self.check(cx);
+            self.start_check(CheckKind::Automatic, cx);
+        }
+    }
+    fn check_error(&mut self, error: impl std::fmt::Display, cx: &mut Context<Self>) {
+        if self.check_kind == CheckKind::Manual {
+            self.error(error, None, cx);
+        } else {
+            tracing::info!(message = %error, "automatic update check failed");
+            self.status = Status::Idle;
+            self.abort = None;
+            cx.notify();
         }
     }
     fn error(
@@ -184,15 +202,27 @@ impl Updater {
         cx.notify();
     }
     pub fn check(&mut self, cx: &mut Context<Self>) {
+        self.start_check(CheckKind::Manual, cx);
+    }
+    fn start_check(&mut self, kind: CheckKind, cx: &mut Context<Self>) {
+        if matches!(self.status, Status::Checking) {
+            // A manual request may reuse the running background check, but its
+            // result must now report errors to the user who requested it.
+            if kind == CheckKind::Manual {
+                self.check_kind = CheckKind::Manual;
+            }
+            return;
+        }
         if matches!(
             self.status,
-            Status::Checking | Status::Downloading { .. } | Status::Installing | Status::Ready(_)
+            Status::Downloading { .. } | Status::Installing | Status::Ready(_)
         ) {
             return;
         }
         let proxy = Self::proxy(cx);
         self.cancel(cx);
         let generation = self.generation;
+        self.check_kind = kind;
         self.status = Status::Checking;
         cx.notify();
         let installation = self.installation.clone();
@@ -229,8 +259,8 @@ impl Updater {
                         }
                     }
                     Ok(Ok(None)) => view.status = Status::Current,
-                    Ok(Err(e)) => view.error(format!("{e:#}"), None, cx),
-                    Err(e) => view.error(e, None, cx),
+                    Ok(Err(e)) => view.check_error(format!("{e:#}"), cx),
+                    Err(e) => view.check_error(e, cx),
                 }
                 cx.notify();
             });
@@ -436,7 +466,7 @@ mod tests {
     }
 
     #[::core::prelude::v1::test]
-    fn startup_checks_once_without_delay_then_waits_a_day() {
+    fn startup_checks_once_without_delay_then_waits_an_hour() {
         let directory = tempfile::tempdir().unwrap();
         let cx = TestAppContext::single();
         cx.update(|cx| {
@@ -455,7 +485,10 @@ mod tests {
         cx.run_until_parked();
         cx.update(|cx| assert_eq!(store(cx).read(cx).generation, 2));
         cx.executor()
-            .advance_clock(Duration::from_secs(24 * 60 * 60 - 15));
+            .advance_clock(Duration::from_secs(60 * 60 - 16));
+        cx.run_until_parked();
+        cx.update(|cx| assert_eq!(store(cx).read(cx).generation, 2));
+        cx.executor().advance_clock(Duration::from_secs(1));
         cx.run_until_parked();
         cx.update(|cx| {
             let updater = store(cx);
@@ -485,12 +518,63 @@ mod tests {
             assert!(matches!(Updater::proxy(cx), beacon_updater::Proxy::Custom(url) if url == "http://localhost:8080"));
         });
         cx.run_until_parked();
-        cx.executor()
-            .advance_clock(Duration::from_secs(24 * 60 * 60));
+        cx.executor().advance_clock(Duration::from_secs(60 * 60));
         cx.run_until_parked();
         cx.update(|cx| {
             assert!(matches!(store(cx).read(cx).status, Status::Idle));
             assert_eq!(store(cx).read(cx).generation, 0);
+        });
+    }
+
+    #[::core::prelude::v1::test]
+    fn automatic_check_failure_stays_quiet_and_can_retry() {
+        let directory = tempfile::tempdir().unwrap();
+        let cx = TestAppContext::single();
+        cx.update(|cx| {
+            initialize(true, directory.path(), cx);
+            store(cx).update(cx, |view, cx| {
+                // Cancel the real worker before delivering a deterministic
+                // failure, so its completion cannot race this state assertion.
+                view.cancel(cx);
+                view.check_error("offline", cx);
+                assert!(matches!(view.status, Status::Idle));
+                view.check_automatically(cx);
+                assert!(matches!(view.status, Status::Checking));
+                view.cancel(cx);
+            });
+        });
+    }
+
+    #[::core::prelude::v1::test]
+    fn manual_request_reuses_background_check_and_displays_its_error() {
+        let directory = tempfile::tempdir().unwrap();
+        let cx = TestAppContext::single();
+        cx.update(|cx| {
+            initialize(true, directory.path(), cx);
+            store(cx).update(cx, |view, cx| {
+                let generation = view.generation;
+                view.check(cx);
+                assert_eq!(view.generation, generation, "reuse the pending check");
+                view.cancel(cx);
+                view.check_error("offline", cx);
+                assert!(matches!(&view.status, Status::Failed { message, release: None } if message == "offline"));
+            });
+        });
+    }
+
+    #[::core::prelude::v1::test]
+    fn manual_check_reports_errors_with_automatic_checks_disabled() {
+        let directory = tempfile::tempdir().unwrap();
+        let cx = TestAppContext::single();
+        cx.update(|cx| {
+            initialize(false, directory.path(), cx);
+            store(cx).update(cx, |view, cx| {
+                view.check(cx);
+                assert!(matches!(view.status, Status::Checking));
+                view.cancel(cx);
+                view.check_error("offline", cx);
+                assert!(matches!(&view.status, Status::Failed { message, release: None } if message == "offline"));
+            });
         });
     }
 }

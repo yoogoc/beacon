@@ -309,18 +309,20 @@ Linux 的 DEB 单独读取发布脚本生成的配置，以适配 Debian 的 `~d
 ## 自动更新 / Automatic updates
 
 Settings → Updates enables automatic checks by default, with automatic downloads
-initially off. When enabled, one background check starts at startup, then checks run every 24 hours. The macOS
+initially off. When enabled, one background check starts at startup, then checks run every hour. The macOS
 Beacon menu and the Windows/Linux application menu also provide **Check for updates**.
 Checks and downloads use the system proxy by default (macOS / Windows OS settings,
 or proxy environment variables); an explicit global proxy or Direct mode overrides it.
+Automatic check failures are logged quietly; manual checks show errors in Settings.
 Downloads support cancellation and retry. Stable
 releases are the default; Development must be chosen explicitly. Only newer SemVer
 versions are offered. Manual builds after a formal `X.Y.Z` use `X.Y.(Z+1)-dev.N`; an
 explicit `X.Y.Z-dev.N` workspace keeps its existing development baseline.
 
-设置 → Updates 默认自动检查，自动下载初始关闭。启用时，启动后立即在后台检查一次，随后每 24 小时
+设置 → Updates 默认自动检查，自动下载初始关闭。启用时，启动后立即在后台检查一次，随后每小时
 检查；macOS 系统菜单、Windows/Linux 应用菜单提供手动检查入口。检查与下载默认使用系统代理
 （macOS / Windows 系统设置或代理环境变量）；显式配置的全局代理或 Direct 模式优先。
+自动检查失败仅记录日志，不显示错误；手动检查失败会在设置页显示错误。
 下载可取消和重试。默认 Stable，可主动切换 Development，不会自动降级。
 正式版本之后的手动构建使用下一 patch 的开发版本号，避免开发版被当前正式版
 的 SemVer 顺序遮住。
