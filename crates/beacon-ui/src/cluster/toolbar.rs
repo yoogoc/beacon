@@ -3,6 +3,7 @@ use super::*;
 use gpui_kit::assets::IconName as Glyph;
 use gpui_kit::base::ElementExt as _;
 use gpui_kit::component::button::ButtonCustomVariant;
+use gpui_kit::component::tooltip::Tooltip;
 
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
 pub(super) enum Layout {
@@ -202,12 +203,6 @@ impl ClusterView {
                             .child(self.render_column_picker(layout, cx)),
                     )
             })
-            .children(
-                self.kind
-                    .as_ref()
-                    .filter(|kind| kind.namespaced)
-                    .map(|_| self.render_namespace_picker(layout, cx)),
-            )
             .child(self.render_log_action(layout, false, cx))
             .into_any_element()
     }
@@ -273,12 +268,6 @@ impl ClusterView {
                                     .child(view.render_saved_filters(Layout::Full, cx))
                                     .child(view.render_column_picker(Layout::Full, cx))
                             })
-                            .children(
-                                view.kind
-                                    .as_ref()
-                                    .filter(|kind| kind.namespaced)
-                                    .map(|_| view.render_namespace_picker(Layout::Full, cx)),
-                            )
                             .child(view.render_log_action(Layout::Full, true, cx))
                             .into_any_element()
                     })
@@ -496,17 +485,13 @@ impl ClusterView {
 
     pub(super) fn render_toolbar(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let (shown, total) = self.counts(cx);
-        let title = match self.mode {
-            Mode::Objects => self
-                .kind
-                .as_ref()
-                .map(|kind| kind.resource.kind.clone())
-                .unwrap_or_else(|| "Nothing selected".into()),
-            other => other.label().to_string(),
+        let loading = match self.mode {
+            Mode::Objects => self.table.read(cx).delegate().is_loading(),
+            Mode::Releases => matches!(self.releases, Releases::Unopened | Releases::Loading),
+            _ => false,
         };
         let count = match self.mode {
             Mode::Overview => String::new(),
-            Mode::Objects if self.table.read(cx).delegate().is_loading() => String::new(),
             Mode::Objects if shown == total => total.to_string(),
             Mode::Objects => format!("{shown} of {total}"),
             Mode::Releases => match &self.releases {
@@ -515,6 +500,14 @@ impl ClusterView {
             },
             Mode::Forwards => self.session.forwards().len().to_string(),
         };
+        let count_label = if loading {
+            "Loading resources".to_owned()
+        } else if count == "1" {
+            "1 resource".to_owned()
+        } else {
+            format!("{count} resources")
+        };
+        let count_tooltip = count_label.clone();
         let layout = self.toolbar_layout.get();
         let measured = self.toolbar_layout.clone();
         let entity = cx.entity_id();
@@ -547,29 +540,74 @@ impl ClusterView {
             .child(
                 h_flex()
                     .min_w_0()
-                    .max_w(px(200.))
+                    .flex_shrink_0()
                     .gap_2()
                     .items_center()
-                    .child(
-                        div()
-                            .min_w_0()
-                            .max_w(px(145.))
-                            .truncate()
-                            .font_weight(FontWeight::MEDIUM)
-                            .text_sm()
-                            .child(title),
-                    )
-                    .child(
-                        div()
-                            .text_xs()
-                            .flex_shrink_0()
-                            .whitespace_nowrap()
-                            .text_color(cx.theme().muted_foreground)
-                            .rounded_md()
-                            .bg(cx.theme().muted)
-                            .px_1p5()
-                            .child(count),
-                    ),
+                    .when(self.mode != Mode::Objects, |header| {
+                        header.child(
+                            div()
+                                .min_w_0()
+                                .max_w(px(145.))
+                                .truncate()
+                                .font_weight(FontWeight::MEDIUM)
+                                .text_sm()
+                                .child(self.mode.label()),
+                        )
+                    })
+                    .children(self.kind.as_ref().filter(|kind| kind.namespaced).map(|_| {
+                        self.render_namespace_picker(
+                            if layout == Layout::Overflow {
+                                Layout::Minimal
+                            } else {
+                                Layout::Compact
+                            },
+                            cx,
+                        )
+                    }))
+                    .when(loading || !count.is_empty(), |header| {
+                        header.child(
+                            h_flex()
+                                .id("resource-count")
+                                .role(Role::Status)
+                                .test_support()
+                                .aria_label(count_label)
+                                .tooltip(move |window, cx| {
+                                    Tooltip::new(count_tooltip.clone()).build(window, cx)
+                                })
+                                .text_xs()
+                                .flex_shrink_0()
+                                .h(px(24.))
+                                .min_w(px(26.))
+                                .max_w(px(100.))
+                                .items_center()
+                                .justify_center()
+                                .text_color(cx.theme().muted_foreground)
+                                .rounded_md()
+                                .bg(cx.theme().muted)
+                                .px_1p5()
+                                .child(if loading {
+                                    div()
+                                        .id("resource-count-loading")
+                                        .role(Role::ProgressIndicator)
+                                        .aria_label("Loading resources")
+                                        .test_support()
+                                        .child(
+                                            Spinner::new()
+                                                .xsmall()
+                                                .color(cx.theme().muted_foreground),
+                                        )
+                                        .into_any_element()
+                                } else {
+                                    div()
+                                        .id("resource-count-value")
+                                        .test_support()
+                                        .min_w_0()
+                                        .text_ellipsis()
+                                        .child(count)
+                                        .into_any_element()
+                                }),
+                        )
+                    }),
             )
             .child(
                 div()
@@ -758,6 +796,13 @@ mod integration_tests {
                     bar.size.height <= px(44.),
                     "toolbar wrapped at {width}: {bar:?}"
                 );
+                let namespace = window.find("namespace-picker-trigger").bounds();
+                let count = window.find("resource-count").bounds();
+                let search = window.find("resource-search").bounds();
+                assert!(namespace.right() <= count.origin.x);
+                assert!(count.right() <= search.origin.x);
+                assert_eq!(window.find("resource-count").label(), Some("1 resource"));
+                assert!(window.try_find("resource-count-loading").is_none());
                 let controls = gpui_kit::base::test_support::snapshots(window)
                     .into_iter()
                     .filter(|element| {
@@ -795,6 +840,12 @@ mod integration_tests {
             view.update(cx, |view, cx| {
                 view.show(Arc::new(support::kind("", "Pod", "pods")), window, cx);
             });
+            window.render_frame(cx);
+            assert_eq!(
+                window.find("resource-count-loading").role(),
+                Some(Role::ProgressIndicator)
+            );
+            assert!(window.try_find("resource-count-value").is_none());
         })
         .unwrap();
         support::settle(cx, |cx| {
@@ -861,6 +912,15 @@ mod integration_tests {
                     cx.notify();
                 });
             });
+        })
+        .unwrap();
+        support::settle(cx, |cx| {
+            view.read_with(cx, |view, cx| !view.table.read(cx).delegate().is_loading())
+        });
+        draw(cx, window);
+        cx.update_window(window, |_, window, _| {
+            assert_eq!(window.find("resource-count").label(), Some("0 resources"));
+            assert!(window.try_find("resource-count-loading").is_none());
         })
         .unwrap();
         for width in [1900., 1440., 1100., 740., 280.] {
