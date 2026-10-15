@@ -14,6 +14,7 @@ pub mod connection;
 pub mod data;
 pub mod debug;
 pub mod discovery;
+pub mod edit;
 pub mod error;
 pub mod exec;
 mod file_exec;
@@ -61,6 +62,7 @@ pub use kube::core::GroupVersionKind;
 pub use logs::{LogBuffer, LogEvent, LogOptions};
 pub use metrics::{Metrics, Usage};
 pub use ops::{Applied, Conflict, DeleteTarget, Operation};
+
 pub use session::{ClusterSession, Health};
 pub use store::{Delta, DeltaBatch, ObjectRef, ResourceStore};
 pub use terminal::{Terminal, TerminalEvent};

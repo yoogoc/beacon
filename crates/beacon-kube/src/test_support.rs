@@ -14,6 +14,7 @@ pub struct Fixture {
     refuse_exec: Arc<std::sync::atomic::AtomicBool>,
     denied: Arc<Mutex<std::collections::HashSet<String>>>,
     rules: Arc<Mutex<Value>>,
+    patch_error: Arc<Mutex<Option<Value>>>,
     events: broadcast::Sender<Value>,
     task: tokio::task::JoinHandle<()>,
 }
@@ -38,6 +39,8 @@ impl Fixture {
             json!([{"verbs":["*"],"apiGroups":["*"],"resources":["*"]}]),
         ));
         let granted_rules = rules.clone();
+        let patch_error = Arc::new(Mutex::new(None));
+        let mutation_error = patch_error.clone();
         let recorded = requests.clone();
         let changes = events.clone();
         let task = tokio::spawn(async move {
@@ -46,8 +49,8 @@ impl Fixture {
                 tokio::select! {
                     accepted = listener.accept() => {
                         let Ok((stream,_)) = accepted else { break; };
-                        let store = store.clone(); let recorded = recorded.clone(); let changes = changes.clone(); let exec_policy = exec_policy.clone(); let denied_resources = denied_resources.clone(); let granted_rules = granted_rules.clone();
-                        connections.spawn(async move { serve(stream,store,recorded,changes,exec_policy,denied_resources,granted_rules).await; });
+                        let store = store.clone(); let recorded = recorded.clone(); let changes = changes.clone(); let exec_policy = exec_policy.clone(); let denied_resources = denied_resources.clone(); let granted_rules = granted_rules.clone(); let mutation_error = mutation_error.clone();
+                        connections.spawn(async move { serve(stream,store,recorded,changes,exec_policy,denied_resources,granted_rules,mutation_error).await; });
                     }
                     _ = connections.join_next(), if !connections.is_empty() => {}
                 }
@@ -60,6 +63,7 @@ impl Fixture {
             refuse_exec,
             denied,
             rules,
+            patch_error,
             events,
             task,
         }
@@ -73,6 +77,9 @@ impl Fixture {
     }
     pub fn rules(&self, resource_rules: Value) {
         *self.rules.lock().unwrap() = resource_rules;
+    }
+    pub fn patch_error(&self, error: Option<Value>) {
+        *self.patch_error.lock().unwrap() = error;
     }
     pub fn put(&self, object: Value) {
         let mut objects = self.objects.lock().unwrap();
@@ -182,6 +189,7 @@ fn workflow_patch(object: &mut Value, operations: &Value) -> std::result::Result
     }
     Ok(())
 }
+#[allow(clippy::too_many_arguments)]
 async fn serve(
     mut stream: TcpStream,
     objects: Arc<Mutex<Vec<Value>>>,
@@ -190,6 +198,7 @@ async fn serve(
     refuse_exec: Arc<std::sync::atomic::AtomicBool>,
     denied: Arc<Mutex<std::collections::HashSet<String>>>,
     rules: Arc<Mutex<Value>>,
+    patch_error: Arc<Mutex<Option<Value>>>,
 ) {
     let mut header = Vec::new();
     while !header.ends_with(b"\r\n\r\n") {
@@ -220,6 +229,20 @@ async fn serve(
         .push((line.clone(), request.clone()));
     let mut words = line.split_whitespace();
     let method = words.next().unwrap_or("");
+    if method == "PATCH" {
+        let error = patch_error.lock().unwrap().clone();
+        if let Some(error) = error {
+            let code = error["code"].as_u64().unwrap_or(409);
+            response(
+                &mut stream,
+                &format!("{code} Fixture Error"),
+                error.to_string(),
+                "application/json",
+            )
+            .await;
+            return;
+        }
+    }
     let path = words.next().unwrap_or("/");
     let url = url::Url::parse(&format!("http://fixture{path}")).unwrap();
     if url.path().ends_with("/exec") && refuse_exec.load(std::sync::atomic::Ordering::Relaxed) {
@@ -622,7 +645,7 @@ async fn serve(
         return;
     }
     if method == "PATCH" {
-        if kind == "Workflow" && request.is_array() {
+        if request.is_array() {
             let identity_tests =
                 ["/metadata/uid", "/metadata/resourceVersion"]
                     .iter()
@@ -632,10 +655,16 @@ async fn serve(
                         })
                     });
             if !identity_tests {
-                response(&mut stream, "409 Conflict", json!({"apiVersion":"v1","kind":"Status","status":"Failure","code":409,"reason":"Conflict","message":"Workflow patch requires reviewed UID and resourceVersion tests"}).to_string(), "application/json").await;
+                response(&mut stream, "409 Conflict", json!({"apiVersion":"v1","kind":"Status","status":"Failure","code":409,"reason":"Conflict","message":"Patch requires reviewed UID and resourceVersion tests"}).to_string(), "application/json").await;
                 return;
             }
-            if let Err(message) = workflow_patch(&mut object, &request) {
+            let result = if kind == "Workflow" {
+                workflow_patch(&mut object, &request)
+            } else {
+                let patch: json_patch::Patch = serde_json::from_value(request.clone()).unwrap();
+                json_patch::patch(&mut object, &patch).map_err(|error| error.to_string())
+            };
+            if let Err(message) = result {
                 response(&mut stream, "409 Conflict", json!({"apiVersion":"v1","kind":"Status","status":"Failure","code":409,"reason":"Conflict","message":message}).to_string(), "application/json").await;
                 return;
             }
@@ -694,19 +723,15 @@ async fn serve(
             }
         }
         if !query.contains_key("dryRun") {
-            object["metadata"]["resourceVersion"] = if kind == "Workflow" {
-                json!(
-                    (object
-                        .pointer("/metadata/resourceVersion")
-                        .and_then(Value::as_str)
-                        .and_then(|version| version.parse::<u64>().ok())
-                        .unwrap_or(0)
-                        + 1)
-                    .to_string()
-                )
-            } else {
-                json!("2")
-            };
+            object["metadata"]["resourceVersion"] = json!(
+                (object
+                    .pointer("/metadata/resourceVersion")
+                    .and_then(Value::as_str)
+                    .and_then(|version| version.parse::<u64>().ok())
+                    .unwrap_or(0)
+                    + 1)
+                .to_string()
+            );
             {
                 let mut store = objects.lock().unwrap();
                 let existing = store

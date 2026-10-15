@@ -23,6 +23,9 @@ pub enum Error {
     #[error("invalid resource manifest: {0}")]
     Manifest(String),
 
+    #[error("{0}")]
+    EditConflict(String),
+
     #[error("you may not create {resource} in {scope}")]
     CreateDenied { resource: String, scope: String },
 

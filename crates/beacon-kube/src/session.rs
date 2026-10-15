@@ -447,7 +447,7 @@ impl ClusterSession {
                     diagnosis: "apply needs an object".to_string(),
                 })?;
                 ops::apply(
-                    &self.client,
+                    &self.write_client,
                     &resource,
                     namespace,
                     &name,
@@ -507,6 +507,15 @@ impl ClusterSession {
                 (target, result)
             }
         }).buffer_unordered(4).collect().await
+    }
+
+    /// Executes the exact reviewed edit, without automatic mutation retries.
+    pub async fn save_patch(
+        self: Arc<Self>,
+        resource: ApiResource,
+        plan: crate::edit::Plan,
+    ) -> Result<Applied> {
+        plan.execute(&self.write_client, &resource).await
     }
 
     /// Opens a port forward. `local_port` of 0 asks for any free port.

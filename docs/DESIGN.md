@@ -336,7 +336,7 @@ gpui-component 自带 `command` 模块（命令面板）和 `sidebar` / `tree`�
 | Tab | 实现要点 |
 |---|---|
 | Overview | 从 `DynamicObject` 按需解析成强类型渲染；Pod 显示容器/探针/QoS/挂载 |
-| YAML | gpui-component 代码编辑器 + Tree-sitter YAML；编辑后走 **Server-Side Apply**（`Patch::Apply` + fieldManager `beacon`），冲突时展示 diff 并提供 force 选项 |
+| YAML | gpui-component 代码编辑器 + Tree-sitter YAML；默认审阅后通过带 UID / resourceVersion 校验的 JSON Patch 保存差异；可选 Server-Side Apply（fieldManager `beacon`），仅字段所有权冲突提供 force 选项 |
 | Events | 对该对象 `field_selector=involvedObject.uid=…` 单独 watch |
 | Logs | `Api::log_stream` + `follow=true`；环形缓冲上限（如 10MB / 50k 行）；支持多容器、previous、时间戳、grep 高亮、下载 |
 | Shell | M5，见下 |

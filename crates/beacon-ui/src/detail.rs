@@ -25,7 +25,9 @@ use gpui_kit::component::input::{Editor, EditorState, InputEvent, TextDecoration
 use gpui_kit::component::menu::{DropdownMenu as _, PopupMenuItem};
 use gpui_kit::component::spinner::Spinner;
 use gpui_kit::component::tab::{Tab, TabBar};
-use gpui_kit::component::{ActiveTheme as _, Disableable as _, Sizable as _, h_flex, v_flex};
+use gpui_kit::component::{
+    ActiveTheme as _, Disableable as _, Selectable as _, Sizable as _, h_flex, v_flex,
+};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use serde_json::Value;
@@ -35,6 +37,9 @@ use crate::theme::{BeaconTheme as _, Tone};
 use crate::tls::{self, CertificateInfo};
 
 mod data_editors;
+
+#[cfg(all(test, feature = "ui-tests"))]
+mod save_tests;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DetailTab {
@@ -138,8 +143,29 @@ enum Apply {
     Running,
     /// Somebody else owns fields this apply would change. Nothing was written.
     Refused(Box<Conflict>),
+    Stale(String),
     Failed(String),
     Done,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum SaveMethod {
+    #[default]
+    Patch,
+    ServerSideApply,
+}
+
+#[derive(Clone)]
+enum SaveRequest {
+    Patch(beacon_kube::edit::Plan),
+    ServerSideApply { manifest: Value, force: bool },
+}
+
+fn save_error(error: beacon_kube::Error) -> Apply {
+    match error {
+        beacon_kube::Error::EditConflict(message) => Apply::Stale(message),
+        error => Apply::Failed(error.user_message()),
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -198,6 +224,7 @@ pub struct DetailView {
     yaml: Yaml,
     /// The Data tab's editors, built when it is first opened.
     data: Data,
+    data_baseline: Option<Value>,
     data_heights: BTreeMap<String, Pixels>,
     data_resize: Option<data_editors::HeightDrag>,
     _data_theme: Option<Subscription>,
@@ -208,6 +235,7 @@ pub struct DetailView {
     yaml_editor: Entity<EditorState>,
     yaml_assistance: Option<Entity<crate::yaml_assistance::YamlAssistance>>,
     yaml_baseline: String,
+    save_method: SaveMethod,
     apply: Apply,
     reviewing: bool,
 
@@ -286,6 +314,7 @@ impl DetailView {
             _owners_task: None,
             yaml: Yaml::Unopened,
             data: Data::Unopened,
+            data_baseline: None,
             data_heights: BTreeMap::new(),
             data_resize: None,
             _data_theme: None,
@@ -293,6 +322,7 @@ impl DetailView {
             yaml_editor,
             yaml_assistance: None,
             yaml_baseline: String::new(),
+            save_method: SaveMethod::default(),
             apply: Apply::Idle,
             reviewing: false,
             events: ResourceStore::new(),
@@ -563,11 +593,18 @@ impl DetailView {
         }
     }
 
-    /// Reviews the edited YAML before Server-Side Apply.
-    ///
-    /// `force` takes ownership of the fields another manager holds. It is only
-    /// ever reached from the conflict view, after the refusal has been read.
+    /// Reviews the draft before the chosen save method. Patch is the default.
     pub fn apply(&mut self, force: bool, window: &mut Window, cx: &mut Context<Self>) {
+        self.review_yaml(force, false, window, cx);
+    }
+
+    fn review_yaml(
+        &mut self,
+        force: bool,
+        latest: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if self.busy() {
             return;
         }
@@ -582,12 +619,32 @@ impl DetailView {
             }
         };
 
-        self.review(object, force, window, cx);
+        let base = match parse(&self.yaml_baseline) {
+            Ok(base) => base,
+            Err(_) => {
+                self.apply = Apply::Failed("Reload the resource before saving YAML.".into());
+                cx.notify();
+                return;
+            }
+        };
+        self.review(base, object, force, latest, window, cx);
     }
 
     /// Fetch fresh comparison data; the draft is frozen until confirmed or cancelled.
-    fn review(&mut self, object: Value, force: bool, window: &mut Window, cx: &mut Context<Self>) {
+    fn review(
+        &mut self,
+        base: Value,
+        object: Value,
+        force: bool,
+        latest: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if self.busy() || !crate::actions::may_apply(&self.kind, self.rules.as_deref()) {
+            return;
+        }
+        let method = self.save_method;
+        if force && method != SaveMethod::ServerSideApply {
             return;
         }
         self.reviewing = true;
@@ -598,16 +655,27 @@ impl DetailView {
         let preparing = Bridge::global(cx).run(async move {
             let current = session
                 .get_object(resource, target.namespace, target.name)
-                .await
-                .map_err(|error| error.user_message())?;
-            let current = serde_json::to_value(current).map_err(|error| error.to_string())?;
-            crate::yaml_review::Preview::apply(current, object)
+                .await?;
+            let current = serde_json::to_value(current)
+                .map_err(|error| beacon_kube::Error::Manifest(error.to_string()))?;
+            let plan = beacon_kube::edit::Plan::review(&base, object, current, latest)?;
+            let preview =
+                crate::yaml_review::Preview::apply(plan.before.clone(), plan.after.clone())
+                    .map_err(beacon_kube::Error::Manifest)?;
+            let request = match method {
+                SaveMethod::Patch => SaveRequest::Patch(plan),
+                SaveMethod::ServerSideApply => SaveRequest::ServerSideApply {
+                    manifest: plan.after,
+                    force,
+                },
+            };
+            Ok::<_, beacon_kube::Error>((preview, request))
         });
         self._review_task = Some(cx.spawn_in(window, async move |this, cx| {
             let result = preparing.await;
             let _ = this.update_in(cx, |view, window, cx| {
                 match result {
-                    Ok(Ok(preview)) => {
+                    Ok(Ok((preview, request))) => {
                         let context = format!(
                             "{} · {} · {}",
                             view.session.id().display_name(),
@@ -616,15 +684,22 @@ impl DetailView {
                         );
                         let review =
                             crate::yaml_review::open(preview, context, false, force, window, cx);
+                        review.update(cx, |review, _| {
+                            review.confirmation_label(match method {
+                                SaveMethod::Patch => "Confirm & save",
+                                SaveMethod::ServerSideApply if force => "Confirm force apply",
+                                SaveMethod::ServerSideApply => "Confirm & apply (SSA)",
+                            });
+                        });
                         cx.subscribe_in(
                             &review,
                             window,
                             move |view, _, event: &crate::yaml_review::ReviewEvent, window, cx| {
                                 view.reviewing = false;
-                                if let crate::yaml_review::ReviewEvent::Confirmed(object) = event {
+                                if matches!(event, crate::yaml_review::ReviewEvent::Confirmed(_)) {
                                     if crate::actions::may_apply(&view.kind, view.rules.as_deref())
                                     {
-                                        view.send((**object).clone(), force, window, cx);
+                                        view.send(request.clone(), window, cx);
                                     } else {
                                         view.apply = Apply::Failed(
                                             "You no longer have permission to apply this resource."
@@ -639,7 +714,7 @@ impl DetailView {
                     }
                     Ok(Err(error)) => {
                         view.reviewing = false;
-                        view.apply = Apply::Failed(error);
+                        view.apply = save_error(error);
                     }
                     Err(error) => {
                         view.reviewing = false;
@@ -655,7 +730,7 @@ impl DetailView {
     ///
     /// Shared by the YAML tab and the Data tab so that a conflict, a refusal
     /// and a webhook's rewrite all read the same whichever one you edited in.
-    fn send(&mut self, object: Value, force: bool, window: &mut Window, cx: &mut Context<Self>) {
+    fn send(&mut self, request: SaveRequest, window: &mut Window, cx: &mut Context<Self>) {
         self.apply = Apply::Running;
         cx.notify();
 
@@ -664,16 +739,21 @@ impl DetailView {
         let target = self.target.clone();
 
         let applying = Bridge::global(cx).run(async move {
-            session
-                .run(
-                    Operation::Apply,
-                    resource,
-                    target.namespace.clone(),
-                    target.name.clone(),
-                    Some(object),
-                    force,
-                )
-                .await
+            match request {
+                SaveRequest::Patch(plan) => session.save_patch(resource, plan).await,
+                SaveRequest::ServerSideApply { manifest, force } => {
+                    session
+                        .run(
+                            Operation::Apply,
+                            resource,
+                            target.namespace.clone(),
+                            target.name.clone(),
+                            Some(manifest),
+                            force,
+                        )
+                        .await
+                }
+            }
         });
 
         self._apply_task = Some(cx.spawn_in(window, async move |this, cx| {
@@ -699,7 +779,7 @@ impl DetailView {
                         Apply::Done
                     }
                     Ok(Ok(Applied::Conflict(conflict))) => Apply::Refused(Box::new(conflict)),
-                    Ok(Err(error)) => Apply::Failed(error.to_string()),
+                    Ok(Err(error)) => save_error(error),
                     Err(error) => Apply::Failed(error.to_string()),
                 };
                 cx.notify();
@@ -741,6 +821,11 @@ impl DetailView {
     /// survives the store untouched, and the only thing stripped is
     /// `managedFields`.
     fn load_data(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.data_baseline = serde_json::to_value(&*self.object).ok().map(|mut object| {
+            object["apiVersion"] = Value::String(self.kind.resource.api_version.clone());
+            object["kind"] = Value::String(self.kind.resource.kind.clone());
+            object
+        });
         let keys = data::read(&self.object, self.kind.resource.kind == "Secret")
             .into_iter()
             .map(|entry| {
@@ -804,48 +889,43 @@ impl DetailView {
         cx.notify();
     }
 
-    /// Writes the edited values back into the object and applies it.
-    ///
-    /// The whole object goes, not a `data`-only patch. That is what the YAML
-    /// tab does, it keeps the two paths on one set of Server-Side Apply
-    /// semantics, and it means the values nobody edited -- a binary key, a
-    /// label -- travel back exactly as they arrived rather than depending on
-    /// which fields this field manager happens to own.
+    /// Data and YAML use the same reviewed save method and version checks.
     pub fn apply_data(&mut self, force: bool, window: &mut Window, cx: &mut Context<Self>) {
-        if self.busy() {
+        self.review_data(force, false, window, cx);
+    }
+
+    fn review_data(
+        &mut self,
+        force: bool,
+        latest: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.busy() || (self.kind.resource.kind == "Secret" && !self.revealed) {
             return;
         }
-        let Data::Ready(keys) = &self.data else {
+        let (Some(base), Some(object)) = (self.data_baseline.clone(), self.data_draft(cx)) else {
             return;
         };
+        self.review(base, object, force, latest, window, cx);
+    }
 
+    fn data_draft(&self, cx: &App) -> Option<Value> {
+        let Data::Ready(keys) = &self.data else {
+            return None;
+        };
+        let mut object = self.data_baseline.clone()?;
         let secret = self.kind.resource.kind == "Secret";
-        let mut object = (*self.object).clone();
-
         for key in keys {
             let Some(editor) = &key.editor else {
                 continue;
             };
             let text = editor.read(cx).value().to_string();
             let encoded = data::encode(key.entry.field, secret, &text);
-            object.data[key.entry.field.name()][&key.entry.key] = Value::String(encoded);
+            object[key.entry.field.name()][&key.entry.key] = Value::String(encoded);
         }
 
-        let mut object = match serde_json::to_value(&object) {
-            Ok(object) => object,
-            Err(error) => {
-                self.apply = Apply::Failed(error.to_string());
-                cx.notify();
-                return;
-            }
-        };
-
-        // List items may omit these fields; the selected resource supplies
-        // the identity required by both the diff review and Server-Side Apply.
-        object["apiVersion"] = Value::String(self.kind.resource.api_version.clone());
-        object["kind"] = Value::String(self.kind.resource.kind.clone());
-
-        self.review(object, force, window, cx);
+        Some(object)
     }
 
     /// Fetches the object in full and renders it as YAML.
@@ -2505,6 +2585,55 @@ impl DetailView {
         })
     }
 
+    fn render_save_method(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        h_flex()
+            .gap_0p5()
+            .p_0p5()
+            .rounded_md()
+            .bg(cx.theme().muted)
+            .children(
+                [
+                    (
+                        "save-method-patch",
+                        "Patch",
+                        SaveMethod::Patch,
+                        "Save only changed fields, checking the resource version",
+                    ),
+                    (
+                        "save-method-ssa",
+                        "Server-Side Apply",
+                        SaveMethod::ServerSideApply,
+                        "Apply configuration with field ownership checks",
+                    ),
+                ]
+                .into_iter()
+                .map(|(id, label, method, tooltip)| {
+                    Button::new(id)
+                        .small()
+                        .ghost()
+                        .label(label)
+                        .selected(self.save_method == method)
+                        .disabled(self.busy())
+                        .tooltip(tooltip)
+                        .on_click(cx.listener(move |view, _, _, cx| {
+                            if view.save_method != method && !view.busy() {
+                                view.save_method = method;
+                                view.apply = Apply::Idle;
+                                cx.notify();
+                            }
+                        }))
+                }),
+            )
+    }
+
+    fn review_latest(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.tab == DetailTab::Data {
+            self.review_data(false, true, window, cx);
+        } else {
+            self.review_yaml(false, true, window, cx);
+        }
+    }
+
     fn render_data_bar(
         &self,
         secret: bool,
@@ -2532,19 +2661,36 @@ impl DetailView {
                     .gap_2()
                     .items_center()
                     .flex_shrink_0()
+                    .child(self.render_save_method(cx))
                     .children(self.usage_link("data-view-usage", cx))
-                    .when(matches!(self.apply, Apply::Refused(_)), |this| {
+                    .when(matches!(self.apply, Apply::Stale(_)), |this| {
                         this.child(
-                            Button::new("force-apply-data")
-                                .danger()
+                            Button::new("review-latest-data")
                                 .small()
-                                .label("Save anyway")
-                                .disabled(running || !may_apply)
+                                .outline()
+                                .label("Review latest")
+                                .disabled(running || !may_apply || (secret && !revealed))
                                 .on_click(cx.listener(|view, _, window, cx| {
-                                    view.apply_data(true, window, cx)
+                                    view.review_latest(window, cx)
                                 })),
                         )
                     })
+                    .when(
+                        self.save_method == SaveMethod::ServerSideApply
+                            && matches!(self.apply, Apply::Refused(_)),
+                        |this| {
+                            this.child(
+                                Button::new("force-apply-data")
+                                    .danger()
+                                    .small()
+                                    .label("Force apply…")
+                                    .disabled(running || !may_apply || (secret && !revealed))
+                                    .on_click(cx.listener(|view, _, window, cx| {
+                                        view.apply_data(true, window, cx)
+                                    })),
+                            )
+                        },
+                    )
                     .when(secret, |this| {
                         this.child(
                             Button::new("reveal")
@@ -2568,6 +2714,8 @@ impl DetailView {
                                 "Reviewing…"
                             } else if running {
                                 "Saving…"
+                            } else if self.save_method == SaveMethod::ServerSideApply {
+                                "Apply (SSA)"
                             } else {
                                 "Save"
                             })
@@ -2627,19 +2775,36 @@ impl DetailView {
                     .gap_2()
                     .items_center()
                     .flex_shrink_0()
+                    .child(self.render_save_method(cx))
                     .children(self.usage_link("yaml-view-usage", cx))
-                    .when(matches!(self.apply, Apply::Refused(_)), |this| {
+                    .when(matches!(self.apply, Apply::Stale(_)), |this| {
                         this.child(
-                            Button::new("force-apply")
-                                .danger()
+                            Button::new("review-latest-yaml")
                                 .small()
-                                .label("Apply anyway")
+                                .outline()
+                                .label("Review latest")
                                 .disabled(running || !may_apply)
-                                .on_click(
-                                    cx.listener(|view, _, window, cx| view.apply(true, window, cx)),
-                                ),
+                                .on_click(cx.listener(|view, _, window, cx| {
+                                    view.review_latest(window, cx)
+                                })),
                         )
                     })
+                    .when(
+                        self.save_method == SaveMethod::ServerSideApply
+                            && matches!(self.apply, Apply::Refused(_)),
+                        |this| {
+                            this.child(
+                                Button::new("force-apply")
+                                    .danger()
+                                    .small()
+                                    .label("Force apply…")
+                                    .disabled(running || !may_apply)
+                                    .on_click(cx.listener(|view, _, window, cx| {
+                                        view.apply(true, window, cx)
+                                    })),
+                            )
+                        },
+                    )
                     .child(
                         Button::new("format-yaml")
                             .ghost()
@@ -2656,9 +2821,11 @@ impl DetailView {
                             .label(if self.reviewing {
                                 "Reviewing…"
                             } else if running {
-                                "Applying…"
+                                "Saving…"
+                            } else if self.save_method == SaveMethod::ServerSideApply {
+                                "Apply (SSA)"
                             } else {
-                                "Apply"
+                                "Save"
                             })
                             .disabled(!may_apply || running)
                             .on_click(
@@ -2684,20 +2851,35 @@ impl DetailView {
             Apply::Idle => div()
                 .text_xs()
                 .text_color(cx.theme().muted_foreground)
-                .child(format!(
-                    "Server-Side Apply as field manager “{}”",
-                    beacon_kube::ops::FIELD_MANAGER
-                ))
+                .child(match self.save_method {
+                    SaveMethod::Patch => {
+                        "Patch · Checks the resource version before saving.".to_string()
+                    }
+                    SaveMethod::ServerSideApply => format!(
+                        "Server-Side Apply · field manager “{}”",
+                        beacon_kube::ops::FIELD_MANAGER
+                    ),
+                })
                 .into_any_element(),
             Apply::Running => div()
                 .text_xs()
                 .text_color(cx.theme().tone(Tone::Progressing))
-                .child("Applying…")
+                .child("Saving…")
                 .into_any_element(),
             Apply::Done => div()
                 .text_xs()
                 .text_color(cx.theme().tone(Tone::Healthy))
-                .child("Applied.")
+                .child("Saved.")
+                .into_any_element(),
+            Apply::Stale(message) => div()
+                .id("save-version-conflict")
+                .test_support()
+                .text_xs()
+                .text_color(cx.theme().tone(Tone::Warning))
+                .child(copyable_text(
+                    "save-version-conflict-message",
+                    message.clone(),
+                ))
                 .into_any_element(),
             Apply::Failed(error) => div()
                 .text_xs()
@@ -2776,7 +2958,11 @@ impl DetailView {
 
     fn edited(&self, cx: &App) -> Option<Value> {
         // Not cached: this runs only while a conflict is on screen.
-        serde_saphyr::from_str(&self.yaml_editor.read(cx).value()).ok()
+        if self.tab == DetailTab::Data {
+            self.data_draft(cx)
+        } else {
+            serde_saphyr::from_str(&self.yaml_editor.read(cx).value()).ok()
+        }
     }
 
     fn render_events(&self, cx: &mut Context<Self>) -> AnyElement {
@@ -3572,15 +3758,19 @@ mod integration_tests {
             .filter(|(line, _)| line.starts_with("PATCH"))
             .collect();
         assert_eq!(patches.len(), 2);
-        for (line, manifest) in patches {
+        for (line, patch) in patches {
             assert!(line.starts_with(&format!(
                 "PATCH /api/v1/namespaces/default/{plural}/data-fixture?"
             )));
             assert!(line.contains("fieldManager=beacon"));
             assert!(!line.contains("force=true"));
-            assert_eq!(manifest["apiVersion"], "v1");
-            assert_eq!(manifest["kind"], kind);
-            assert!(manifest.pointer("/metadata/managedFields").is_none());
+            let operations = patch
+                .as_array()
+                .expect("Data saves use version-checked JSON Patch");
+            assert_eq!(operations.len(), 3);
+            assert_eq!(operations[0]["path"], "/metadata/uid");
+            assert_eq!(operations[1]["path"], "/metadata/resourceVersion");
+            assert_eq!(operations[2]["path"], "/data/setting");
         }
     }
 

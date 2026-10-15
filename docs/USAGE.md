@@ -186,8 +186,11 @@ ConfigMap / Secret 的 Data，以及 YAML、复制名称、删除等通用操作
 `Validate` 使用服务端 dry-run 检查，`Create` 创建新对象并打开详情。
 每次提交一个资源，已有同名对象会被拒绝；自定义资源需填写其 Schema 要求的字段。
 
-YAML 编辑器支持语法高亮与 **Format**。保存使用 Server-Side Apply；
-字段所有权冲突会说明冲突字段及 Field Manager。
+YAML 编辑器支持语法高亮与 **Format**。默认通过 Patch 保存修改的字段，
+校验资源 UID 和版本，并在保存前展示差异。版本冲突会保留草稿；点击
+**Review latest** 可将本地改动合入最新资源，重新审阅后确认保存。
+也可以主动选择 **Server-Side Apply**，由服务端检查字段所有权；只有真正的
+所有权冲突才显示冲突字段、Field Manager 和强制应用选项。
 
 勾选行或表头复选框后，选择 **Delete selected**。
 确认框以可滚动的表格列出每个目标的命名空间和名称。
@@ -244,7 +247,7 @@ Secret 值默认遮盖，用摘要保留差异判断；只有点击 **Reveal val
 ConfigMap 和 Secret 的 **Data** 页按 Key 展示值，支持直接编辑文本。
 非 UTF-8 数据只展示描述，不通过文本输入框修改。
 Secret 值默认遮盖，揭示后才能保存；未修改的值在提交时保持原样。
-Data 保存与 YAML 使用相同的 Server-Side Apply 路径及冲突处理。
+Data 保存与 YAML 使用相同的 Patch / Server-Side Apply 选择、版本校验和审阅流程。
 
 `kubernetes.io/tls` 类型的 Secret 还会在 Overview 解析 `tls.crt` 中的证书链，显示：
 

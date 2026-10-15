@@ -416,9 +416,13 @@ pub async fn apply(
             }
             Ok(Applied::Ok(Box::new(applied)))
         }
-        Err(kube::Error::Api(status)) if status.code == 409 => {
-            Ok(Applied::Conflict(parse_conflict(&status.message)))
-        }
+        Err(kube::Error::Api(status)) if status.code == 409 => match field_conflict(&status) {
+            Some(conflict) => Ok(Applied::Conflict(conflict)),
+            None => Err(Error::EditConflict(format!(
+                "Save conflict. Your draft was kept. Review the latest resource before trying again.\n{} (HTTP 409)",
+                status.message
+            ))),
+        },
         Err(error) => Err(Error::Api(error)),
     }
 }
@@ -429,6 +433,32 @@ pub fn prepare_apply(mut object: Value) -> Value {
         metadata.remove("managedFields");
     }
     object
+}
+
+fn field_conflict(status: &kube::core::Status) -> Option<Conflict> {
+    let mut conflict = parse_conflict(&status.message);
+    if let Some(details) = &status.details {
+        let causes: Vec<_> = details
+            .causes
+            .iter()
+            .filter(|cause| cause.reason == "FieldManagerConflict")
+            .collect();
+        if !causes.is_empty() {
+            for cause in causes {
+                if !cause.field.is_empty() {
+                    push_unique(&mut conflict.fields, &cause.field);
+                }
+                for manager in parse_conflict(&cause.message).managers {
+                    push_unique(&mut conflict.managers, &manager);
+                }
+            }
+            return Some(conflict);
+        }
+        if !details.causes.is_empty() {
+            return None;
+        }
+    }
+    (!conflict.managers.is_empty() && !conflict.fields.is_empty()).then_some(conflict)
 }
 
 /// Reads the API server's conflict message.
