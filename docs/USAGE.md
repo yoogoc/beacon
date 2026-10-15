@@ -244,9 +244,15 @@ Secret 值默认遮盖，用摘要保留差异判断；只有点击 **Reveal val
 
 ## ConfigMap、Secret 与 TLS
 
-ConfigMap 和 Secret 的 **Data** 页按 Key 展示值，支持直接编辑文本。
+ConfigMap 和 Secret 的 **Data** 页使用可搜索的 Key 列表，选择 Key 后查看和编辑值。
+宽面板左右展示，窄面板上下展示；列表按可见区域渲染，编辑器和语法分析按需加载。
+支持自动识别内容格式、语法高亮、代码折叠和拖拽调整编辑器高度。
+编辑区默认不自动换行，长行可横向滚动；**Wrap lines** 可切换自动换行，切换 Key 时沿用当前选项。
 非 UTF-8 数据只展示描述，不通过文本输入框修改。
 Secret 值默认遮盖，揭示后才能保存；未修改的值在提交时保持原样。
+**Delete key** 将整项 Key / Value 标记为待删除，**Restore key** 可撤销，文本和二进制值均支持。
+修改和删除统一通过 **Save** 审阅差异后提交；取消审阅会保留草稿。
+删除 Key 时使用带版本校验的 Patch，确保显式删除整项数据。
 Data 保存与 YAML 使用相同的 Patch / Server-Side Apply 选择、版本校验和审阅流程。
 
 `kubernetes.io/tls` 类型的 Secret 还会在 Overview 解析 `tls.crt` 中的证书链，显示：

@@ -37,6 +37,7 @@ use crate::theme::{BeaconTheme as _, Tone};
 use crate::tls::{self, CertificateInfo};
 
 mod data_editors;
+mod data_presentation;
 
 #[cfg(all(test, feature = "ui-tests"))]
 mod save_tests;
@@ -51,7 +52,7 @@ pub enum DetailTab {
     Configuration,
     History,
     Network,
-    /// A ConfigMap's or Secret's keys, one editor each.
+    /// A ConfigMap's or Secret's searchable keys and selected value.
     Data,
     Yaml,
     Events,
@@ -109,11 +110,11 @@ impl DetailTab {
     }
 }
 
-/// One key of a ConfigMap or Secret, and the box its value is edited in.
+/// Lightweight key metadata, with an editor allocated only when opened.
 struct DataKey {
     entry: DataEntry,
-    /// `None` for a value that is not text. It is described, not edited:
-    /// putting a TLS key through a text box would corrupt it on save.
+    /// Also `None` for unopened text and hidden Secrets. Binary values never
+    /// get an editor, so they cannot be accidentally re-encoded as text.
     editor: Option<Entity<EditorState>>,
     syntax: crate::data_syntax::Analysis,
     decorations: Option<TextDecorationCollection>,
@@ -222,8 +223,9 @@ pub struct DetailView {
     _owners_task: Option<Task<()>>,
 
     yaml: Yaml,
-    /// The Data tab's editors, built when it is first opened.
+    /// Data key metadata and the bounded cache of opened editors.
     data: Data,
+    data_browser: data_editors::Browser,
     data_baseline: Option<Value>,
     data_heights: BTreeMap<String, Pixels>,
     data_resize: Option<data_editors::HeightDrag>,
@@ -314,6 +316,7 @@ impl DetailView {
             _owners_task: None,
             yaml: Yaml::Unopened,
             data: Data::Unopened,
+            data_browser: data_editors::Browser::default(),
             data_baseline: None,
             data_heights: BTreeMap::new(),
             data_resize: None,
@@ -360,14 +363,17 @@ impl DetailView {
     }
 
     fn data_changed(&self, cx: &App) -> bool {
-        match &self.data {
-            Data::Ready(keys) => keys.iter().any(|key| {
-                key.editor.as_ref().is_some_and(|editor| {
-                    Some(editor.read(cx).value().as_ref()) != key.entry.text.as_deref()
-                })
-            }),
-            Data::Unopened => false,
-        }
+        !self.data_browser.deleted.is_empty()
+            || match &self.data {
+                // Input change events are deferred. Consult only cached editors so
+                // a close/save immediately after typing still sees the latest draft.
+                Data::Ready(keys) => self.data_browser.recent.iter().any(|&index| {
+                    keys[index].editor.as_ref().is_some_and(|editor| {
+                        Some(editor.read(cx).value().as_ref()) != keys[index].entry.text.as_deref()
+                    })
+                }),
+                Data::Unopened => false,
+            }
     }
 
     pub(crate) fn focus_pending_edits(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -433,6 +439,9 @@ impl DetailView {
             return;
         }
         self.tab = tab;
+        if tab == DetailTab::Data && !self.data_browser.deleted.is_empty() && !self.busy() {
+            self.save_method = SaveMethod::Patch;
+        }
         self.data_resize = None;
         if let Some(metrics) = &self.metrics {
             metrics.update(cx, |view, cx| {
@@ -772,6 +781,8 @@ impl DetailView {
                         );
                         view.yaml = Yaml::Unopened;
                         view.data = Data::Unopened;
+                        view.data_browser.modified.clear();
+                        view.data_browser.deleted.clear();
                         match view.tab {
                             DetailTab::Data => view.load_data(window, cx),
                             _ => view.load_yaml(window, cx),
@@ -815,80 +826,6 @@ impl DetailView {
         cx.notify();
     }
 
-    /// Builds an editor per key from the object the table already holds.
-    ///
-    /// No fetch: unlike the YAML tab, nothing here was slimmed away -- `data`
-    /// survives the store untouched, and the only thing stripped is
-    /// `managedFields`.
-    fn load_data(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.data_baseline = serde_json::to_value(&*self.object).ok().map(|mut object| {
-            object["apiVersion"] = Value::String(self.kind.resource.api_version.clone());
-            object["kind"] = Value::String(self.kind.resource.kind.clone());
-            object
-        });
-        let keys = data::read(&self.object, self.kind.resource.kind == "Secret")
-            .into_iter()
-            .map(|entry| {
-                let id = data_editors::id(&entry);
-                let editor = entry.text.clone().map(|text| {
-                    self.data_heights.entry(id.clone()).or_insert_with(|| {
-                        px((text.lines().count().clamp(4, 12) as f32
-                            * f32::from(cx.theme().mono_font_size)
-                            * 1.5
-                            + 20.)
-                            .clamp(96., 280.))
-                    });
-                    cx.new(|cx| {
-                        let mut state = EditorState::new(window, cx)
-                            .language("text")
-                            .soft_wrap(true)
-                            .auto_close(false)
-                            .smart_indent(false)
-                            .folding(true);
-                        state.set_value(text, window, cx);
-                        state
-                    })
-                });
-                let decorations = editor.as_ref().map(|editor| {
-                    editor.update(cx, |state, cx| {
-                        state.create_decorations_collection(vec![], cx)
-                    })
-                });
-                let change = editor.as_ref().map(|editor| {
-                    cx.subscribe_in(
-                        editor,
-                        window,
-                        move |view, _, event: &InputEvent, window, cx| {
-                            if matches!(event, InputEvent::Change) {
-                                view.schedule_data_syntax(id.clone(), window, cx);
-                            }
-                        },
-                    )
-                });
-                DataKey {
-                    entry,
-                    editor,
-                    decorations,
-                    syntax: crate::data_syntax::Analysis {
-                        format: crate::data_syntax::Format::Plain,
-                        tokens: vec![],
-                    },
-                    _change: change,
-                    _detect: None,
-                }
-            })
-            .collect();
-
-        self.data = Data::Ready(keys);
-        if self._data_theme.is_none() {
-            self._data_theme = Some(cx.observe_global::<gpui_kit::component::Theme>(|view, cx| {
-                view.refresh_data_colors(cx)
-            }));
-        }
-        self.prepare_data_syntax(window, cx);
-        cx.notify();
-    }
-
     /// Data and YAML use the same reviewed save method and version checks.
     pub fn apply_data(&mut self, force: bool, window: &mut Window, cx: &mut Context<Self>) {
         self.review_data(force, false, window, cx);
@@ -904,6 +841,13 @@ impl DetailView {
         if self.busy() || (self.kind.resource.kind == "Secret" && !self.revealed) {
             return;
         }
+        self.sync_data_changes(cx);
+        let force = if self.data_browser.deleted.is_empty() {
+            force
+        } else {
+            self.save_method = SaveMethod::Patch;
+            false
+        };
         let (Some(base), Some(object)) = (self.data_baseline.clone(), self.data_draft(cx)) else {
             return;
         };
@@ -916,13 +860,25 @@ impl DetailView {
         };
         let mut object = self.data_baseline.clone()?;
         let secret = self.kind.resource.kind == "Secret";
-        for key in keys {
+        for &index in &self.data_browser.recent {
+            let key = &keys[index];
             let Some(editor) = &key.editor else {
                 continue;
             };
             let text = editor.read(cx).value().to_string();
+            if Some(text.as_str()) == key.entry.text.as_deref()
+                || self.data_browser.deleted.contains(&index)
+            {
+                continue;
+            }
             let encoded = data::encode(key.entry.field, secret, &text);
             object[key.entry.field.name()][&key.entry.key] = Value::String(encoded);
+        }
+        for &index in &self.data_browser.deleted {
+            let key = &keys[index];
+            if let Some(map) = object[key.entry.field.name()].as_object_mut() {
+                map.remove(&key.entry.key);
+            }
         }
 
         Some(object)
@@ -2398,175 +2354,6 @@ impl DetailView {
             )
     }
 
-    /// One editor per key, and one Save for all of them.
-    ///
-    /// The point of the tab: a Secret read through YAML is base64, which is
-    /// not something a person can edit, and a ConfigMap's values are folded
-    /// into a YAML block scalar where indentation is part of the syntax. Here
-    /// each value is just its own text.
-    fn render_data(&self, cx: &mut Context<Self>) -> AnyElement {
-        let Data::Ready(keys) = &self.data else {
-            return self.notice("Reading the data…", Tone::Progressing, cx);
-        };
-        if keys.is_empty() {
-            return self.notice("This one has no data.", Tone::Unknown, cx);
-        }
-
-        let may_apply = crate::actions::may_apply(&self.kind, self.rules.as_deref());
-        let secret = self.kind.resource.kind == "Secret";
-        let covered = secret && !self.revealed;
-
-        let rows = keys.iter().map(|key| {
-            let id = data_editors::id(&key.entry);
-            let height = self.data_heights.get(&id).copied().unwrap_or(px(120.));
-            let bytes = format!("{} bytes", key.entry.bytes);
-            let field = if key.entry.field == beacon_kube::DataField::BinaryData {
-                "binaryData"
-            } else {
-                ""
-            };
-
-            v_flex()
-                .id(SharedString::from(format!("data-key-{id}")))
-                .w_full()
-                .gap_1()
-                .child(
-                    h_flex()
-                        .w_full()
-                        .flex_wrap()
-                        .gap_2()
-                        .items_baseline()
-                        .child(
-                            div()
-                                .font_family("monospace")
-                                .text_sm()
-                                .font_weight(FontWeight::MEDIUM)
-                                .child(key.entry.key.clone()),
-                        )
-                        .child(
-                            div()
-                                .text_xs()
-                                .text_color(cx.theme().muted_foreground)
-                                .child(bytes),
-                        )
-                        .when(key.editor.is_some() && !covered, |this| {
-                            this.child(
-                                div()
-                                    .text_xs()
-                                    .text_color(cx.theme().muted_foreground)
-                                    .child(key.syntax.format.label()),
-                            )
-                        })
-                        .when(!field.is_empty(), |this| {
-                            this.child(
-                                div()
-                                    .text_xs()
-                                    .text_color(cx.theme().muted_foreground)
-                                    .child(field),
-                            )
-                        }),
-                )
-                .child(match (&key.editor, covered) {
-                    // Hidden rather than masked: a masked box still invites
-                    // typing into something you cannot read.
-                    (Some(_), true) => div()
-                        .w_full()
-                        .px_2()
-                        .py_1p5()
-                        .rounded_md()
-                        .bg(cx.theme().muted.opacity(0.5))
-                        .text_xs()
-                        .text_color(cx.theme().muted_foreground)
-                        .child("Hidden. Reveal to read or edit it.")
-                        .into_any_element(),
-                    (Some(editor), false) => v_flex()
-                        .w_full()
-                        .min_w_0()
-                        .flex_shrink_0()
-                        .rounded_md()
-                        .border_1()
-                        .border_color(cx.theme().border)
-                        .overflow_hidden()
-                        .child(
-                            div()
-                                .id(SharedString::from(format!("data-editor-{id}")))
-                                .test_support()
-                                .w_full()
-                                .h(height)
-                                .overflow_hidden()
-                                .child(
-                                    Editor::new(editor)
-                                        .h(relative(1.))
-                                        .bordered(false)
-                                        .aria_label(format!("{} contents", key.entry.key))
-                                        .readonly(!may_apply || self.busy()),
-                                ),
-                        )
-                        .child(
-                            h_flex()
-                                .id(SharedString::from(format!("resize-data-{id}")))
-                                .test_support()
-                                .w_full()
-                                .h(px(10.))
-                                .flex_shrink_0()
-                                .justify_center()
-                                .items_center()
-                                .cursor_row_resize()
-                                .hover(|this| this.bg(cx.theme().muted.opacity(0.5)))
-                                .child(
-                                    div()
-                                        .w(px(32.))
-                                        .h(px(3.))
-                                        .rounded_full()
-                                        .bg(cx.theme().border),
-                                )
-                                .on_mouse_down(
-                                    MouseButton::Left,
-                                    cx.listener(move |view, event: &MouseDownEvent, window, cx| {
-                                        TextSelection::end(window, cx);
-                                        cx.stop_propagation();
-                                        view.data_resize = Some(data_editors::HeightDrag {
-                                            id: id.clone(),
-                                            height,
-                                            y: event.position.y,
-                                        });
-                                        cx.notify();
-                                    }),
-                                ),
-                        )
-                        .into_any_element(),
-                    (None, _) => div()
-                        .w_full()
-                        .px_2()
-                        .py_1p5()
-                        .rounded_md()
-                        .bg(cx.theme().muted.opacity(0.5))
-                        .text_xs()
-                        .text_color(cx.theme().muted_foreground)
-                        .child("Not text. Editing it here would corrupt it.")
-                        .into_any_element(),
-                })
-        });
-
-        v_flex()
-            .relative()
-            .size_full()
-            .when(self.data_resize.is_some(), |this| {
-                this.child(self.data_resize_listener(cx))
-            })
-            .child(
-                div()
-                    .id("data-keys")
-                    .flex_1()
-                    .min_h_0()
-                    .overflow_y_scroll()
-                    .p_3()
-                    .child(v_flex().w_full().gap_4().children(rows)),
-            )
-            .child(self.render_data_bar(secret, may_apply, cx))
-            .into_any_element()
-    }
-
     /// The bar under the keys: the same status line the YAML tab has, a
     /// reveal for Secrets, and Save.
     fn usage_link(&self, id: &'static str, cx: &mut Context<Self>) -> Option<AnyElement> {
@@ -2586,6 +2373,7 @@ impl DetailView {
     }
 
     fn render_save_method(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let deleting_keys = self.tab == DetailTab::Data && !self.data_browser.deleted.is_empty();
         h_flex()
             .gap_0p5()
             .p_0p5()
@@ -2611,12 +2399,30 @@ impl DetailView {
                     Button::new(id)
                         .small()
                         .ghost()
-                        .label(label)
+                        .label(
+                            if self.tab == DetailTab::Data && method == SaveMethod::ServerSideApply
+                            {
+                                "SSA"
+                            } else {
+                                label
+                            },
+                        )
                         .selected(self.save_method == method)
-                        .disabled(self.busy())
-                        .tooltip(tooltip)
+                        .disabled(
+                            self.busy() || (deleting_keys && method == SaveMethod::ServerSideApply),
+                        )
+                        .tooltip(if deleting_keys && method == SaveMethod::ServerSideApply {
+                            "Key deletions use a version-checked Patch"
+                        } else {
+                            tooltip
+                        })
                         .on_click(cx.listener(move |view, _, _, cx| {
-                            if view.save_method != method && !view.busy() {
+                            if view.save_method != method
+                                && !view.busy()
+                                && !(view.tab == DetailTab::Data
+                                    && !view.data_browser.deleted.is_empty()
+                                    && method == SaveMethod::ServerSideApply)
+                            {
                                 view.save_method = method;
                                 view.apply = Apply::Idle;
                                 cx.notify();
@@ -2652,6 +2458,24 @@ impl DetailView {
             .items_start()
             .border_t_1()
             .border_color(cx.theme().border)
+            .when(self.data_changed(cx), |bar| {
+                let edited = self
+                    .data_browser
+                    .modified
+                    .difference(&self.data_browser.deleted)
+                    .count();
+                bar.child(
+                    div()
+                        .id("data-change-summary")
+                        .test_support()
+                        .text_xs()
+                        .text_color(cx.theme().muted_foreground)
+                        .child(format!(
+                            "{edited} modified · {} deleted · Review before saving",
+                            self.data_browser.deleted.len()
+                        )),
+                )
+            })
             .child(div().w_full().child(self.render_apply_status(cx)))
             .child(
                 h_flex()
@@ -2700,7 +2524,7 @@ impl DetailView {
                                 .on_click(cx.listener(|view, _, window, cx| {
                                     view.revealed = !view.revealed;
                                     if view.revealed {
-                                        view.prepare_data_syntax(window, cx);
+                                        view.open_selected_data(window, cx);
                                     }
                                     cx.notify();
                                 })),
@@ -2719,7 +2543,12 @@ impl DetailView {
                             } else {
                                 "Save"
                             })
-                            .disabled(!may_apply || running || (secret && !revealed))
+                            .disabled(
+                                !may_apply
+                                    || running
+                                    || (secret && !revealed)
+                                    || !self.data_changed(cx),
+                            )
                             .on_click(cx.listener(|view, _, window, cx| {
                                 view.apply_data(false, window, cx)
                             })),
@@ -3600,6 +3429,16 @@ mod integration_tests {
         window: &mut Window,
         cx: &mut App,
     ) {
+        view.update(cx, |view, cx| {
+            let Data::Ready(keys) = &view.data else {
+                panic!("data not loaded")
+            };
+            let index = keys
+                .iter()
+                .position(|entry| entry.entry.key == key)
+                .unwrap();
+            view.select_data_key(index, window, cx);
+        });
         let Data::Ready(keys) = &view.read(cx).data else {
             panic!("data editors not loaded");
         };
@@ -3661,6 +3500,7 @@ mod integration_tests {
                     );
                     view.select(DetailTab::Data, window, cx);
                     view.revealed = true;
+                    view.open_selected_data(window, cx);
                     view
                 })
             })
