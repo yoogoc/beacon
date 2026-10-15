@@ -186,10 +186,17 @@ ConfigMap / Secret 的 Data，以及 YAML、复制名称、删除等通用操作
 `Validate` 使用服务端 dry-run 检查，`Create` 创建新对象并打开详情。
 每次提交一个资源，已有同名对象会被拒绝；自定义资源需填写其 Schema 要求的字段。
 
-YAML 编辑器支持语法高亮与 **Format**。默认通过 Patch 保存修改的字段，
+资源详情与创建资源的 YAML 编辑器支持语法高亮与 **Format**，默认不自动换行，长行可横向滚动；
+顶部 **Wrap lines** 可切换自动换行，切换详情标签页时沿用当前选项，并保留草稿与撤销记录。
+校验状态以单行展示；**…** 工具菜单提供字段补全、字段说明、重新加载 Schema 与可复制的 Schema 详情。
+本地校验默认关闭，可在 **… → Local validation** 为当前编辑器启用；字段补全和说明不受影响。
+启用后的 Schema 结果仅作警告提示，语法错误单独标识；关闭会清除提示并停止后台校验。
+本地 Schema 提示不作为保存前置条件；YAML 仍需可解析，资源内容的最终校验以 API Server 的响应为准。
+默认通过 Patch 保存修改的字段，
 校验资源 UID 和版本，并在保存前展示差异。版本冲突会保留草稿；点击
 **Review latest** 可将本地改动合入最新资源，重新审阅后确认保存。
-也可以主动选择 **Server-Side Apply**，由服务端检查字段所有权；只有真正的
+保存按钮右侧的下拉菜单可选择 **Patch (recommended)** 或 **Server-Side Apply**；左侧执行当前方式的保存。
+默认使用 Patch，Server-Side Apply 由服务端检查字段所有权；只有真正的
 所有权冲突才显示冲突字段、Field Manager 和强制应用选项。
 
 勾选行或表头复选框后，选择 **Delete selected**。

@@ -20,7 +20,7 @@ use beacon_kube::{
 };
 use gpui_kit::base::{Link, SelectableText, TestSupportExt as _, TextSelection};
 use gpui_kit::component::WindowExt as _;
-use gpui_kit::component::button::{Button, ButtonVariants as _};
+use gpui_kit::component::button::{Button, ButtonVariants as _, DropdownButton};
 use gpui_kit::component::input::{Editor, EditorState, InputEvent, TextDecorationCollection};
 use gpui_kit::component::menu::{DropdownMenu as _, PopupMenuItem};
 use gpui_kit::component::spinner::Spinner;
@@ -283,7 +283,11 @@ impl DetailView {
     ) -> Self {
         let certificates = tls_certificates(&kind, &object);
         let overview = crate::overview::project(&kind.resource.group, &kind.resource.kind, &object);
-        let yaml_editor = cx.new(|cx| EditorState::new(window, cx).language("yaml"));
+        let yaml_editor = cx.new(|cx| {
+            EditorState::new(window, cx)
+                .language("yaml")
+                .soft_wrap(false)
+        });
 
         let mut this = Self {
             target: ObjectRef::of(&object),
@@ -2403,64 +2407,92 @@ impl DetailView {
         })
     }
 
-    fn render_save_method(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    fn select_save_method(&mut self, method: SaveMethod, cx: &mut Context<Self>) {
         let deleting_keys = self.tab == DetailTab::Data && !self.data_browser.deleted.is_empty();
-        h_flex()
-            .gap_0p5()
-            .p_0p5()
-            .rounded_md()
-            .bg(cx.theme().muted)
-            .children(
-                [
-                    (
-                        "save-method-patch",
-                        "Patch",
-                        SaveMethod::Patch,
-                        "Save only changed fields, checking the resource version",
-                    ),
-                    (
-                        "save-method-ssa",
-                        "Server-Side Apply",
-                        SaveMethod::ServerSideApply,
-                        "Apply configuration with field ownership checks",
-                    ),
-                ]
-                .into_iter()
-                .map(|(id, label, method, tooltip)| {
-                    Button::new(id)
-                        .small()
-                        .ghost()
-                        .label(
-                            if self.tab == DetailTab::Data && method == SaveMethod::ServerSideApply
-                            {
-                                "SSA"
-                            } else {
-                                label
-                            },
-                        )
-                        .selected(self.save_method == method)
-                        .disabled(
-                            self.busy() || (deleting_keys && method == SaveMethod::ServerSideApply),
-                        )
-                        .tooltip(if deleting_keys && method == SaveMethod::ServerSideApply {
-                            "Key deletions use a version-checked Patch"
-                        } else {
-                            tooltip
-                        })
-                        .on_click(cx.listener(move |view, _, _, cx| {
-                            if view.save_method != method
-                                && !view.busy()
-                                && !(view.tab == DetailTab::Data
-                                    && !view.data_browser.deleted.is_empty()
-                                    && method == SaveMethod::ServerSideApply)
-                            {
-                                view.save_method = method;
-                                view.apply = Apply::Idle;
-                                cx.notify();
-                            }
-                        }))
-                }),
-            )
+        if self.busy()
+            || (deleting_keys && method == SaveMethod::ServerSideApply)
+            || !crate::actions::may_apply(&self.kind, self.rules.as_deref())
+        {
+            return;
+        }
+        if self.save_method != method {
+            self.save_method = method;
+            self.apply = Apply::Idle;
+            cx.notify();
+        }
+    }
+
+    fn render_save_button(
+        &self,
+        data: bool,
+        may_apply: bool,
+        cx: &mut Context<Self>,
+    ) -> DropdownButton {
+        let running = self.busy();
+        let covered = data
+            && self.kind.resource.group.is_empty()
+            && self.kind.resource.kind == "Secret"
+            && !self.revealed;
+        let blocked = running || !may_apply || covered;
+        let deleting_keys = data && !self.data_browser.deleted.is_empty();
+        let method = self.save_method;
+        let owner = cx.weak_entity();
+        DropdownButton::new(if data {
+            "data-save-actions"
+        } else {
+            "yaml-save-actions"
+        })
+        .small()
+        .primary()
+        .disabled(blocked)
+        .menu_accessibility_label("Choose save method")
+        .button(
+            Button::new(if data { "save-data" } else { "apply" })
+                .label(if self.reviewing {
+                    "Reviewing…"
+                } else if running {
+                    "Saving…"
+                } else if method == SaveMethod::ServerSideApply {
+                    "Save (SSA)"
+                } else {
+                    "Save"
+                })
+                .tooltip(match method {
+                    SaveMethod::Patch => {
+                        "Review and save changed fields with resource version checks"
+                    }
+                    SaveMethod::ServerSideApply => {
+                        "Review and apply with server-side field ownership checks"
+                    }
+                })
+                .disabled(blocked || (data && !self.data_changed(cx)))
+                .on_click(cx.listener(move |view, _, window, cx| {
+                    if data {
+                        view.apply_data(false, window, cx);
+                    } else {
+                        view.apply(false, window, cx);
+                    }
+                })),
+        )
+        .dropdown_menu(move |menu, _, _| {
+            [
+                ("Patch (recommended)", SaveMethod::Patch),
+                ("Server-Side Apply", SaveMethod::ServerSideApply),
+            ]
+            .into_iter()
+            .fold(menu, |menu, (label, option)| {
+                let owner = owner.clone();
+                menu.item(
+                    PopupMenuItem::new(label)
+                        .checked(method == option)
+                        .disabled(deleting_keys && option == SaveMethod::ServerSideApply)
+                        .on_click(move |_, _, cx| {
+                            let _ =
+                                owner.update(cx, |view, cx| view.select_save_method(option, cx));
+                        }),
+                )
+            })
+        })
     }
 
     fn review_latest(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -2507,7 +2539,10 @@ impl DetailView {
                         )),
                 )
             })
-            .child(div().w_full().child(self.render_apply_status(cx)))
+            .when(
+                !matches!(self.apply, Apply::Idle) || self.reviewing,
+                |bar| bar.child(div().w_full().child(self.render_apply_status(cx))),
+            )
             .child(
                 h_flex()
                     .w_full()
@@ -2516,7 +2551,6 @@ impl DetailView {
                     .gap_2()
                     .items_center()
                     .flex_shrink_0()
-                    .child(self.render_save_method(cx))
                     .children(self.usage_link("data-view-usage", cx))
                     .when(matches!(self.apply, Apply::Stale(_)), |this| {
                         this.child(
@@ -2563,29 +2597,7 @@ impl DetailView {
                                 })),
                         )
                     })
-                    .child(
-                        Button::new("save-data")
-                            .primary()
-                            .small()
-                            .label(if self.reviewing {
-                                "Reviewing…"
-                            } else if running {
-                                "Saving…"
-                            } else if self.save_method == SaveMethod::ServerSideApply {
-                                "Apply (SSA)"
-                            } else {
-                                "Save"
-                            })
-                            .disabled(
-                                !may_apply
-                                    || running
-                                    || (secret && !revealed)
-                                    || !self.data_changed(cx),
-                            )
-                            .on_click(cx.listener(|view, _, window, cx| {
-                                view.apply_data(false, window, cx)
-                            })),
-                    ),
+                    .child(self.render_save_button(true, may_apply, cx)),
             )
     }
 
@@ -2600,9 +2612,10 @@ impl DetailView {
 
                 v_flex()
                     .size_full()
+                    .min_size_0()
                     .children(self.yaml_assistance.clone())
                     .child(
-                        div().flex_1().overflow_hidden().p_2().child(
+                        div().flex_1().min_size_0().overflow_hidden().p_2().child(
                             Editor::new(&self.yaml_editor)
                                 .readonly(!may_apply || self.busy())
                                 .bordered(false)
@@ -2628,7 +2641,10 @@ impl DetailView {
             .items_start()
             .border_t_1()
             .border_color(cx.theme().border)
-            .child(div().w_full().child(self.render_apply_status(cx)))
+            .when(
+                !matches!(self.apply, Apply::Idle) || self.reviewing,
+                |bar| bar.child(div().w_full().child(self.render_apply_status(cx))),
+            )
             .child(
                 h_flex()
                     .w_full()
@@ -2637,7 +2653,6 @@ impl DetailView {
                     .gap_2()
                     .items_center()
                     .flex_shrink_0()
-                    .child(self.render_save_method(cx))
                     .children(self.usage_link("yaml-view-usage", cx))
                     .when(matches!(self.apply, Apply::Stale(_)), |this| {
                         this.child(
@@ -2676,24 +2691,7 @@ impl DetailView {
                             .disabled(!may_apply || running)
                             .on_click(cx.listener(|view, _, window, cx| view.format(window, cx))),
                     )
-                    .child(
-                        Button::new("apply")
-                            .primary()
-                            .small()
-                            .label(if self.reviewing {
-                                "Reviewing…"
-                            } else if running {
-                                "Saving…"
-                            } else if self.save_method == SaveMethod::ServerSideApply {
-                                "Apply (SSA)"
-                            } else {
-                                "Save"
-                            })
-                            .disabled(!may_apply || running)
-                            .on_click(
-                                cx.listener(|view, _, window, cx| view.apply(false, window, cx)),
-                            ),
-                    ),
+                    .child(self.render_save_button(false, may_apply, cx)),
             )
     }
 

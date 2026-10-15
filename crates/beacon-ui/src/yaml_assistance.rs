@@ -5,15 +5,18 @@ use crate::{
     yaml_language::{self, Problem, Provider},
 };
 use beacon_kube::{ApiResource, ClusterSession, schema::Schema};
+use gpui_kit::assets::IconName;
 use gpui_kit::base::{
     TestSupportExt as _,
     input::{Diagnostic, DiagnosticSeverity},
 };
 use gpui_kit::component::{
-    ActiveTheme as _, Sizable as _,
+    ActiveTheme as _, Icon, Selectable as _, Sizable as _,
     button::{Button, ButtonVariants as _},
     h_flex,
     input::{EditorState, InputEvent},
+    menu::{DropdownMenu as _, PopupMenuItem},
+    tooltip::Tooltip,
     v_flex,
 };
 use gpui_kit::prelude::FluentBuilder as _;
@@ -32,7 +35,10 @@ pub(crate) struct YamlAssistance {
     status: Status,
     problems: Vec<Problem>,
     checking: bool,
+    validation_enabled: bool,
     expanded: bool,
+    wrap: bool,
+    show_schema: bool,
     help: Option<String>,
     _load: Option<Task<()>>,
     _analysis: Option<Task<()>>,
@@ -64,7 +70,10 @@ impl YamlAssistance {
                 status: Status::Loading,
                 problems: vec![],
                 checking: false,
+                validation_enabled: false,
                 expanded: false,
+                wrap: false,
+                show_schema: false,
                 help: None,
                 _load: None,
                 _analysis: None,
@@ -74,7 +83,56 @@ impl YamlAssistance {
             view
         })
     }
+    fn toggle_wrap(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.wrap = !self.wrap;
+        self.editor.update(cx, |editor, cx| {
+            editor.set_soft_wrap(self.wrap, window, cx);
+        });
+        cx.notify();
+    }
+    fn field_help(&mut self, cx: &mut Context<Self>) {
+        if let Status::Ready(schema) = &self.status {
+            let editor = self.editor.read(cx);
+            let text = editor.value();
+            self.help =
+                yaml_language::hover(schema, &text, editor.selected_range().end.saturating_sub(1))
+                    .and_then(|hover| match hover.contents {
+                        lsp_types::HoverContents::Markup(content) => Some(content.value),
+                        _ => None,
+                    })
+                    .or_else(|| {
+                        Some(
+                            "Place the caret on a field or value to see its schema description."
+                                .into(),
+                        )
+                    });
+            cx.notify();
+        }
+    }
+    fn clear_analysis(&mut self, cx: &mut Context<Self>) {
+        self._analysis = None;
+        self.checking = false;
+        self.problems.clear();
+        self.expanded = false;
+        self.editor.update(cx, |editor, cx| {
+            let text = editor.text().clone();
+            if let Some(diagnostics) = editor.diagnostics_mut() {
+                diagnostics.reset(&text);
+            }
+            cx.notify();
+        });
+    }
+    fn toggle_validation(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.validation_enabled = !self.validation_enabled;
+        if self.validation_enabled {
+            self.schedule(window, cx);
+        } else {
+            self.clear_analysis(cx);
+        }
+        cx.notify();
+    }
     fn load(&mut self, reload: bool, window: &mut Window, cx: &mut Context<Self>) {
+        self.clear_analysis(cx);
         self.status = Status::Loading;
         let session = self.session.clone();
         let resource = self.resource.clone();
@@ -106,6 +164,9 @@ impl YamlAssistance {
         self.schedule(window, cx);
     }
     fn schedule(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.validation_enabled {
+            return;
+        }
         let Status::Ready(schema) = &self.status else {
             return;
         };
@@ -122,7 +183,7 @@ impl YamlAssistance {
                 .spawn(async move { yaml_language::analyze(&schema, &draft) })
                 .await;
             let _ = view.update(cx, |view, cx| {
-                if view.editor.read(cx).value().as_ref() != text {
+                if !view.validation_enabled || view.editor.read(cx).value().as_ref() != text {
                     return;
                 }
                 view.editor.update(cx, |editor, cx| {
@@ -135,8 +196,12 @@ impl YamlAssistance {
                                     ..yaml_language::position(&text, problem.range.end),
                                 problem.issue.message.clone(),
                             )
-                            .with_severity(DiagnosticSeverity::Error)
-                            .with_source("Kubernetes Schema")
+                            .with_severity(if problem.syntax_error {
+                                DiagnosticSeverity::Error
+                            } else {
+                                DiagnosticSeverity::Warning
+                            })
+                            .with_source("Local YAML check")
                         }));
                     }
                     cx.notify();
@@ -152,33 +217,303 @@ impl YamlAssistance {
 impl Render for YamlAssistance {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let ready = matches!(self.status, Status::Ready(_));
-        let summary = match &self.status {
-            Status::Loading => "Loading cluster schema…".into(),
-            Status::Unavailable(_) => {
-                "Schema unavailable · server validation remains available".into()
-            }
-            Status::Ready(schema) => format!(
-                "{} · {} · {}",
-                schema.source,
-                schema.version,
-                if self.checking {
-                    "Checking…".into()
-                } else if self.problems.is_empty() {
-                    "Field checks passed".into()
-                } else {
-                    format!("{} schema errors", self.problems.len())
-                }
+        let (summary, description, icon, color) = match &self.status {
+            Status::Loading => (
+                "Loading schema…".into(),
+                "Loading cluster schema…".into(),
+                IconName::RefreshCw,
+                cx.theme().muted_foreground,
             ),
+            Status::Unavailable(error) => (
+                "Schema unavailable".into(),
+                format!("Server validation remains available.\n{error}"),
+                IconName::Info,
+                cx.theme().muted_foreground,
+            ),
+            Status::Ready(schema) => {
+                let syntax_error = self.problems.iter().any(|problem| problem.syntax_error);
+                let summary: String = if !self.validation_enabled {
+                    "Schema ready".into()
+                } else if self.checking {
+                    "Checking YAML…".into()
+                } else if syntax_error {
+                    "YAML syntax error".into()
+                } else if self.problems.is_empty() {
+                    "Local checks passed".into()
+                } else {
+                    format!("{} local warnings", self.problems.len())
+                };
+                let description = format!(
+                    "{} · {} · {}",
+                    schema.source,
+                    schema.version,
+                    if self.validation_enabled {
+                        format!("{summary} · Advisory only; the API server validates saves.")
+                    } else {
+                        "Local validation is off. Field completion and help remain available."
+                            .into()
+                    }
+                );
+                let color =
+                    if self.validation_enabled && !self.checking && !self.problems.is_empty() {
+                        if syntax_error {
+                            cx.theme().danger
+                        } else {
+                            cx.theme().warning
+                        }
+                    } else {
+                        cx.theme().muted_foreground
+                    };
+                (
+                    summary,
+                    description,
+                    if self.validation_enabled && !self.checking && self.problems.is_empty() {
+                        IconName::CircleCheck
+                    } else {
+                        IconName::Info
+                    },
+                    color,
+                )
+            }
         };
-        v_flex().id("yaml-assistance").test_support().w_full().flex_shrink_0().text_xs().border_b_1().border_color(cx.theme().border)
-            .child(h_flex().gap_2().px_3().py_1().items_center().child(div().flex_1().min_w_0().text_color(cx.theme().muted_foreground).child(copyable_text("yaml-schema-summary", summary)))
-                .when(ready, |bar| bar.child(Button::new("yaml-suggest-fields").xsmall().ghost().label("Suggest fields").tooltip("Schema fields and enum values · Ctrl+Space").on_click(cx.listener(|view, _, window, cx| view.editor.update(cx, |editor, cx| editor.show_completions(window, cx))))).child(Button::new("yaml-field-help").xsmall().ghost().label("Field help").on_click(cx.listener(|view, _, _, cx| { if let Status::Ready(schema) = &view.status { let editor = view.editor.read(cx); let text = editor.value(); view.help = yaml_language::hover(schema, &text, editor.selected_range().end.saturating_sub(1)).and_then(|hover| match hover.contents { lsp_types::HoverContents::Markup(content) => Some(content.value), _ => None }).or_else(|| Some("Place the caret on a field or value to see its schema description.".into())); } cx.notify(); }))))
-                .when(ready, |bar| bar.child(Button::new("yaml-reload-schema").xsmall().ghost().label("Reload schema").tooltip("Read the latest schema from this cluster").on_click(cx.listener(|view, _, window, cx| view.load(true, window, cx)))))
-                .when(matches!(self.status, Status::Unavailable(_)), |bar| bar.child(Button::new("yaml-retry-schema").xsmall().ghost().label("Retry schema").on_click(cx.listener(|view, _, window, cx| view.load(true, window, cx))))))
-            .when(!self.problems.is_empty(), |panel| panel.child(v_flex().id("yaml-schema-problems").test_support().max_h(px(160.)).overflow_y_scroll().px_3().pb_1().children(self.problems.iter().take(if self.expanded { 200 } else { 3 }).enumerate().map(|(index, problem)| { let editor = self.editor.clone(); let position = yaml_language::position(&self.editor.read(cx).value(), problem.range.start); h_flex().items_start().gap_2().child(Button::new(("yaml-schema-error", index)).xsmall().ghost().label(format!("Line {}", position.line + 1)).on_click(move |_, window, cx| editor.update(cx, |editor, cx| { editor.unfold_at(position, cx); editor.set_cursor_position(position, window, cx); }))).child(div().flex_1().text_color(cx.theme().danger).child(copyable_text(("yaml-schema-error-message", index), format!("{}{}", problem.issue.pointer, if problem.issue.pointer.is_empty() { problem.issue.message.clone() } else { format!(" · {}", problem.issue.message) })))) }))
-                .when(self.problems.len() > 3, |panel| panel.child(Button::new("yaml-schema-more-errors").xsmall().ghost().label(if self.expanded { "Show fewer errors".into() } else { format!("Show all {} errors", self.problems.len()) }).on_click(cx.listener(|view, _, _, cx| { view.expanded = !view.expanded; cx.notify(); }))))))
-            .children(self.help.as_ref().map(|help| div().id("yaml-field-documentation").test_support().px_3().py_2().max_h(px(160.)).overflow_y_scroll().bg(cx.theme().muted.opacity(0.3)).child(copyable_text("yaml-field-help-text", help.clone()))))
-            .when(matches!(self.status, Status::Unavailable(_)), |panel| panel.child(div().px_3().pb_1().text_color(cx.theme().muted_foreground).child(copyable_text("yaml-schema-unavailable", match &self.status { Status::Unavailable(error) => error.clone(), _ => String::new() }))))
+        let tooltip = description.clone();
+        let owner = cx.weak_entity();
+        let show_schema = self.show_schema;
+        let validation_enabled = self.validation_enabled;
+        v_flex()
+            .id("yaml-assistance")
+            .test_support()
+            .w_full()
+            .min_w_0()
+            .flex_shrink_0()
+            .text_xs()
+            .border_b_1()
+            .border_color(cx.theme().border)
+            .child(
+                h_flex()
+                    .id("yaml-toolbar")
+                    .test_support()
+                    .w_full()
+                    .h(px(36.))
+                    .px_3()
+                    .gap_2()
+                    .items_center()
+                    .child(
+                        h_flex()
+                            .id("yaml-schema-status")
+                            .test_support()
+                            .flex_1()
+                            .min_w_0()
+                            .gap_1p5()
+                            .text_color(color)
+                            .tooltip(move |window, cx| {
+                                Tooltip::new(tooltip.clone()).build(window, cx)
+                            })
+                            .child(Icon::new(icon).size(px(13.)).flex_shrink_0())
+                            .child(div().min_w_0().text_ellipsis().child(summary)),
+                    )
+                    .child(
+                        Button::new("yaml-wrap-lines")
+                            .xsmall()
+                            .ghost()
+                            .selected(self.wrap)
+                            .label("Wrap lines")
+                            .tooltip(
+                                "Wrap long lines to fit the editor. When off, scroll horizontally.",
+                            )
+                            .on_click(
+                                cx.listener(|view, _, window, cx| view.toggle_wrap(window, cx)),
+                            ),
+                    )
+                    .child(
+                        Button::new("yaml-tools")
+                            .xsmall()
+                            .ghost()
+                            .icon(IconName::Ellipsis)
+                            .accessibility_label("YAML tools")
+                            .tooltip("YAML tools")
+                            .dropdown_menu(move |menu, _, _| {
+                                let suggest = owner.clone();
+                                let help = owner.clone();
+                                let reload = owner.clone();
+                                let details = owner.clone();
+                                let validation = owner.clone();
+                                menu.item(
+                                    PopupMenuItem::new("Suggest fields")
+                                        .disabled(!ready)
+                                        .on_click(move |_, window, cx| {
+                                            let _ = suggest.update(cx, |view, cx| {
+                                                view.editor
+                                                    .read(cx)
+                                                    .focus_handle(cx)
+                                                    .focus(window, cx);
+                                                view.editor.update(cx, |editor, cx| {
+                                                    editor.show_completions(window, cx)
+                                                })
+                                            });
+                                        }),
+                                )
+                                .item(PopupMenuItem::new("Field help").disabled(!ready).on_click(
+                                    move |_, _, cx| {
+                                        let _ = help.update(cx, |view, cx| view.field_help(cx));
+                                    },
+                                ))
+                                .item(
+                                    PopupMenuItem::new(if ready {
+                                        "Reload schema"
+                                    } else {
+                                        "Retry schema"
+                                    })
+                                    .on_click(
+                                        move |_, window, cx| {
+                                            let _ = reload
+                                                .update(cx, |view, cx| view.load(true, window, cx));
+                                        },
+                                    ),
+                                )
+                                .separator()
+                                .item(
+                                    PopupMenuItem::new("Local validation")
+                                        .checked(validation_enabled)
+                                        .on_click(move |_, window, cx| {
+                                            let _ = validation.update(cx, |view, cx| {
+                                                view.toggle_validation(window, cx)
+                                            });
+                                        }),
+                                )
+                                .item(
+                                    PopupMenuItem::new("Schema details")
+                                        .checked(show_schema)
+                                        .on_click(move |_, _, cx| {
+                                            let _ = details.update(cx, |view, cx| {
+                                                view.show_schema = !view.show_schema;
+                                                cx.notify();
+                                            });
+                                        }),
+                                )
+                            }),
+                    ),
+            )
+            .when(self.show_schema, |panel| {
+                panel.child(
+                    div()
+                        .px_3()
+                        .pb_2()
+                        .text_color(cx.theme().muted_foreground)
+                        .child(copyable_text("yaml-schema-details", description)),
+                )
+            })
+            .when(!self.problems.is_empty(), |panel| {
+                panel.child(
+                    v_flex()
+                        .id("yaml-schema-problems")
+                        .test_support()
+                        .max_h(px(160.))
+                        .overflow_y_scroll()
+                        .px_3()
+                        .pb_1()
+                        .children(
+                            self.problems
+                                .iter()
+                                .take(if self.expanded { 200 } else { 3 })
+                                .enumerate()
+                                .map(|(index, problem)| {
+                                    let editor = self.editor.clone();
+                                    let position = yaml_language::position(
+                                        &self.editor.read(cx).value(),
+                                        problem.range.start,
+                                    );
+                                    h_flex()
+                                        .items_start()
+                                        .gap_2()
+                                        .child(
+                                            Button::new(("yaml-schema-error", index))
+                                                .xsmall()
+                                                .ghost()
+                                                .label(format!("Line {}", position.line + 1))
+                                                .on_click(move |_, window, cx| {
+                                                    editor.update(cx, |editor, cx| {
+                                                        editor.unfold_at(position, cx);
+                                                        editor.set_cursor_position(
+                                                            position, window, cx,
+                                                        );
+                                                    })
+                                                }),
+                                        )
+                                        .child(
+                                            div()
+                                                .flex_1()
+                                                .text_color(if problem.syntax_error {
+                                                    cx.theme().danger
+                                                } else {
+                                                    cx.theme().warning
+                                                })
+                                                .child(copyable_text(
+                                                    ("yaml-schema-error-message", index),
+                                                    format!(
+                                                        "{}{}",
+                                                        problem.issue.pointer,
+                                                        if problem.issue.pointer.is_empty() {
+                                                            problem.issue.message.clone()
+                                                        } else {
+                                                            format!(" · {}", problem.issue.message)
+                                                        }
+                                                    ),
+                                                )),
+                                        )
+                                }),
+                        )
+                        .when(self.problems.len() > 3, |panel| {
+                            panel.child(
+                                Button::new("yaml-schema-more-errors")
+                                    .xsmall()
+                                    .ghost()
+                                    .label(if self.expanded {
+                                        "Show fewer messages".into()
+                                    } else {
+                                        format!("Show all {} messages", self.problems.len())
+                                    })
+                                    .on_click(cx.listener(|view, _, _, cx| {
+                                        view.expanded = !view.expanded;
+                                        cx.notify();
+                                    })),
+                            )
+                        }),
+                )
+            })
+            .children(self.help.as_ref().map(|help| {
+                v_flex()
+                    .id("yaml-field-documentation")
+                    .test_support()
+                    .px_3()
+                    .py_2()
+                    .gap_1()
+                    .max_h(px(160.))
+                    .overflow_y_scroll()
+                    .bg(cx.theme().muted.opacity(0.3))
+                    .child(
+                        h_flex()
+                            .justify_between()
+                            .items_center()
+                            .child(
+                                div()
+                                    .text_color(cx.theme().muted_foreground)
+                                    .child("Field help"),
+                            )
+                            .child(
+                                Button::new("yaml-close-help")
+                                    .xsmall()
+                                    .ghost()
+                                    .icon(IconName::X)
+                                    .accessibility_label("Close field help")
+                                    .on_click(cx.listener(|view, _, _, cx| {
+                                        view.help = None;
+                                        cx.notify();
+                                    })),
+                            ),
+                    )
+                    .child(copyable_text("yaml-field-help-text", help.clone()))
+            }))
     }
 }
 
@@ -211,7 +546,7 @@ mod tests {
                 WindowOptions {
                     window_bounds: Some(WindowBounds::Windowed(Bounds::new(
                         point(px(0.), px(0.)),
-                        size(px(1100.), px(760.)),
+                        size(px(640.), px(760.)),
                     ))),
                     ..Default::default()
                 },
@@ -247,7 +582,9 @@ mod tests {
         cx.run_until_parked();
         cx.executor().advance_clock(Duration::from_millis(250));
         support::settle(cx, |cx| assistance.read_with(cx, |view, _| !view.checking));
-        assert_eq!(assistance.read_with(cx, |view, _| view.problems.len()), 2);
+        assert!(assistance.read_with(cx, |view, _| {
+            !view.validation_enabled && view.problems.is_empty() && view._analysis.is_none()
+        }));
         let editor = pane.read_with(cx, |pane, _| pane.editor.clone());
         assert!(
             editor.read_with(cx, |state, _| state.lsp().completion_provider.is_some()
@@ -259,6 +596,27 @@ mod tests {
         );
         cx.update_window(window, |_, window, cx| {
             window.render_frame(cx);
+            assert!(window.try_find("yaml-schema-problems").is_none());
+            window.click("yaml-tools", cx);
+            window.within("popup-menu").click(4usize, cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        cx.executor().advance_clock(Duration::from_millis(250));
+        support::settle(cx, |cx| assistance.read_with(cx, |view, _| !view.checking));
+        assert_eq!(assistance.read_with(cx, |view, _| view.problems.len()), 2);
+        assert!(editor.read_with(cx, |state, _| {
+            let diagnostics = state.diagnostics().unwrap();
+            diagnostics.len() == 2
+                && diagnostics
+                    .iter()
+                    .all(|entry| entry.diagnostic.severity == DiagnosticSeverity::Warning)
+        }));
+        cx.update_window(window, |_, window, cx| {
+            window.render_frame(cx);
+            assert_eq!(window.find("yaml-toolbar").bounds().size.height, px(36.));
+            assert!(window.find("yaml-tools").bounds().right() <= px(640.));
+            assert!(window.try_find("yaml-schema-details").is_none());
             assert!(window.find("yaml-schema-problems").visible());
             window.click(("yaml-schema-error", 0usize), cx);
         })
@@ -272,7 +630,8 @@ mod tests {
                 state.set_cursor_position(lsp_types::Position::new(1, 3), window, cx)
             });
             window.render_frame(cx);
-            window.click("yaml-field-help", cx);
+            window.click("yaml-tools", cx);
+            window.within("popup-menu").click(1usize, cx);
         })
         .unwrap();
         cx.update_window(window, |_, window, cx| {
@@ -306,17 +665,40 @@ mod tests {
         cx.update_window(window, |_, window, cx| window.press("cmd-z", cx))
             .unwrap();
         assert!(editor.read_with(cx, |state, _| state.value().contains("wrong")));
+        cx.run_until_parked();
+        cx.executor().advance_clock(Duration::from_millis(250));
+        support::settle(cx, |cx| assistance.read_with(cx, |view, _| !view.checking));
+        assert_eq!(assistance.read_with(cx, |view, _| view.problems.len()), 2);
+        cx.update_window(window, |_, window, cx| {
+            // A pending pass must not restore warnings after disabling checks.
+            assistance.update(cx, |view, cx| view.schedule(window, cx));
+            window.click("yaml-tools", cx);
+            window.within("popup-menu").click(4usize, cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        cx.executor().advance_clock(Duration::from_millis(250));
+        assert!(assistance.read_with(cx, |view, _| {
+            !view.validation_enabled
+                && !view.checking
+                && view.problems.is_empty()
+                && view._analysis.is_none()
+        }));
+        assert!(editor.read_with(cx, |state, _| state.diagnostics().unwrap().is_empty()));
+        assert!(editor.read_with(cx, |state, _| state.value().contains("wrong")));
         cx.update_window(window, |_, window, cx| {
             editor.update(cx, |state, cx| {
                 state.set_value("spec:\n  re", window, cx);
                 state.set_cursor_position(lsp_types::Position::new(1, 4), window, cx);
             });
             window.render_frame(cx);
-            window.click("yaml-suggest-fields", cx);
+            window.click("yaml-tools", cx);
+            window.within("popup-menu").click(0usize, cx);
         })
         .unwrap();
         cx.run_until_parked();
         assert!(editor.read_with(cx, |state, _| state.completion_menu_state().open));
+        assert!(assistance.read_with(cx, |view, _| view._analysis.is_none()));
         cx.update_window(window, |_, window, cx| {
             window.render_frame(cx);
             window.press("enter", cx);

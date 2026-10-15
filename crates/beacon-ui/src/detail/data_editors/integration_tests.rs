@@ -414,7 +414,9 @@ fn deleted_text_and_binary_keys_are_restorable_and_saved_only_after_review() {
         view.update(cx, |view, _| view.save_method = SaveMethod::ServerSideApply);
         window.click("delete-data-key", cx);
         assert_eq!(view.read(cx).save_method, SaveMethod::Patch);
-        window.click("save-method-ssa", cx);
+        window.within("data-save-actions").click("popup", cx);
+        window.within("popup-menu").click(1usize, cx);
+        window.press("escape", cx);
         assert_eq!(view.read(cx).save_method, SaveMethod::Patch);
         assert!(
             !view.read(cx).data_draft(cx).unwrap()["data"]
@@ -422,6 +424,9 @@ fn deleted_text_and_binary_keys_are_restorable_and_saved_only_after_review() {
                 .unwrap()
                 .contains_key("app.yaml")
         );
+    })
+    .unwrap();
+    cx.update_window(window, |_, window, cx| {
         window.click("restore-data-key", cx);
         assert_eq!(
             key(view.read(cx), "app.yaml")

@@ -19,6 +19,7 @@ pub(crate) struct Location {
 pub(crate) struct Problem {
     pub issue: Issue,
     pub range: Bytes<usize>,
+    pub syntax_error: bool,
 }
 fn parser() -> Parser {
     let mut parser = Parser::new();
@@ -125,7 +126,11 @@ pub(crate) fn analyze(schema: &Schema, text: &str) -> Vec<Problem> {
                             location.value.clone()
                         }
                     });
-                Problem { issue, range }
+                Problem {
+                    issue,
+                    range,
+                    syntax_error: false,
+                }
             })
             .collect(),
         Err(error) => {
@@ -166,6 +171,7 @@ pub(crate) fn analyze(schema: &Schema, text: &str) -> Vec<Problem> {
                     message: format!("YAML syntax: {error}"),
                 },
                 range: start..end,
+                syntax_error: true,
             }]
         }
     };
@@ -435,6 +441,7 @@ mod tests {
         assert_eq!(edit.range.start, position(yaml, yaml.len()));
         let yaml = "spec:\n  replicas: wrong\n  mode: Other\n  containers:\n  - image: busybox\n";
         let issues = analyze(&schema, yaml);
+        assert!(issues.iter().all(|problem| !problem.syntax_error));
         assert!(
             issues
                 .iter()
@@ -454,6 +461,7 @@ mod tests {
         let yaml = "spec:\n  replicas: [\n";
         let issues = analyze(&schema, yaml);
         assert!(issues[0].issue.message.contains("YAML syntax"));
+        assert!(issues[0].syntax_error);
         assert!(issues[0].range.start > 0);
     }
 }

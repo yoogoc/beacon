@@ -50,6 +50,7 @@ impl CreateView {
         let editor = cx.new(|cx| {
             EditorState::new(window, cx)
                 .language("yaml")
+                .soft_wrap(false)
                 .default_value(template(&kind, namespace))
         });
         editor.read(cx).focus_handle(cx).focus(window, cx);
@@ -292,7 +293,7 @@ impl Render for CreateView {
             )
             .child(self.assistance.clone())
             .child(
-                div().flex_1().min_h_0().overflow_hidden().p_2().child(
+                div().flex_1().min_size_0().overflow_hidden().p_2().child(
                     Editor::new(&self.editor)
                         .readonly(running)
                         .bordered(false)

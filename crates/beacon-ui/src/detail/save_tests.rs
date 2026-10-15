@@ -62,6 +62,8 @@ fn yaml_patch_default_cancel_preserves_draft_and_confirm_sends_only_edits() {
         window.render_frame(cx);
         assert_eq!(view.read(cx).save_method, SaveMethod::Patch);
         assert_eq!(window.find("apply").label(), Some("Save"));
+        assert!(window.try_find("save-method-patch").is_none());
+        assert!(window.try_find("save-method-ssa").is_none());
         draft(&view, "mine", window, cx);
         window.click("apply", cx);
     })
@@ -226,8 +228,17 @@ fn ssa_is_explicit_and_only_field_ownership_refusals_offer_reviewed_force() {
     cx.update_window(window, |_, window, cx| {
         window.render_frame(cx);
         draft(&view, "mine", window, cx);
-        window.click("save-method-ssa", cx);
+        window.within("yaml-save-actions").click("popup", cx);
+        window.within("popup-menu").click(1usize, cx);
+        assert_eq!(view.read(cx).save_method, SaveMethod::ServerSideApply);
+    })
+    .unwrap();
+    cx.update_window(window, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.try_find("popup-menu").is_none());
+        assert_ne!(window.find("apply").disabled(), Some(true));
         window.click("apply", cx);
+        assert!(view.read(cx).reviewing);
     })
     .unwrap();
     reviewed(cx, window);
@@ -302,7 +313,8 @@ fn ssa_is_explicit_and_only_field_ownership_refusals_offer_reviewed_force() {
         window.render_frame(cx);
         assert!(window.try_find("force-apply").is_none());
         assert!(window.find("review-latest-yaml").visible());
-        window.click("save-method-patch", cx);
+        window.within("yaml-save-actions").click("popup", cx);
+        window.within("popup-menu").click(0usize, cx);
     })
     .unwrap();
     assert!(

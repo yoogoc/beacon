@@ -277,6 +277,32 @@ impl Schema {
         issues.truncate(200);
         issues
     }
+    fn accepts_null(&self, schema: &Value) -> bool {
+        let resolved = self.resolve(schema);
+        if [schema, resolved]
+            .iter()
+            .any(|schema| schema["nullable"] == true || schema["x-kubernetes-nullable"] == true)
+        {
+            return true;
+        }
+        // metav1.Time and MicroTime marshal their zero value as null, although
+        // Kubernetes publishes them as non-nullable date-time strings. Keep
+        // this compatibility rule scoped to those references, not CRD strings.
+        schema["$ref"].as_str().is_some_and(|reference| {
+            reference
+                .strip_prefix("#/components/schemas/")
+                .or_else(|| reference.strip_prefix("#/definitions/"))
+                .is_some_and(|name| {
+                    matches!(
+                        name,
+                        "io.k8s.apimachinery.pkg.apis.meta.v1.Time"
+                            | "io.k8s.apimachinery.pkg.apis.meta.v1.MicroTime"
+                    )
+                })
+                && resolved["type"] == "string"
+                && resolved["format"] == "date-time"
+        })
+    }
     fn check(
         &self,
         schema: &Value,
@@ -288,16 +314,14 @@ impl Schema {
         if depth > 64 || issues.len() >= 200 {
             return;
         }
+        if value.is_null() && self.accepts_null(schema) {
+            return;
+        }
         let schema = self.resolve(schema);
         let issue = |message: String| Issue {
             pointer: pointer.into(),
             message,
         };
-        if value.is_null()
-            && (schema["nullable"] == true || schema["x-kubernetes-nullable"] == true)
-        {
-            return;
-        }
         let int_or_string = schema["x-kubernetes-int-or-string"] == true;
         let expected = schema["type"].as_str();
         let valid = if int_or_string {
@@ -443,6 +467,65 @@ mod tests {
         assert!(issues.iter().any(|issue| issue.pointer == "/spec/tags/app"));
         assert!(issues.iter().any(|issue| issue.pointer == "/spec/items/0"));
         assert!(issues.iter().any(|issue| issue.pointer == "/spec/port"));
+    }
+    #[test]
+    fn kubernetes_zero_timestamps_accept_null_without_relaxing_custom_strings() {
+        for prefix in ["#/components/schemas/", "#/definitions/"] {
+            let time =
+                json!({"$ref": format!("{prefix}io.k8s.apimachinery.pkg.apis.meta.v1.Time")});
+            let micro_time =
+                json!({"$ref": format!("{prefix}io.k8s.apimachinery.pkg.apis.meta.v1.MicroTime")});
+            let schema = Schema {
+                root: json!({"type":"object","properties":{
+                    "metadata":{"type":"object","properties":{"creationTimestamp":time.clone()}},
+                    "status":{"type":"object","properties":{"conditions":{"type":"array","items":{"type":"object","properties":{
+                        "lastProbeTime":{"allOf":[time.clone()]},"lastTransitionTime":time
+                    }}}}},
+                    "eventTime":micro_time,
+                    "customDate":{"type":"string","format":"date-time"},
+                    "name":{"type":"string"}
+                }}),
+                definitions: serde_json::from_value(json!({
+                    "io.k8s.apimachinery.pkg.apis.meta.v1.Time":{"type":"string","format":"date-time"},
+                    "io.k8s.apimachinery.pkg.apis.meta.v1.MicroTime":{"type":"string","format":"date-time"}
+                })).unwrap(),
+                source: "Server OpenAPI".into(),
+                version: "v1.33.3".into(),
+            };
+            let value = json!({"metadata":{"creationTimestamp":null},"status":{"conditions":[
+                {"lastProbeTime":null,"lastTransitionTime":"2026-10-15T00:00:00Z"},
+                {"lastProbeTime":null,"lastTransitionTime":null}
+            ]},"eventTime":null,"customDate":"2026-10-15T00:00:00Z","name":"demo"});
+            assert!(schema.validate(&value).is_empty());
+            let mut invalid = value;
+            invalid["customDate"] = Value::Null;
+            invalid["name"] = Value::Null;
+            invalid["status"]["conditions"][0]["lastProbeTime"] = json!(42);
+            let issues = schema.validate(&invalid);
+            assert_eq!(issues.len(), 3);
+            for pointer in ["/customDate", "/name", "/status/conditions/0/lastProbeTime"] {
+                assert!(issues.iter().any(|issue| issue.pointer == pointer));
+            }
+        }
+    }
+    #[test]
+    fn nullable_annotations_on_a_reference_are_preserved() {
+        let schema = Schema {
+            root: json!({"type":"object","properties":{
+                "first":{"$ref":"#/components/schemas/Text","nullable":true},
+                "second":{"$ref":"#/definitions/Text","x-kubernetes-nullable":true},
+                "strict":{"$ref":"#/components/schemas/Text"}
+            }}),
+            definitions: serde_json::from_value(json!({"Text":{"type":"string"}})).unwrap(),
+            source: "Fixture OpenAPI".into(),
+            version: "v1".into(),
+        };
+        assert!(
+            schema
+                .validate(&json!({"first":null,"second":null,"strict":"text"}))
+                .is_empty()
+        );
+        assert_eq!(schema.validate(&json!({"strict":null})).len(), 1);
     }
     async fn server(routes: Vec<(String, Value)>) -> (String, tokio::task::JoinHandle<()>) {
         use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
