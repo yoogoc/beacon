@@ -172,11 +172,7 @@ impl ClusterView {
         self._subscriptions.push(subscription);
     }
 
-    pub(super) fn render_column_picker(
-        &self,
-        layout: toolbar::Layout,
-        cx: &mut Context<Self>,
-    ) -> impl IntoElement {
+    pub(super) fn render_column_picker(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let choices = self.table.read(cx).delegate().column_choices();
         let search = OptionSearch::new(self.picker_search.read(cx).value().as_ref());
         let input = self.picker_search.clone();
@@ -188,7 +184,6 @@ impl ClusterView {
             })
             .trigger(Button::new("resource-columns-trigger").small().ghost()
                 .icon(Icon::new(gpui_kit::assets::IconName::Columns3))
-                .when(layout.text_actions(), |button| button.label("Columns"))
                 .accessibility_label("Columns").tooltip("Choose visible columns"))
             .content(move |_, _, cx| {
                 let reset = weak.clone();
@@ -212,11 +207,7 @@ impl ClusterView {
             })
     }
 
-    pub(super) fn render_saved_filters(
-        &self,
-        layout: toolbar::Layout,
-        cx: &mut Context<Self>,
-    ) -> impl IntoElement {
+    pub(super) fn render_saved_filters(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let preferences = self.resource_preferences(cx);
         let search = OptionSearch::new(self.picker_search.read(cx).value().as_ref());
         let input = self.picker_search.clone();
@@ -232,7 +223,6 @@ impl ClusterView {
             })
             .trigger(Button::new("resource-saved-filters-trigger").small().ghost()
                 .icon(Icon::new(gpui_kit::assets::IconName::Bookmark))
-                .when(layout.text_actions(), |button| button.label("Saved filters").dropdown_caret(true))
                 .accessibility_label("Saved filters").tooltip("Save or apply resource filters"))
             .content(move |_, _, cx| {
                 let saving = weak.clone();

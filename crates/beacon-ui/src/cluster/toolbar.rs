@@ -30,10 +30,6 @@ impl Layout {
             Self::Overflow
         }
     }
-
-    pub(super) fn text_actions(self) -> bool {
-        matches!(self, Self::Full)
-    }
 }
 
 pub(super) fn filter_button(
@@ -199,11 +195,11 @@ impl ClusterView {
                             .pl_2()
                             .border_l_1()
                             .border_color(cx.theme().border)
-                            .child(self.render_saved_filters(layout, cx))
-                            .child(self.render_column_picker(layout, cx)),
+                            .child(self.render_saved_filters(cx))
+                            .child(self.render_column_picker(cx)),
                     )
             })
-            .child(self.render_log_action(layout, false, cx))
+            .child(self.render_log_action(false, cx))
             .into_any_element()
     }
 
@@ -265,22 +261,17 @@ impl ClusterView {
                                         view.render_field_picker(field, Layout::Full, cx)
                                             .into_any_element()
                                     }))
-                                    .child(view.render_saved_filters(Layout::Full, cx))
-                                    .child(view.render_column_picker(Layout::Full, cx))
+                                    .child(view.render_saved_filters(cx))
+                                    .child(view.render_column_picker(cx))
                             })
-                            .child(view.render_log_action(Layout::Full, true, cx))
+                            .child(view.render_log_action(true, cx))
                             .into_any_element()
                     })
                     .unwrap_or_else(|_| div().into_any_element())
             })
     }
 
-    fn render_log_action(
-        &self,
-        layout: Layout,
-        vertical: bool,
-        cx: &mut Context<Self>,
-    ) -> impl IntoElement {
+    fn render_log_action(&self, vertical: bool, cx: &mut Context<Self>) -> impl IntoElement {
         // Reuse the toolbar's action handling without mounting a second set
         // of filter triggers (which would share popover IDs).
         h_flex()
@@ -298,9 +289,6 @@ impl ClusterView {
                             .small()
                             .ghost()
                             .icon(Icon::new(Glyph::Logs))
-                            .when(layout.text_actions(), |button| {
-                                button.label("Aggregated logs…")
-                            })
                             .accessibility_label("Aggregated logs")
                             .tooltip("Aggregate logs from the filtered Pods")
                             .on_click(cx.listener(|view, _, window, cx| {
