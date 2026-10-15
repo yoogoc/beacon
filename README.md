@@ -22,6 +22,7 @@
 
 <p align="center">
   <a href="#quick-start">Quick start</a> ·
+  <a href="#editing-resources">Editing resources</a> ·
   <a href="docs/USAGE.md">User guide (中文)</a> ·
   <a href="https://github.com/yoogoc/beacon/releases">Downloads</a> ·
   <a href="docs/DEVELOPMENT.md">Developer guide (中文)</a>
@@ -49,22 +50,30 @@ It uses your existing kubeconfig and cluster permissions, discovering both built
 | **Cluster workspace** | Switch contexts from the sidebar and keep multiple clusters connected. Recognize EKS names, set aliases and custom icons, disconnect, and reconnect. |
 | **Cluster overview** | Inspect health, CPU / memory / Pod capacity, requests and declared limits, node summaries, and recent warning events. Use session samples with Kubernetes Metrics API or 30m / 1h / 6h history with Prometheus; open node and event details in a side overlay. |
 | **Resources and CRDs** | Follow live Watch updates, use kubectl-style columns for built-in resources, and read CRD `additionalPrinterColumns` dynamically. |
-| **Nodes** | See taint counts, hover to inspect each taint, and view EKS node group membership. |
-| **Search and filters** | Fuzzy search, sorting, and namespace multi-select. Filter Pod / Deployment status, Service type, Ingress class, PVC attributes, Secret type, and CRD scope. |
+| **Nodes** | Inspect taints, EKS node groups, and resident Pods. Cordon / uncordon nodes, review affected Pods and disruption budgets before draining, and follow eviction results. |
+| **Search and filters** | Fuzzy search, sorting, namespace multi-select, and Kubernetes label selectors. Filter Pod / Deployment status, Service type, Ingress class, PVC attributes, Secret type, and CRD scope. |
+| **Global search and favorites** | Search resources across connected clusters and namespaces; favorite clusters and objects for quick access. |
 | **Personalized lists** | Choose visible columns, drag headers to reorder, and resize columns. Layout and sorting save per cluster and resource type; name and reuse filter combinations. |
 | **Related resources** | Navigate from Deployments to ReplicaSets and Pods, Services to EndpointSlices and Pods, and PVCs to their consuming Pods in a live Related detail tab. |
+| **Configuration references** | See which Pods and workloads use a ConfigMap or Secret, including referenced keys, environment variables, and mount paths; inspect missing references and jump to consuming resources. |
 | **Resource details** | Overview, YAML, and Events; selectable values; collapsible labels and annotations; container ports, requests and limits, probes, environment, and mounts; clickable owner links. |
-| **Argo Workflows** | Dedicated resource group, Workflow and template graphs, CronWorkflow run history, and separate node details with Pod containers, inputs, outputs, artifacts, and YAML. Controller resources stay collapsed in the sidebar. |
+| **YAML editor** | Schema-aware completion, field documentation, inline diagnostics, formatting, and configurable field folding. Review changes before saving; version-checked Patch is the default, with optional Server-Side Apply. |
+| **Argo Workflows** | Dedicated resource group, Workflow and template graphs, CronWorkflow history, and separate node details. Submit templates with parameters; retry, resubmit, suspend, resume, stop, or terminate runs with review and permission checks. |
 | **Pod tools** | Logs with keyword search and highlighting, pause / resume follow, jump to latest, word wrap, container selection, and download. Run commands, open Shell, and forward ports in a separate bottom panel. Filled / hollow markers show regular / init container states. |
+| **Structured logs** | Inspect JSON / logfmt fields, filter by level, regex, fields, and time range, bookmark lines, and export matching retained logs. Available for Pod and aggregated logs. |
 | **Pod files** | Open Files from a Pod's context menu in its own tab; browse running containers, preview text and metadata, review diffs before saving, upload, choose a download folder, download directories as tar archives, rename, create directories, and confirm multi-file deletion. Requires `pods/exec` access, a container shell and GNU/BusyBox file tools; archive downloads require `tar`. |
 | **Aggregated logs** | Follow Pods selected by a workload or label, with Pod / container prefixes and timestamps. New replicas join automatically; search, pause, wrap, and download separate log files to a chosen folder. |
 | **Deployment history** | Inspect retained revisions, images, and creation times; review a template diff before rolling back and follow rollout progress. |
+| **Jobs and CronJobs** | Run CronJobs immediately, suspend or resume schedules, and rerun a Job as a new Job while keeping its original record. Follow the resulting Job, Pods, and logs. |
 | **Debug containers** | Add an ephemeral container to a running Pod, choose its image, target container, and security profile, then open its terminal. |
 | **Network paths** | Explore Ingress → Service → EndpointSlice → Pod relationships, inspect missing references, readiness, and port mismatches, and navigate between resources. |
-| **Resource comparison** | Compare resources across connected clusters or namespaces in a read-only YAML diff, excluding runtime fields by default and concealing Secret values. |
-| **Resource operations** | Create YAML resources with server validation, review a YAML diff before creating or applying changes, restart, scale, and delete individually or in bulk. Row action menus share resource-specific operations and permission checks with right-click menus. |
-| **ConfigMaps and Secrets** | View and edit data by key. Secret values start concealed. Inspect TLS certificate subjects, issuers, validity, algorithms, key strength, extensions, and public keys. |
-| **Metrics and Helm** | Read Pod / Node CPU and memory from the Kubernetes Metrics API or Prometheus, and inspect Helm releases stored in the cluster. |
+| **Resource comparison** | Choose resources across connected clusters or namespaces and compare them in a separate, read-only diff window. Runtime fields are excluded and Secret values concealed by default. |
+| **Resource operations** | Create YAML resources with server validation; review diffs before saving changes. Restart, scale, and delete resources, including bulk Deployment restart and multi-resource deletion with per-target results. Row and right-click menus share resource-specific operations and permission checks. |
+| **ConfigMaps and Secrets** | Search a virtualized key list, edit one value at a time with syntax highlighting, folding, resizable height, and horizontal scrolling. Stage whole key/value deletions and restore them before saving. Secret values start concealed; TLS details include subjects, issuers, validity, algorithms, key strength, extensions, and public keys. |
+| **Metrics** | View Pod / Node / container CPU and memory trends, requests and limits, and restart / OOM markers. Use Kubernetes Metrics API session samples or Prometheus history. |
+| **Helm** | Inspect release values, manifests, history, and revision diffs. Install, upgrade, roll back, and uninstall with review and progress reporting; lifecycle operations use a local `helm` CLI. |
+| **RBAC inspection** | Run server-backed **Can I?** checks for the current user or another subject, trace bindings to roles and rules, and inspect permissions from a 403 error. |
+| **Port forwarding** | Forward from Pods, Services, or Deployments, choose local ports, save presets, and explicitly restore them. Backend Pod replacement can select a new target and resume the forward. |
 | **Updates** | Automatic checks, optional automatic downloads, signed packages, Stable / Development channels, and restart confirmation that protects unapplied edits. |
 | **Appearance and connections** | Light, dark, and named custom themes; locally saved fonts and colors; global and per-cluster proxies. |
 | **Diagnostics and keyboard navigation** | Command palette, searchable shortcut guide, separate application log window, and connection / Watch inspection from the status bar. |
@@ -147,6 +156,27 @@ The command palette accepts `@resource-type`, `#namespace`, `ctx cluster`, and `
 For example, `@dep` finds Deployment and `#kube-sys` finds kube-system.
 Open **Help → Keyboard shortcuts** for the full shortcut list and focus behavior.
 
+## Editing resources
+
+### YAML
+
+1. Open a resource's **YAML** tab and edit with completion, field documentation, and inline diagnostics.
+2. Click **Save** to prepare a diff. By default, Beacon saves only changed fields with a Patch that checks the resource UID and version.
+3. Review the side-by-side diff and choose **Confirm & save** to write the changes.
+
+If the resource changed on the server, your draft stays intact. **Review latest** carries your edits onto the latest resource while preserving fields you did not edit; review the new diff before confirming.
+Choose **Server-Side Apply** when you need field ownership management. Only an actual ownership conflict offers a separate, reviewed force-apply action.
+
+### ConfigMaps and Secrets
+
+Open **Data**, search for a key, and select it to read or edit its value. The key list renders only visible rows, and editors and syntax analysis load on demand. Unsaved edits stay intact when switching keys.
+
+- Content-aware highlighting, code folding, and a draggable height handle keep configuration values readable.
+- Long lines scroll horizontally by default. **Wrap lines** toggles wrapping and carries the choice across keys in the current detail view.
+- **Delete key** stages removal of the whole key/value pair; **Restore key** undoes it. Click **Save** to review edits and deletions together before confirming. Key deletion uses a version-checked Patch.
+
+Secret values require **Reveal** before reading, editing, deleting, or saving. Binary values can be deleted as whole entries; text editing is available only for UTF-8 values. Untouched values keep their original encoding.
+
 ## Make it yours
 
 **Application settings:** use **Beacon → Settings…** in the macOS menu bar, or **Menu → Settings…** on Windows / Linux.
@@ -172,9 +202,11 @@ for dependency pins, patch tests, and rendering diagnostics.
 
 ```sh
 cargo fmt --all -- --check
-cargo clippy --workspace --all-targets -- -D warnings
-cargo test --workspace
+cargo clippy --locked --workspace --all-targets --features beacon-ui/ui-tests -- -D warnings
+cargo test --locked --workspace --features beacon-ui/ui-tests -- --test-threads=1
 ```
+
+The `ui-tests` feature includes headless interaction checks backed by a local mock Kubernetes API. Run these alongside the workspace tests when changing UI or resource operations.
 
 | Crate | Responsibility |
 | --- | --- |
@@ -182,6 +214,7 @@ cargo test --workspace
 | `beacon-ui` | GPUI views, themes, resource catalog, command palette, and asynchronous bridge. |
 | `beacon-kube` | Configuration, connections, discovery, Watch, permissions, and Kubernetes operations; no GPUI dependency. |
 | `beacon-columns` | Built-in and CRD table columns, field formatting, and container states. |
+| `beacon-updater` | Update discovery, downloads, package signature verification, and platform installation. |
 
 Network tasks run on Tokio; views run on the GPUI thread. Messages carry batched updates between them.
 Tabs for a cluster share its connection, and identical resource subscriptions share a Watch.
