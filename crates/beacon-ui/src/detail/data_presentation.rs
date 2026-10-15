@@ -34,6 +34,7 @@ impl DetailView {
                     let active = state.data_browser.selected == Some(index);
                     let deleted = state.data_browser.deleted.contains(&index);
                     let modified = state.data_browser.modified.contains(&index);
+                    let role = state.service_account_key(&key.entry.key);
                     let pick = view.downgrade();
                     let color = if deleted {
                         cx.theme().danger
@@ -77,6 +78,16 @@ impl DetailView {
                             .child(
                                 Icon::new(if deleted {
                                     IconName::Trash
+                                } else if role == Some(crate::service_account_secret::Key::Token) {
+                                    IconName::FileKey
+                                } else if role
+                                    == Some(crate::service_account_secret::Key::Certificate)
+                                {
+                                    IconName::ShieldCheck
+                                } else if role
+                                    == Some(crate::service_account_secret::Key::Namespace)
+                                {
+                                    IconName::Layers
                                 } else if key.entry.text.is_none() {
                                     IconName::FileArchive
                                 } else {
@@ -111,7 +122,9 @@ impl DetailView {
                                             } else {
                                                 format!(
                                                     "{} · {}",
-                                                    key.entry.field.name(),
+                                                    role.map_or(key.entry.field.name(), |role| {
+                                                        role.label()
+                                                    }),
                                                     bytes(key.entry.bytes)
                                                 )
                                             }),
@@ -212,6 +225,8 @@ impl DetailView {
         let may_apply = crate::actions::may_apply(&self.kind, self.rules.as_deref());
         let busy = self.busy();
         let modified = self.data_browser.modified.contains(&index);
+        let role = self.service_account_key(&key.entry.key);
+        let details = role.is_some() && self.data_browser.details && key.editor.is_some();
         let format = if key.entry.text.is_none() {
             "Binary"
         } else if covered {
@@ -274,6 +289,8 @@ impl DetailView {
                         .child("Reveal values to read, edit or delete a key."),
                 )
                 .into_any_element()
+        } else if details {
+            self.render_service_account_value(key, cx)
         } else if let Some(editor) = &key.editor {
             v_flex()
                 .w_full()
@@ -406,7 +423,16 @@ impl DetailView {
                                 row.child(div().text_color(cx.theme().warning).child("Modified"))
                             })
                             .when(!may_apply, |row| row.child("Read only"))
-                            .when(key.editor.is_some() && !deleted && !covered, |row| {
+                            .when(role.is_some() && key.editor.is_some() && !deleted && !covered, |row| {
+                                row.child(h_flex().gap_0p5().rounded_md().bg(cx.theme().muted)
+                                    .child(Button::new("account-value-details").small().ghost().selected(self.data_browser.details).label("Details")
+                                        .on_click(cx.listener(|view, _, _, cx| { view.data_browser.details = true; cx.notify(); })))
+                                    .child(Button::new("account-value-raw").small().ghost().selected(!self.data_browser.details).label("Raw value")
+                                        .on_click(cx.listener(|view, _, _, cx| { view.data_browser.details = false; cx.notify(); }))))
+                                    .child(Button::new("account-copy-value").small().ghost().label(if role == Some(crate::service_account_secret::Key::Token) { "Copy token" } else { "Copy value" })
+                                        .on_click(cx.listener(move |view, _, _, cx| view.copy_data_value(index, cx))))
+                            })
+                            .when(key.editor.is_some() && !deleted && !covered && !details, |row| {
                                 row.child(Button::new("data-wrap-lines").small().ghost()
                                     .selected(self.data_browser.wrap).label("Wrap lines")
                                     .tooltip("Wrap long lines to fit the editor. When off, scroll horizontally.")

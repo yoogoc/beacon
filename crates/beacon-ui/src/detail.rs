@@ -38,6 +38,7 @@ use crate::tls::{self, CertificateInfo};
 
 mod data_editors;
 mod data_presentation;
+mod service_account_data;
 
 #[cfg(all(test, feature = "ui-tests"))]
 mod save_tests;
@@ -118,6 +119,8 @@ struct DataKey {
     editor: Option<Entity<EditorState>>,
     syntax: crate::data_syntax::Analysis,
     decorations: Option<TextDecorationCollection>,
+    inspection: Option<Box<crate::service_account_secret::Inspection>>,
+    inspection_value: Option<SharedString>,
     _change: Option<Subscription>,
     _detect: Option<Task<()>>,
 }
@@ -400,6 +403,23 @@ impl DetailView {
         rules: Option<Arc<Rules>>,
         cx: &mut Context<Self>,
     ) {
+        // The token controller fills a service-account Secret asynchronously.
+        // Refresh clean Data views when values change, retaining active drafts.
+        if crate::service_account_secret::supported(
+            &self.kind.resource.group,
+            &self.kind.resource.kind,
+            &object,
+        ) && self.object.data.get("data") != object.data.get("data")
+            && matches!(self.data, Data::Ready(_))
+            && !self.busy()
+            && !self.data_changed(cx)
+        {
+            self.data = Data::Unopened;
+            self.data_baseline = None;
+            self.data_browser.recent.clear();
+            self.data_browser.modified.clear();
+            self.data_resize = None;
+        }
         self.certificates = tls_certificates(&self.kind, &object);
         self.overview =
             crate::overview::project(&self.kind.resource.group, &self.kind.resource.kind, &object);
@@ -1920,10 +1940,20 @@ impl DetailView {
         certificates: &Result<Vec<CertificateInfo>, String>,
         cx: &mut Context<Self>,
     ) -> AnyElement {
+        self.render_certificate_bundle("TLS Certificate", certificates, false, cx)
+    }
+
+    fn render_certificate_bundle(
+        &self,
+        title: &'static str,
+        certificates: &Result<Vec<CertificateInfo>, String>,
+        ca_bundle: bool,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         match certificates {
             Err(error) => v_flex()
                 .gap_1()
-                .child(self.heading("TLS Certificate", cx))
+                .child(self.heading(title, cx))
                 .child(
                     div()
                         .text_sm()
@@ -1934,11 +1964,9 @@ impl DetailView {
             Ok(certificates) => v_flex()
                 .w_full()
                 .gap_4()
-                .children(
-                    certificates.iter().enumerate().map(|(index, certificate)| {
-                        self.render_certificate(index, certificate, cx)
-                    }),
-                )
+                .children(certificates.iter().enumerate().map(|(index, certificate)| {
+                    self.render_certificate(index, certificate, ca_bundle, cx)
+                }))
                 .child(
                     div()
                         .text_xs()
@@ -1955,6 +1983,7 @@ impl DetailView {
         &self,
         index: usize,
         certificate: &CertificateInfo,
+        ca_bundle: bool,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let now = x509_parser::time::ASN1Time::now().timestamp();
@@ -1967,7 +1996,9 @@ impl DetailView {
         } else {
             Tone::Healthy
         };
-        let title = if index == 0 {
+        let title = if ca_bundle {
+            format!("CA certificate {}", index + 1)
+        } else if index == 0 {
             "Leaf certificate".to_string()
         } else {
             format!("Chain certificate {}", index + 1)
@@ -2525,6 +2556,8 @@ impl DetailView {
                                     view.revealed = !view.revealed;
                                     if view.revealed {
                                         view.open_selected_data(window, cx);
+                                    } else {
+                                        view.cover_data();
                                     }
                                     cx.notify();
                                 })),
@@ -3193,7 +3226,10 @@ fn container_state(status: &Value) -> String {
 }
 
 impl Render for DetailView {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if self.tab == DetailTab::Data && matches!(self.data, Data::Unopened) {
+            self.load_data(window, cx);
+        }
         let body = match self.tab {
             DetailTab::Overview => self.render_overview(cx),
             DetailTab::Network => self

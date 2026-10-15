@@ -229,6 +229,9 @@ pub(crate) fn summary(group: &str, kind: &str, object: &DynamicObject, now: Time
                 .unwrap_or_else(|| "Ingress".into()),
             false,
         ),
+        ("", "Secret") if crate::service_account_secret::supported(group, kind, object) => {
+            ("Service account token".into(), false)
+        }
         ("", "Secret") => (defaulted(data, "/type", "Opaque").value.unwrap(), false),
         ("", "ConfigMap") => ("ConfigMap".into(), false),
         _ => (
@@ -589,6 +592,66 @@ pub(crate) fn project(group: &str, kind: &str, object: &DynamicObject) -> Projec
                     .insert(0, ("Type".into(), defaulted(data, "/type", "Opaque")));
             }
             groups.push(config);
+            if crate::service_account_secret::supported(group, kind, object) {
+                let annotation = |key: &str| {
+                    object
+                        .metadata
+                        .annotations
+                        .as_ref()
+                        .and_then(|annotations| annotations.get(key))
+                };
+                let label = |key: &str| {
+                    object
+                        .metadata
+                        .labels
+                        .as_ref()
+                        .and_then(|labels| labels.get(key))
+                };
+                let invalid = label(crate::service_account_secret::INVALID_SINCE);
+                let populated = data
+                    .pointer("/data/token")
+                    .and_then(Value::as_str)
+                    .is_some_and(|token| !token.is_empty());
+                let state = if invalid.is_some() {
+                    "Marked invalid by cluster"
+                } else if populated {
+                    "Present"
+                } else {
+                    "Not populated"
+                };
+                let mut account = Group::new(
+                    "Service account",
+                    vec![
+                        (
+                            "Service account",
+                            Cell {
+                                value: annotation(crate::service_account_secret::ACCOUNT).cloned(),
+                                ..Default::default()
+                            }
+                            .link("", "ServiceAccount"),
+                        ),
+                        (
+                            "Service account UID",
+                            Cell {
+                                value: annotation(crate::service_account_secret::UID).cloned(),
+                                ..Default::default()
+                            },
+                        ),
+                        ("Token data", Cell::text(state)),
+                    ],
+                );
+                for (name, value) in [
+                    ("Last used", label(crate::service_account_secret::LAST_USED)),
+                    ("Invalid since", invalid),
+                ] {
+                    if let Some(value) = value {
+                        account
+                            .fields
+                            .push((name.into(), Cell::text(value.clone())));
+                    }
+                }
+                groups.push(account);
+            }
             let mut keys = Group::new("Data keys", vec![]);
             keys.table = Some(Table {
                 headers: if secret {
@@ -1092,6 +1155,86 @@ mod tests {
         ] {
             assert!(!rendered.contains(private));
         }
+    }
+
+    #[test]
+    fn service_account_secrets_link_the_annotated_account_without_decoding_private_claims() {
+        let mut secret = object(
+            json!({"type":crate::service_account_secret::TYPE, "data":{"token":"cHJpdmF0ZS10b2tlbg==", "namespace":"ZGVmYXVsdA==", "ca.crt":"Q0VSVA=="}}),
+        );
+        secret.types = None;
+        secret.metadata.annotations = Some(std::collections::BTreeMap::from([
+            (
+                crate::service_account_secret::ACCOUNT.into(),
+                "worker".into(),
+            ),
+            (
+                crate::service_account_secret::UID.into(),
+                "worker-uid".into(),
+            ),
+        ]));
+        secret.metadata.labels = Some(std::collections::BTreeMap::from([
+            (
+                crate::service_account_secret::LAST_USED.into(),
+                "2026-10-15".into(),
+            ),
+            (
+                crate::service_account_secret::INVALID_SINCE.into(),
+                "2026-10-14".into(),
+            ),
+        ]));
+        let projection = project("", "Secret", &secret);
+        let account = value(&projection, "Service account", "Service account");
+        assert_eq!(account.value.as_deref(), Some("worker"));
+        assert_eq!(account.reference.as_ref().unwrap().kind, "ServiceAccount");
+        assert_eq!(
+            value(&projection, "Service account", "Token data")
+                .value
+                .as_deref(),
+            Some("Marked invalid by cluster")
+        );
+        assert_eq!(
+            value(&projection, "Service account", "Last used")
+                .value
+                .as_deref(),
+            Some("2026-10-15")
+        );
+        let rendered = format!("{:?}{:?}", projection.groups, projection.additional);
+        for private in [
+            "cHJpdmF0ZS10b2tlbg==",
+            "private-token",
+            "Q0VSVA==",
+            "ZGVmYXVsdA==",
+        ] {
+            assert!(!rendered.contains(private));
+        }
+        assert_eq!(
+            summary("", "Secret", &secret, Timestamp::now()).label,
+            "Service account token"
+        );
+        assert!(
+            project("example.com", "Secret", &secret)
+                .groups
+                .iter()
+                .all(|group| group.title != "Service account")
+        );
+    }
+
+    #[test]
+    fn service_account_token_can_be_waiting_for_controller_population() {
+        let secret = object(json!({"type":crate::service_account_secret::TYPE}));
+        let projection = project("", "Secret", &secret);
+        assert_eq!(
+            value(&projection, "Service account", "Token data")
+                .value
+                .as_deref(),
+            Some("Not populated")
+        );
+        assert!(
+            value(&projection, "Service account", "Service account")
+                .reference
+                .is_none()
+        );
     }
 
     #[test]

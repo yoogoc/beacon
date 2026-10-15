@@ -64,20 +64,24 @@ pub fn inspect(object: &DynamicObject) -> Result<Vec<CertificateInfo>, String> {
         .decode(encoded)
         .map_err(|error| format!("tls.crt is not valid base64: {error}"))?;
 
+    inspect_pem(&bytes, "tls.crt")
+}
+
+pub(crate) fn inspect_pem(bytes: &[u8], name: &str) -> Result<Vec<CertificateInfo>, String> {
     let mut certificates = Vec::new();
-    for block in Pem::iter_from_buffer(&bytes) {
-        let block = block.map_err(|error| format!("Cannot read tls.crt PEM: {error}"))?;
+    for block in Pem::iter_from_buffer(bytes) {
+        let block = block.map_err(|_| format!("Cannot read {name} PEM."))?;
         if block.label != "CERTIFICATE" {
             continue;
         }
         let certificate = block
             .parse_x509()
-            .map_err(|error| format!("Cannot parse a certificate in tls.crt: {error}"))?;
+            .map_err(|_| format!("Cannot parse a certificate in {name}."))?;
         certificates.push(describe(&certificate, &block.contents));
     }
 
     if certificates.is_empty() {
-        return Err("tls.crt contains no PEM certificate".into());
+        return Err(format!("{name} contains no PEM certificate"));
     }
     Ok(certificates)
 }

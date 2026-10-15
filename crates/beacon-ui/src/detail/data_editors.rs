@@ -15,6 +15,7 @@ pub(super) struct Browser {
     pub scroll: UniformListScrollHandle,
     pub width: Rc<Cell<Pixels>>,
     pub wrap: bool,
+    pub details: bool,
     pub recent: VecDeque<usize>,
     _search: Option<Subscription>,
 }
@@ -31,6 +32,7 @@ impl Default for Browser {
             scroll: UniformListScrollHandle::default(),
             width: Rc::new(Cell::new(px(440.))),
             wrap: false,
+            details: true,
             recent: VecDeque::new(),
             _search: None,
         }
@@ -57,7 +59,7 @@ impl DetailView {
             object["kind"] = Value::String(self.kind.resource.kind.clone());
             object
         });
-        let keys: Vec<_> = data::read(&self.object, self.kind.resource.kind == "Secret")
+        let mut keys: Vec<_> = data::read(&self.object, self.kind.resource.kind == "Secret")
             .into_iter()
             .map(|entry| DataKey {
                 entry,
@@ -67,10 +69,21 @@ impl DetailView {
                     tokens: vec![],
                 },
                 decorations: None,
+                inspection: None,
+                inspection_value: None,
                 _change: None,
                 _detect: None,
             })
             .collect();
+        if crate::service_account_secret::supported(
+            &self.kind.resource.group,
+            &self.kind.resource.kind,
+            &self.object,
+        ) {
+            keys.sort_by_key(|key| {
+                crate::service_account_secret::Key::of(&key.entry.key).map_or(3, |key| key.order())
+            });
+        }
         self.data_browser.selected = selected
             .and_then(|id| keys.iter().position(|key| self::id(&key.entry) == id))
             .or_else(|| keys.iter().position(|key| key.entry.text.is_some()))
@@ -183,6 +196,11 @@ impl DetailView {
         let Some(index) = self.data_browser.selected else {
             return;
         };
+        let inspect = crate::service_account_secret::supported(
+            &self.kind.resource.group,
+            &self.kind.resource.kind,
+            &self.object,
+        );
         if self.data_browser.deleted.contains(&index) {
             return;
         }
@@ -221,15 +239,18 @@ impl DetailView {
                 window,
                 move |view, editor, event: &InputEvent, window, cx| {
                     if matches!(event, InputEvent::Change) {
-                        let Data::Ready(keys) = &view.data else {
+                        let Data::Ready(keys) = &mut view.data else {
                             return;
                         };
-                        if keys.get(index).and_then(|key| key.editor.as_ref()) != Some(editor) {
+                        let Some(key) = keys.get_mut(index) else {
+                            return;
+                        };
+                        if key.editor.as_ref() != Some(editor) {
                             return;
                         }
-                        if Some(editor.read(cx).value().as_ref())
-                            == keys[index].entry.text.as_deref()
-                        {
+                        key.inspection = None;
+                        key.inspection_value = None;
+                        if Some(editor.read(cx).value().as_ref()) == key.entry.text.as_deref() {
                             view.data_browser.modified.remove(&index);
                         } else {
                             view.data_browser.modified.insert(index);
@@ -258,9 +279,16 @@ impl DetailView {
             key.decorations = None;
             key.editor = None;
             key.syntax.tokens = vec![];
+            key.inspection = None;
+            key.inspection_value = None;
             false
         });
-        if fresh || keys[index]._detect.is_none() {
+        if fresh
+            || keys[index]._detect.is_none()
+            || (inspect
+                && crate::service_account_secret::Key::of(&keys[index].entry.key).is_some()
+                && keys[index].inspection.is_none())
+        {
             self.schedule_data_syntax(index, window, cx);
         }
     }
@@ -277,6 +305,17 @@ impl DetailView {
             }
         }
         cx.notify();
+    }
+
+    pub(super) fn cover_data(&mut self) {
+        self.data_resize = None;
+        if let Data::Ready(keys) = &mut self.data {
+            for &index in &self.data_browser.recent {
+                keys[index]._detect = None;
+                keys[index].inspection = None;
+                keys[index].inspection_value = None;
+            }
+        }
     }
 
     pub(super) fn delete_data_key(
@@ -339,8 +378,11 @@ impl DetailView {
             cx.background_executor()
                 .timer(std::time::Duration::from_millis(200))
                 .await;
-            let Some((name, text, editor)) = view
+            let Some((name, text, editor, service_account)) = view
                 .update(cx, |view, cx| {
+                    if view.kind.resource.kind == "Secret" && !view.revealed {
+                        return None;
+                    }
                     let Data::Ready(keys) = &view.data else {
                         return None;
                     };
@@ -350,6 +392,11 @@ impl DetailView {
                         key.entry.key.clone(),
                         editor.read(cx).value().to_string(),
                         editor,
+                        crate::service_account_secret::supported(
+                            &view.kind.resource.group,
+                            &view.kind.resource.kind,
+                            &view.object,
+                        ),
                     ))
                 })
                 .ok()
@@ -358,9 +405,17 @@ impl DetailView {
                 return;
             };
             let sample = text.clone();
-            let analysis = cx
+            let (analysis, inspection) = cx
                 .background_executor()
-                .spawn(async move { crate::data_syntax::analyze(&name, &sample) })
+                .spawn(async move {
+                    let analysis = crate::data_syntax::analyze(&name, &sample);
+                    let inspection = if service_account {
+                        crate::service_account_secret::inspect(&name, &sample).map(Box::new)
+                    } else {
+                        None
+                    };
+                    (analysis, inspection)
+                })
                 .await;
             let _ = view.update(cx, |view, cx| {
                 if view.kind.resource.kind == "Secret" && !view.revealed {
@@ -391,6 +446,8 @@ impl DetailView {
                     );
                 }
                 key.syntax = analysis;
+                key.inspection_value = inspection.as_ref().map(|_| SharedString::from(text));
+                key.inspection = inspection;
                 cx.notify();
             });
         }));

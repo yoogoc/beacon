@@ -263,6 +263,18 @@ Data 保存与 YAML 使用相同的 Patch / Server-Side Apply 选择、版本校
 
 此视图不读取或展示 `tls.key`。过期判断是时间检查，不代表证书链信任或主机名验证。
 
+`kubernetes.io/service-account-token` 类型的 Secret 提供专门展示：
+
+- Overview 显示注解中的 ServiceAccount 名称和 UID，名称可直接跳转；显示 Token 是否已填充，以及集群提供的最后使用日期、失效标记。
+- Data 优先列出 `token`、`namespace`、`ca.crt`，默认隐藏值；**Reveal** 后进入 **Details**，也可切换 **Raw value** 编辑原值。
+- Token 展示 JWT 签发者、Subject、Audience、ServiceAccount 身份、签名算法声明、签发 / 生效 / 到期时间及绑定对象；完整 Header 与 Claims 可展开查看，**Copy token** 复制解码后的 Token。
+- `ca.crt` 展示 CA 证书束的主题、签发者、有效期、算法、公钥和扩展；`namespace` 可跳转到对应命名空间。其他 Key 继续使用原值编辑器。
+
+JWT 仅在本机解码展示，不验证签名或认证有效性；缺少 `exp` 时显示 **No expiry claim**。
+时间声明未过期不代表凭据可用，实际认证还涉及签名、受众、绑定对象等检查，见 [Kubernetes ServiceAccount 凭据说明](https://kubernetes.io/docs/concepts/security/service-accounts/#authenticating-service-account-credentials)。
+切换详情与原值视图、隐藏与再次揭示都会保留草稿，保存仍需审阅 Diff 并进行版本校验。
+控制器补全或更新数据时，未编辑的 Data 页自动刷新；有本地修改时保留草稿。
+
 ## 应用与集群配置
 
 macOS 的入口为系统菜单栏 **Beacon → Settings…**；

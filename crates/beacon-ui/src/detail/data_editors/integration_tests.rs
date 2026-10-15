@@ -66,6 +66,257 @@ fn writes(fixture: &beacon_kube::test_support::Fixture) -> Vec<Value> {
         .collect()
 }
 
+fn account_token(subject: &str) -> String {
+    use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
+    format!("{}.{}.fixture-signature", URL_SAFE_NO_PAD.encode(r#"{"alg":"RS256","kid":"fixture"}"#),
+        URL_SAFE_NO_PAD.encode(json!({"iss":"https://issuer.example", "sub":subject, "aud":["api"], "exp":1_900_000_000,
+            "kubernetes.io/serviceaccount/service-account.name":"worker", "kubernetes.io/serviceaccount/namespace":"default"}).to_string()))
+}
+
+fn account_secret(token: &str) -> Value {
+    json!({"apiVersion":"v1", "kind":"Secret", "metadata":{"name":"worker-token", "namespace":"default", "uid":"worker-token", "resourceVersion":"1", "annotations":{"kubernetes.io/service-account.name":"worker", "kubernetes.io/service-account.uid":"worker-id"}},
+        "type":crate::service_account_secret::TYPE, "data":{
+            "token":data::encode(beacon_kube::DataField::Data, true, token),
+            "namespace":data::encode(beacon_kube::DataField::Data, true, "default"),
+            "ca.crt":data::encode(beacon_kube::DataField::Data, true, include_str!("../../testdata/tls.crt")),
+            "extra":data::encode(beacon_kube::DataField::Data, true, "extra-value")}})
+}
+
+fn inspect_ready(cx: &mut TestAppContext, view: &Entity<DetailView>, name: &str) {
+    cx.run_until_parked();
+    cx.executor().advance_clock(Duration::from_millis(200));
+    support::settle(cx, |cx| {
+        view.read_with(cx, |view, _| key(view, name).inspection.is_some())
+    });
+}
+
+#[::core::prelude::v1::test]
+fn service_account_data_stays_hidden_until_revealed_and_inspects_current_drafts() {
+    let cx = &mut support::context();
+    let token = account_token("system:serviceaccount:default:worker");
+    let object = account_secret(&token);
+    let (fixture, session) = support::fixture(cx, "account-data", vec![object.clone()]);
+    let (window, view) = open_width(cx, session, "Secret", object, 440.);
+    cx.update_window(window, |_, window, cx| {
+        window.render_frame(cx);
+        let Data::Ready(keys) = &view.read(cx).data else {
+            panic!()
+        };
+        assert_eq!(
+            keys.iter()
+                .map(|key| key.entry.key.as_str())
+                .collect::<Vec<_>>(),
+            ["token", "namespace", "ca.crt", "extra"]
+        );
+        assert!(
+            keys.iter().all(|key| key.editor.is_none()
+                && key.inspection.is_none()
+                && key._detect.is_none())
+        );
+        assert!(window.try_find("account-token-details").is_none());
+        assert!(window.try_find("account-copy-value").is_none());
+        cx.write_to_clipboard(ClipboardItem::new_string("before".into()));
+        view.update(cx, |view, cx| view.copy_data_value(0, cx));
+        assert_eq!(
+            cx.read_from_clipboard().unwrap().text().as_deref(),
+            Some("before")
+        );
+        window.click("reveal", cx);
+    })
+    .unwrap();
+    inspect_ready(cx, &view, "token");
+    let changed = account_token("draft-subject");
+    cx.update_window(window, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.find("account-token-details").visible());
+        assert!(window.try_find("data-editor-data:token").is_none());
+        window.click("account-copy-value", cx);
+        assert_eq!(
+            cx.read_from_clipboard().unwrap().text().as_deref(),
+            Some(token.as_str())
+        );
+        assert!(!view.read(cx).has_pending_edits(cx));
+        window.click("account-value-raw", cx);
+        edit(&view, "token", &changed, window, cx);
+        window.click("account-value-details", cx);
+        assert!(
+            window.try_find("account-token-details").is_none(),
+            "stale decoded claims must not render"
+        );
+        assert!(window.find("account-inspection-loading").visible());
+    })
+    .unwrap();
+    inspect_ready(cx, &view, "token");
+    cx.update_window(window, |_, window, cx| {
+        window.render_frame(cx);
+        let Some(crate::service_account_secret::Inspection::Token(Ok(token))) =
+            key(view.read(cx), "token").inspection.as_deref()
+        else {
+            panic!()
+        };
+        assert_eq!(token.claims["sub"], "draft-subject");
+        window.click("account-copy-value", cx);
+        assert_eq!(
+            cx.read_from_clipboard().unwrap().text().as_deref(),
+            Some(changed.as_str())
+        );
+        assert!(view.read(cx).has_pending_edits(cx));
+        window.click("reveal", cx);
+        assert!(window.try_find("account-token-details").is_none());
+        assert!(window.try_find("account-copy-value").is_none());
+        assert!(key(view.read(cx), "token").inspection.is_none());
+        assert_eq!(
+            key(view.read(cx), "token")
+                .editor
+                .as_ref()
+                .unwrap()
+                .read(cx)
+                .value()
+                .as_ref(),
+            changed
+        );
+        window.click("reveal", cx);
+    })
+    .unwrap();
+    inspect_ready(cx, &view, "token");
+    cx.update_window(window, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("account-value-raw", cx);
+        let editor = key(view.read(cx), "token").editor.clone().unwrap();
+        editor.read(cx).focus_handle(cx).focus(window, cx);
+        window.press(
+            if cfg!(target_os = "macos") {
+                "cmd-z"
+            } else {
+                "ctrl-z"
+            },
+            cx,
+        );
+        assert_eq!(editor.read(cx).value().as_ref(), token);
+        assert!(!view.read(cx).has_pending_edits(cx));
+    })
+    .unwrap();
+    assert!(writes(&fixture).is_empty());
+}
+
+#[::core::prelude::v1::test]
+fn account_ca_namespace_and_invalid_token_have_specific_details_with_raw_fallback() {
+    let cx = &mut support::context();
+    let object = account_secret("not-a-jwt");
+    let (fixture, session) = support::fixture(cx, "account-fallback", vec![object.clone()]);
+    let (window, view) = open(cx, session, "Secret", object);
+    cx.update_window(window, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("reveal", cx);
+    })
+    .unwrap();
+    inspect_ready(cx, &view, "token");
+    cx.update_window(window, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.find("account-inspection-error").visible());
+        window.click("account-value-raw", cx);
+        assert_eq!(
+            key(view.read(cx), "token")
+                .editor
+                .as_ref()
+                .unwrap()
+                .read(cx)
+                .value()
+                .as_ref(),
+            "not-a-jwt"
+        );
+        window.click("account-value-details", cx);
+        pick(&view, "ca.crt", window, cx);
+    })
+    .unwrap();
+    inspect_ready(cx, &view, "ca.crt");
+    cx.update_window(window, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.find("account-ca-details").visible());
+        assert!(window.try_find("data-editor-data:ca.crt").is_none());
+        pick(&view, "namespace", window, cx);
+    })
+    .unwrap();
+    inspect_ready(cx, &view, "namespace");
+    cx.update_window(window, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.find("account-namespace-details").visible());
+        window.click("account-copy-value", cx);
+        assert_eq!(
+            cx.read_from_clipboard().unwrap().text().as_deref(),
+            Some("default")
+        );
+        pick(&view, "extra", window, cx);
+        assert!(window.try_find("account-value-details").is_none());
+        assert!(window.find("data-editor-data:extra").visible());
+        assert!(!view.read(cx).has_pending_edits(cx));
+    })
+    .unwrap();
+    assert!(writes(&fixture).is_empty());
+}
+
+#[::core::prelude::v1::test]
+fn controller_populated_tokens_refresh_clean_data_but_do_not_replace_active_drafts() {
+    let cx = &mut support::context();
+    let token = account_token("controller-token");
+    let mut pending = account_secret(&token);
+    pending["data"] = json!({});
+    let (fixture, session) = support::fixture(cx, "account-controller", vec![pending.clone()]);
+    let (window, view) = open(cx, session, "Secret", pending);
+    let mut live = account_secret(&token);
+    live["metadata"]["resourceVersion"] = json!("2");
+    fixture.put(live.clone());
+    cx.update_window(window, |_, window, cx| {
+        view.update(cx, |view, cx| {
+            let mut object: DynamicObject = serde_json::from_value(live.clone()).unwrap();
+            object.types = None;
+            view.refresh(Arc::new(object), None, cx);
+        });
+        window.render_frame(cx);
+        assert_eq!(view.read(cx).data_browser.selected, Some(0));
+        assert!(key(view.read(cx), "token").editor.is_none());
+        window.click("reveal", cx);
+    })
+    .unwrap();
+    inspect_ready(cx, &view, "token");
+    cx.update_window(window, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("account-value-raw", cx);
+        edit(&view, "token", "local-draft", window, cx);
+        live["metadata"]["resourceVersion"] = json!("3");
+        live["data"]["token"] = json!(data::encode(
+            beacon_kube::DataField::Data,
+            true,
+            "rotated-token"
+        ));
+        view.update(cx, |view, cx| {
+            view.refresh(
+                Arc::new(serde_json::from_value(live.clone()).unwrap()),
+                None,
+                cx,
+            )
+        });
+        window.render_frame(cx);
+        assert_eq!(
+            key(view.read(cx), "token")
+                .editor
+                .as_ref()
+                .unwrap()
+                .read(cx)
+                .value()
+                .as_ref(),
+            "local-draft"
+        );
+        assert_eq!(
+            view.read(cx).data_baseline.as_ref().unwrap()["metadata"]["resourceVersion"],
+            "2"
+        );
+        assert!(view.read(cx).has_pending_edits(cx));
+    })
+    .unwrap();
+    assert!(writes(&fixture).is_empty());
+}
+
 #[::core::prelude::v1::test]
 fn thousands_of_keys_use_virtual_rows_and_bounded_editors_without_losing_drafts() {
     let cx = &mut support::context();

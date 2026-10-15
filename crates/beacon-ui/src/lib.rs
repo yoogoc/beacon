@@ -49,6 +49,7 @@ mod resource_compare;
 mod resource_metrics;
 mod rollout;
 mod selection;
+mod service_account_secret;
 mod settings;
 mod shortcuts;
 mod sources;
