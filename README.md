@@ -32,13 +32,37 @@
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/images/workspace-dark.jpg">
     <source media="(prefers-color-scheme: light)" srcset="docs/images/workspace-light.jpg">
-    <img src="docs/images/workspace-light.jpg" alt="Beacon: cluster sidebar, resource tabs, Pod container states, and CPU / memory metrics" width="1200">
+    <img src="docs/images/workspace-light.jpg" alt="Beacon: cluster sidebar, resource tabs, namespace and label filters, Pod container states, and resource metrics" width="1200">
   </picture>
 </p>
 
 <p align="center">
-  <sub>Actual macOS screenshots with local demo data; the image follows your browser's color preference.</sub>
+  <sub>Current application UI rendered with local demo data; images follow your browser's color preference.</sub>
 </p>
+
+<details>
+  <summary><strong>Cluster overview · Capacity and trends</strong></summary>
+
+  <p align="center">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="docs/images/cluster-overview-dark.jpg">
+      <source media="(prefers-color-scheme: light)" srcset="docs/images/cluster-overview-light.jpg">
+      <img src="docs/images/cluster-overview-light.jpg" alt="Cluster CPU, memory and Pod capacity, usage trends, and node health" width="1200">
+    </picture>
+  </p>
+</details>
+
+<details>
+  <summary><strong>Argo Workflows · Adaptive execution canvas</strong></summary>
+
+  <p align="center">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="docs/images/workflow-dark.jpg">
+      <source media="(prefers-color-scheme: light)" srcset="docs/images/workflow-light.jpg">
+      <img src="docs/images/workflow-light.jpg" alt="Workflow details and an execution canvas with zoom, search, and a minimap" width="1200">
+    </picture>
+  </p>
+</details>
 
 Built with Rust and GPUI, Beacon brings clusters, resource lists, details, and container tools into one desktop workspace.
 It uses your existing kubeconfig and cluster permissions, discovering both built-in resources and CRDs from the cluster without additional plugins.

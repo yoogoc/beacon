@@ -32,13 +32,37 @@
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/images/workspace-dark.jpg">
     <source media="(prefers-color-scheme: light)" srcset="docs/images/workspace-light.jpg">
-    <img src="docs/images/workspace-light.jpg" alt="Beacon：集群侧边栏、资源标签页、Pod 容器状态与 CPU / 内存指标" width="1200">
+    <img src="docs/images/workspace-light.jpg" alt="Beacon：集群侧边栏、资源标签页、命名空间与标签筛选、Pod 容器状态和资源指标" width="1200">
   </picture>
 </p>
 
 <p align="center">
-  <sub>macOS 实际界面截图，使用本地演示数据；根据浏览器的深浅色偏好显示。</sub>
+  <sub>当前版本的应用界面，使用本地演示数据渲染；根据浏览器的深浅色偏好显示。</sub>
 </p>
+
+<details>
+  <summary><strong>集群 Overview · 容量与趋势</strong></summary>
+
+  <p align="center">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="docs/images/cluster-overview-dark.jpg">
+      <source media="(prefers-color-scheme: light)" srcset="docs/images/cluster-overview-light.jpg">
+      <img src="docs/images/cluster-overview-light.jpg" alt="集群 CPU、内存与 Pod 容量、使用趋势和节点状态" width="1200">
+    </picture>
+  </p>
+</details>
+
+<details>
+  <summary><strong>Argo Workflows · 自适应执行画布</strong></summary>
+
+  <p align="center">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="docs/images/workflow-dark.jpg">
+      <source media="(prefers-color-scheme: light)" srcset="docs/images/workflow-light.jpg">
+      <img src="docs/images/workflow-light.jpg" alt="Workflow 详情与支持缩放、搜索和缩略导航的执行画布" width="1200">
+    </picture>
+  </p>
+</details>
 
 Beacon 使用 Rust 和 GPUI 构建，将集群、资源列表、详情和容器工具放进一个桌面工作区。
 沿用现有 kubeconfig 和集群权限，内置资源与 CRD 都由集群动态发现；不必为每个新资源安装额外插件。
