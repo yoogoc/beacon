@@ -18,6 +18,7 @@ use beacon_kube::{
     Applied, ClusterSession, Conflict, DataEntry, DynamicObject, Kind, ObjectRef, Operation,
     ResourceStore, Rules, WatchKey, data,
 };
+use gpui_kit::assets::IconName;
 use gpui_kit::base::{Link, SelectableText, TestSupportExt as _, TextSelection};
 use gpui_kit::component::WindowExt as _;
 use gpui_kit::component::button::{Button, ButtonVariants as _, DropdownButton};
@@ -211,9 +212,8 @@ pub struct DetailView {
     rollout: Option<Entity<crate::rollout::RolloutView>>,
     network: Option<Entity<crate::network::NetworkView>>,
     argo_nodes: Arc<beacon_kube::argo::Nodes>,
-    argo_graph: crate::argo::Graph,
-    argo_graph_error: Option<String>,
-    argo_loading: bool,
+    argo_canvas: Option<Entity<crate::argo_canvas::ArgoCanvas>>,
+    argo_reveal: Option<String>,
     argo_scope: Option<String>,
     argo_template: String,
     argo_node: Option<WeakEntity<crate::argo_node::ArgoNodeView>>,
@@ -288,6 +288,12 @@ impl DetailView {
                 .language("yaml")
                 .soft_wrap(false)
         });
+        let argo_canvas = (kind.resource.group == beacon_kube::argo::GROUP
+            && matches!(
+                kind.resource.kind.as_str(),
+                "Workflow" | "WorkflowTemplate" | "ClusterWorkflowTemplate"
+            ))
+        .then(|| cx.new(|cx| crate::argo_canvas::ArgoCanvas::new(window, cx)));
 
         let mut this = Self {
             target: ObjectRef::of(&object),
@@ -308,9 +314,8 @@ impl DetailView {
             rollout: None,
             network: None,
             argo_nodes: Arc::new(beacon_kube::argo::Nodes::new()),
-            argo_graph: crate::argo::Graph::default(),
-            argo_graph_error: None,
-            argo_loading: false,
+            argo_canvas,
+            argo_reveal: None,
             argo_scope: None,
             argo_template: String::new(),
             argo_node: None,
@@ -346,6 +351,24 @@ impl DetailView {
             _clock: Task::ready(()),
         };
 
+        if let Some(canvas) = &this.argo_canvas {
+            cx.subscribe_in(
+                canvas,
+                window,
+                |view, _, event: &crate::argo_canvas::CanvasEvent, window, cx| match event {
+                    crate::argo_canvas::CanvasEvent::Inspect(node) => {
+                        view.open_argo_node(node.clone(), window, cx)
+                    }
+                    crate::argo_canvas::CanvasEvent::Reveal(node) => {
+                        view.argo_scope = node.data["boundaryID"].as_str().map(str::to_owned);
+                        view.argo_reveal = Some(node.id.clone());
+                        view.load_argo(cx);
+                        view.open_argo_node(node.clone(), window, cx);
+                    }
+                },
+            )
+            .detach();
+        }
         this.resolve_pod_owners(cx);
         this.load_argo(cx);
         this.watch_argo_runs(window, cx);
@@ -1026,6 +1049,11 @@ impl DetailView {
                     .await;
                 let updated = this.update(cx, |view, cx| {
                     view.now = Timestamp::now();
+                    if view.tab == DetailTab::Overview
+                        && let Some(canvas) = &view.argo_canvas
+                    {
+                        canvas.update(cx, |canvas, cx| canvas.tick(view.now, cx));
+                    }
                     cx.notify();
                 });
                 if updated.is_err() {
@@ -1038,71 +1066,83 @@ impl DetailView {
     // MARK: rendering
 
     fn load_argo(&mut self, cx: &mut Context<Self>) {
-        if self.kind.resource.group != beacon_kube::argo::GROUP {
+        let Some(canvas) = self.argo_canvas.clone() else {
             return;
-        }
-        if self.kind.resource.kind == "Workflow" {
-            let object = self.object.clone();
-            let scope = self.argo_scope.clone();
-            self.argo_loading = true;
-            self.argo_graph_error = None;
-            let decoding = Bridge::global(cx).run_cancellable(async move {
-                let nodes = beacon_kube::argo::nodes(&object.data)?;
-                let graph = crate::argo::Graph::workflow(&object, &nodes, scope.as_deref());
-                Ok::<_, String>((Arc::new(nodes), graph))
-            });
-            self._argo_task = Some(cx.spawn(async move |this, cx| {
-                let result = decoding.result().await;
-                let _ = this.update(cx, |view, cx| {
-                    view.argo_loading = false;
-                    match result {
-                        Ok(Ok((nodes, graph))) => {
-                            view.argo_nodes = nodes;
-                            view.argo_graph = graph;
-                        }
-                        Ok(Err(error)) => {
-                            view.argo_nodes = Arc::new(beacon_kube::argo::Nodes::new());
-                            view.argo_graph = crate::argo::Graph::default();
-                            view.argo_graph_error = Some(error);
-                        }
-                        Err(error) => view.argo_graph_error = Some(error.to_string()),
-                    }
-                    if let Some(node) = view.argo_node.as_ref().and_then(WeakEntity::upgrade) {
-                        node.update(cx, |node, cx| {
-                            node.refresh(view.object.clone(), view.argo_nodes.clone(), cx)
-                        });
-                    }
-                    cx.notify();
-                });
-            }));
-        } else if matches!(
-            self.kind.resource.kind.as_str(),
-            "WorkflowTemplate" | "ClusterWorkflowTemplate"
-        ) {
+        };
+        let runtime = self.kind.resource.kind == "Workflow";
+        if !runtime {
             let spec = &self.object.data["spec"];
-            if !crate::argo::array(spec, "/templates")
-                .any(|template| template["name"] == self.argo_template)
-            {
+            if !crate::argo::array(spec, "/templates").any(|t| t["name"] == self.argo_template) {
                 self.argo_template = spec["entrypoint"]
                     .as_str()
                     .filter(|name| {
-                        crate::argo::array(spec, "/templates")
-                            .any(|template| template["name"] == *name)
+                        crate::argo::array(spec, "/templates").any(|t| t["name"] == *name)
                     })
                     .or_else(|| {
-                        crate::argo::array(spec, "/templates")
-                            .find_map(|template| template["name"].as_str())
+                        crate::argo::array(spec, "/templates").find_map(|t| t["name"].as_str())
                     })
                     .unwrap_or("")
-                    .to_string();
-            }
-            self.argo_graph = crate::argo::Graph::template(spec, &self.argo_template);
-            if let Some(node) = self.argo_node.as_ref().and_then(WeakEntity::upgrade) {
-                node.update(cx, |node, cx| {
-                    node.refresh(self.object.clone(), self.argo_nodes.clone(), cx)
-                });
+                    .to_owned();
             }
         }
+        let count = self
+            .object
+            .data
+            .pointer("/status/nodes")
+            .and_then(Value::as_object)
+            .map(|nodes| nodes.len());
+        let context = if runtime {
+            format!("workflow/{}", self.argo_scope.as_deref().unwrap_or(""))
+        } else {
+            format!("template/{}", self.argo_template)
+        };
+        canvas.update(cx, |canvas, cx| canvas.loading(count, context, cx));
+        let object = self.object.clone();
+        let scope = self.argo_scope.clone();
+        let template = self.argo_template.clone();
+        let decoding = Bridge::global(cx).run_cancellable(async move {
+            let nodes = if runtime {
+                beacon_kube::argo::nodes(&object.data)?
+            } else {
+                beacon_kube::argo::Nodes::new()
+            };
+            let graph = if runtime {
+                crate::argo::Graph::workflow(&object, &nodes, scope.as_deref())
+            } else {
+                crate::argo::Graph::template(&object.data["spec"], &template)
+            };
+            Ok::<_, String>((Arc::new(nodes), crate::argo_canvas::Prepared::new(graph)))
+        });
+        self._argo_task = Some(cx.spawn(async move |this, cx| {
+            let result = decoding.result().await;
+            let _ = this.update(cx, |view, cx| {
+                match result {
+                    Ok(Ok((nodes, prepared))) => {
+                        view.argo_nodes = nodes;
+                        canvas.update(cx, |canvas, cx| {
+                            canvas.replace(prepared, view.argo_nodes.clone(), cx);
+                            if let Some(id) = view.argo_reveal.take() {
+                                canvas.reveal(&id, cx);
+                            }
+                        });
+                    }
+                    Ok(Err(error)) => {
+                        view.argo_nodes = Arc::default();
+                        canvas.update(cx, |canvas, cx| canvas.fail(error, cx));
+                    }
+                    Err(error) => {
+                        view.argo_nodes = Arc::default();
+                        canvas.update(cx, |canvas, cx| canvas.fail(error.to_string(), cx));
+                    }
+                }
+                if let Some(node) = view.argo_node.as_ref().and_then(WeakEntity::upgrade) {
+                    node.update(cx, |node, cx| {
+                        node.refresh(view.object.clone(), view.argo_nodes.clone(), cx)
+                    });
+                }
+                cx.notify();
+            });
+        }));
     }
 
     fn open_argo_node(
@@ -1141,11 +1181,7 @@ impl DetailView {
                 window.close_sheet(cx);
                 view.argo_node = None;
                 view.argo_scope = Some(event.0.clone());
-                view.argo_graph = crate::argo::Graph::workflow(
-                    &view.object,
-                    &view.argo_nodes,
-                    view.argo_scope.as_deref(),
-                );
+                view.load_argo(cx);
                 cx.notify();
             },
         )
@@ -1184,18 +1220,18 @@ impl DetailView {
                 Button::new("main-graph")
                     .small()
                     .ghost()
-                    .label("Back to workflow graph")
+                    .icon(IconName::ChevronLeft)
+                    .label("Back to workflow")
                     .on_click(cx.listener(|view, _, _, cx| {
                         view.argo_scope = None;
-                        view.argo_graph =
-                            crate::argo::Graph::workflow(&view.object, &view.argo_nodes, None);
-                        cx.notify();
+                        view.argo_reveal = None;
+                        view.load_argo(cx);
                     })),
             );
         }
         if !runtime {
             let templates: Vec<_> = crate::argo::array(&self.object.data, "/spec/templates")
-                .filter_map(|template| template["name"].as_str().map(str::to_string))
+                .filter_map(|t| t["name"].as_str().map(str::to_owned))
                 .collect();
             let owner = cx.entity().downgrade();
             view = view.child(
@@ -1214,169 +1250,16 @@ impl DetailView {
                             menu.item(PopupMenuItem::new(name.clone()).on_click(move |_, _, cx| {
                                 let _ = owner.update(cx, |view, cx| {
                                     view.argo_template = name.clone();
-                                    view.argo_graph = crate::argo::Graph::template(
-                                        &view.object.data["spec"],
-                                        &view.argo_template,
-                                    );
-                                    cx.notify();
+                                    view.argo_reveal = None;
+                                    view.load_argo(cx);
                                 });
                             }))
                         })
                     }),
             );
         }
-        if let Some(error) = &self.argo_graph_error {
-            return view
-                .child(copyable_text("argo-graph-error", error.clone()))
-                .into_any_element();
-        }
-        if self.argo_loading && self.argo_graph.nodes.is_empty() {
-            return view.child(Spinner::new().small()).into_any_element();
-        }
-        if self.argo_graph.nodes.is_empty() {
-            return view
-                .child(
-                    div()
-                        .text_sm()
-                        .text_color(cx.theme().muted_foreground)
-                        .child(SelectableText::new(
-                            "argo-graph-empty",
-                            if runtime {
-                                "No execution nodes yet"
-                            } else {
-                                "No template graph"
-                            },
-                        )),
-                )
-                .into_any_element();
-        }
-        let graph = &self.argo_graph;
-        let edges: Vec<_> = graph
-            .edges
-            .iter()
-            .map(|(a, b)| {
-                let a = &graph.nodes[*a];
-                let b = &graph.nodes[*b];
-                (
-                    a.x + crate::argo::CARD_WIDTH / 2.,
-                    a.y + crate::argo::CARD_HEIGHT,
-                    b.x + crate::argo::CARD_WIDTH / 2.,
-                    b.y,
-                )
-            })
-            .collect();
-        let color = cx.theme().border;
-        let canvas = canvas(
-            |_, _, _| {},
-            move |bounds, _, window, _| {
-                let mut path = PathBuilder::stroke(px(1.5));
-                for &(x1, y1, x2, y2) in &edges {
-                    let mid = (y1 + y2) / 2.;
-                    path.move_to(bounds.origin + point(px(x1), px(y1)));
-                    path.line_to(bounds.origin + point(px(x1), px(mid)));
-                    path.line_to(bounds.origin + point(px(x2), px(mid)));
-                    path.line_to(bounds.origin + point(px(x2), px(y2)));
-                }
-                if let Ok(path) = path.build() {
-                    window.paint_path(path, color);
-                }
-            },
-        )
-        .absolute()
-        .size_full();
-        let surface = div()
-            .id("argo-graph-surface")
-            .test_support()
-            .relative()
-            .w(px(graph.width))
-            .h(px(graph.height))
-            .child(canvas)
-            .children(graph.nodes.iter().map(|node| {
-                let selected = node.clone();
-                let phase = if node.runtime {
-                    node.data["phase"].as_str().unwrap_or("Unknown")
-                } else {
-                    "Template"
-                };
-                let tone = crate::argo::phase_tone(phase);
-                let subtitle = if node.runtime {
-                    format!(
-                        "{phase} · {}",
-                        crate::argo::duration(&node.data, self.now).unwrap_or_else(|| "—".into())
-                    )
-                } else {
-                    node.data["template"]
-                        .as_str()
-                        .or_else(|| {
-                            node.data
-                                .pointer("/templateRef/template")
-                                .and_then(Value::as_str)
-                        })
-                        .unwrap_or("inline")
-                        .into()
-                };
-                div()
-                    .id(SharedString::from(format!("argo-node-{}", node.id)))
-                    .absolute()
-                    .left(px(node.x))
-                    .top(px(node.y))
-                    .w(px(crate::argo::CARD_WIDTH))
-                    .h(px(crate::argo::CARD_HEIGHT))
-                    .child(
-                        Link::new("inspect-node")
-                            .accessibility_label(format!("{}: {subtitle}", node.label))
-                            .size_full()
-                            .px_3()
-                            .py_2()
-                            .rounded_md()
-                            .border_1()
-                            .border_color(cx.theme().border)
-                            .bg(cx.theme().background)
-                            .hover(|this| this.bg(cx.theme().muted))
-                            .cursor_pointer()
-                            .child(
-                                h_flex()
-                                    .w_full()
-                                    .gap_2()
-                                    .items_center()
-                                    .child(
-                                        div().size(px(7.)).rounded_full().bg(cx.theme().tone(tone)),
-                                    )
-                                    .child(
-                                        v_flex()
-                                            .flex_1()
-                                            .min_w_0()
-                                            .child(
-                                                div()
-                                                    .text_sm()
-                                                    .truncate()
-                                                    .child(node.label.clone()),
-                                            )
-                                            .child(
-                                                div()
-                                                    .text_xs()
-                                                    .truncate()
-                                                    .text_color(cx.theme().muted_foreground)
-                                                    .child(subtitle),
-                                            ),
-                                    ),
-                            )
-                            .on_activate(cx.listener(move |view, _, window, cx| {
-                                view.open_argo_node(selected.clone(), window, cx)
-                            })),
-                    )
-            }));
-        view.child(
-            div()
-                .id("argo-execution-graph")
-                .test_support()
-                .w_full()
-                .max_h(px(520.))
-                .overflow_scroll()
-                .on_scroll_wheel(|_, _, cx| cx.stop_propagation())
-                .child(surface),
-        )
-        .into_any_element()
+        view.when_some(self.argo_canvas.clone(), |view, canvas| view.child(canvas))
+            .into_any_element()
     }
 
     fn render_header(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -3398,18 +3281,34 @@ mod integration_tests {
             .unwrap()
         });
         support::render_until(cx, window, |window| {
-            window.try_find("argo-execution-graph").is_some()
+            window.try_find("argo-graph-surface").is_some()
         });
         cx.update_window(window, |_, window, cx| {
-            for axis in [Axis::Vertical, Axis::Horizontal] {
-                support::assert_scroll_contained(
-                    "argo-execution-graph",
-                    "argo-graph-surface",
-                    axis,
-                    window,
-                    cx,
+            window.render_frame(cx);
+            window.render_frame(cx);
+            let viewport = window.find("argo-execution-graph").bounds();
+            let fitted = window.find("argo-graph-surface").bounds();
+            assert!(viewport.contains(&fitted.origin));
+            assert!(viewport.contains(&fitted.bottom_right()));
+            for delta in [point(px(-60.), px(0.)), point(px(0.), px(-60.))] {
+                let before = window.find("argo-graph-surface").bounds();
+                window.scroll("argo-execution-graph", ScrollDelta::Pixels(delta), cx);
+                assert_eq!(window.find("argo-execution-graph").bounds(), viewport);
+                assert_ne!(
+                    window.find("argo-graph-surface").bounds().origin,
+                    before.origin
                 );
+                for edge in [-100_000., 100_000.] {
+                    window.scroll(
+                        "argo-execution-graph",
+                        ScrollDelta::Pixels(delta * edge),
+                        cx,
+                    );
+                    assert_eq!(window.find("argo-execution-graph").bounds(), viewport);
+                }
             }
+            window.click("argo-fit", cx);
+            assert_eq!(window.find("argo-graph-surface").bounds(), fitted);
             support::assert_outer_scrolls("overview", "argo-execution-graph", window, cx);
         })
         .unwrap();

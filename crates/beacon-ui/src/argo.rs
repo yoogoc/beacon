@@ -843,7 +843,7 @@ impl Graph {
         )
     }
 
-    fn layout(nodes: Vec<GraphNode>, mut edges: Vec<(usize, usize)>) -> Self {
+    pub(crate) fn layout(nodes: Vec<GraphNode>, mut edges: Vec<(usize, usize)>) -> Self {
         let count = nodes.len();
         if count == 0 {
             return Self::default();

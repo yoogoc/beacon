@@ -9,6 +9,7 @@ mod aggregate_logs;
 pub mod app;
 mod app_logs;
 mod argo;
+mod argo_canvas;
 mod argo_node;
 pub mod bridge;
 mod bulk_restart;
