@@ -1285,6 +1285,8 @@ impl DetailView {
         .absolute()
         .size_full();
         let surface = div()
+            .id("argo-graph-surface")
+            .test_support()
             .relative()
             .w(px(graph.width))
             .h(px(graph.height))
@@ -1367,9 +1369,11 @@ impl DetailView {
         view.child(
             div()
                 .id("argo-execution-graph")
+                .test_support()
                 .w_full()
                 .max_h(px(520.))
                 .overflow_scroll()
+                .on_scroll_wheel(|_, _, cx| cx.stop_propagation())
                 .child(surface),
         )
         .into_any_element()
@@ -1643,6 +1647,7 @@ impl DetailView {
         }
         div()
             .id("overview")
+            .test_support()
             .size_full()
             .overflow_y_scroll()
             .child(content)
@@ -3344,6 +3349,71 @@ mod integration_tests {
     use crate::feature_test_support as support;
     use gpui_kit::test::TestWindowExt as _;
     use serde_json::json;
+
+    #[::core::prelude::v1::test]
+    fn workflow_graph_scroll_stays_inside_its_viewport() {
+        let cx = &mut support::context();
+        let mut nodes = serde_json::Map::new();
+        for column in 0..6 {
+            for row in 0..8 {
+                let id = format!("node-{column}-{row}");
+                nodes.insert(id.clone(), json!({
+                    "id": id, "displayName": id, "type": "Pod", "phase": "Succeeded",
+                    "children": if row < 7 { vec![format!("node-{column}-{}", row + 1)] } else { vec![] },
+                }));
+            }
+        }
+        let object = json!({
+            "apiVersion":"argoproj.io/v1alpha1", "kind":"Workflow",
+            "metadata":{"name":"scrolling-workflow", "namespace":"default", "uid":"scrolling-workflow"},
+            "spec":{"entrypoint":"main"},
+            "status":{"phase":"Succeeded", "nodes": nodes},
+        });
+        let (_fixture, session) = support::fixture(cx, "workflow-scroll", vec![object.clone()]);
+        let object = Arc::new(serde_json::from_value(object).unwrap());
+        let (window, _) = cx.update(|cx| {
+            gpui_kit::open_window(
+                WindowOptions {
+                    window_bounds: Some(WindowBounds::Windowed(Bounds::new(
+                        point(px(0.), px(0.)),
+                        size(px(900.), px(900.)),
+                    ))),
+                    ..Default::default()
+                },
+                cx,
+                |window, cx| {
+                    window.set_view_retention(false);
+                    cx.new(|cx| {
+                        DetailView::new(
+                            session,
+                            Arc::new(support::kind("argoproj.io", "Workflow", "workflows")),
+                            object,
+                            None,
+                            window,
+                            cx,
+                        )
+                    })
+                },
+            )
+            .unwrap()
+        });
+        support::render_until(cx, window, |window| {
+            window.try_find("argo-execution-graph").is_some()
+        });
+        cx.update_window(window, |_, window, cx| {
+            for axis in [Axis::Vertical, Axis::Horizontal] {
+                support::assert_scroll_contained(
+                    "argo-execution-graph",
+                    "argo-graph-surface",
+                    axis,
+                    window,
+                    cx,
+                );
+            }
+            support::assert_outer_scrolls("overview", "argo-execution-graph", window, cx);
+        })
+        .unwrap();
+    }
 
     #[::core::prelude::v1::test]
     fn ingress_links_open_the_matching_host_and_path_in_the_browser() {

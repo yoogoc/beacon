@@ -145,3 +145,116 @@ pub(crate) fn render_until(
     }
     panic!("UI operation did not settle");
 }
+
+/// Exercise real nested viewports, including both scroll boundaries.
+pub(crate) fn assert_scroll_contained(
+    viewport: &'static str,
+    content: &'static str,
+    axis: Axis,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    use gpui_kit::test::TestWindowExt as _;
+    // Settle responsive layout before comparing positions across input events.
+    window.render_frame(cx);
+    window.render_frame(cx);
+    let viewport_bounds = window.find(viewport).bounds();
+    let initial = window.find(content).bounds();
+    let coordinate = |bounds: Bounds<Pixels>| {
+        if axis == Axis::Horizontal {
+            bounds.origin.x
+        } else {
+            bounds.origin.y
+        }
+    };
+    assert!(
+        if axis == Axis::Horizontal {
+            initial.size.width > viewport_bounds.size.width
+        } else {
+            initial.size.height > viewport_bounds.size.height
+        },
+        "{content} must overflow its viewport"
+    );
+    let delta = |amount| {
+        ScrollDelta::Pixels(if axis == Axis::Horizontal {
+            point(px(amount), px(0.))
+        } else {
+            point(px(0.), px(amount))
+        })
+    };
+    window.scroll(viewport, delta(-60.), cx);
+    assert_eq!(
+        window.find(viewport).bounds(),
+        viewport_bounds,
+        "inner scrolling moved its ancestor"
+    );
+    assert!(
+        coordinate(window.find(content).bounds()) < coordinate(initial),
+        "inner content did not scroll"
+    );
+    for (edge, continuation) in [(-100_000., -60.), (100_000., 60.)] {
+        window.scroll(viewport, delta(edge), cx);
+        let at_edge = window.find(content).bounds();
+        window.scroll(viewport, delta(continuation), cx);
+        assert_eq!(
+            window.find(content).bounds(),
+            at_edge,
+            "inner content escaped its scroll boundary"
+        );
+        assert_eq!(
+            window.find(viewport).bounds(),
+            viewport_bounds,
+            "scrolling at an inner boundary moved its ancestor"
+        );
+    }
+    window.scroll(
+        viewport,
+        ScrollDelta::Lines(if axis == Axis::Horizontal {
+            point(-3., 0.)
+        } else {
+            point(0., -3.)
+        }),
+        cx,
+    );
+    assert_eq!(window.find(viewport).bounds(), viewport_bounds);
+    assert!(coordinate(window.find(content).bounds()) < coordinate(initial));
+}
+
+pub(crate) fn assert_outer_scrolls(
+    viewport: &'static str,
+    marker: &'static str,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    use gpui_kit::test::TestWindowExt as _;
+    // Both pages leave padding between their outer viewport and inner content.
+    let position = window.find(viewport).bounds().origin + point(px(4.), px(4.));
+    window.dispatch_event(
+        MouseMoveEvent {
+            position,
+            pressed_button: None,
+            modifiers: Default::default(),
+        }
+        .to_platform_input(),
+        cx,
+    );
+    for amount in [100_000., -60.] {
+        let before = window.find(marker).bounds().origin.y;
+        window.dispatch_event(
+            ScrollWheelEvent {
+                position,
+                delta: ScrollDelta::Pixels(point(px(0.), px(amount))),
+                ..Default::default()
+            }
+            .to_platform_input(),
+            cx,
+        );
+        window.render_frame(cx);
+        if amount < 0. {
+            assert!(
+                window.find(marker).bounds().origin.y < before,
+                "outer page no longer scrolls outside the inner viewport"
+            );
+        }
+    }
+}

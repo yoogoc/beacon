@@ -381,26 +381,30 @@ impl PreferencesView {
                     ),
             );
         }
-        card = card.when_some(error.map(str::to_owned), |card, error| {
-            card.child(
-                div()
-                    .id("update-error-row")
-                    .test_support()
-                    .px_4()
-                    .pb_4()
-                    .pl(px(60.))
-                    .child(
-                        div()
-                            .id("update-error-scroll")
-                            .test_support()
-                            .max_h(px(120.))
-                            .overflow_y_scroll()
-                            .text_xs()
-                            .text_color(cx.theme().danger)
-                            .child(crate::copyable_text::copyable_text("update-error", error)),
-                    ),
-            )
-        });
+        card =
+            card.when_some(error.map(str::to_owned), |card, error| {
+                card.child(
+                    div()
+                        .id("update-error-row")
+                        .test_support()
+                        .px_4()
+                        .pb_4()
+                        .pl(px(60.))
+                        .child(
+                            div()
+                                .id("update-error-scroll")
+                                .test_support()
+                                .max_h(px(120.))
+                                .overflow_y_scroll()
+                                .on_scroll_wheel(|_, _, cx| cx.stop_propagation())
+                                .text_xs()
+                                .text_color(cx.theme().danger)
+                                .child(div().id("update-error-content").test_support().child(
+                                    crate::copyable_text::copyable_text("update-error", error),
+                                )),
+                        ),
+                )
+            });
         if let Some(release) = release {
             let url = release.page.to_string();
             card = card.child(
@@ -446,13 +450,16 @@ impl PreferencesView {
                                     .test_support()
                                     .max_h(px(220.))
                                     .overflow_y_scroll()
-                                    .child(crate::copyable_text::copyable_text(
-                                        "update-release-notes",
-                                        if release.notes.trim().is_empty() {
-                                            "No release notes provided.".into()
-                                        } else {
-                                            release.notes.chars().take(8192).collect::<String>()
-                                        },
+                                    .on_scroll_wheel(|_, _, cx| cx.stop_propagation())
+                                    .child(div().id("update-notes-content").test_support().child(
+                                        crate::copyable_text::copyable_text(
+                                            "update-release-notes",
+                                            if release.notes.trim().is_empty() {
+                                                "No release notes provided.".into()
+                                            } else {
+                                                release.notes.chars().take(8192).collect::<String>()
+                                            },
+                                        ),
                                     )),
                             ),
                         )

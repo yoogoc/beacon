@@ -1756,6 +1756,7 @@ impl Render for PreferencesView {
                     .child(
                         div()
                             .id(format!("preferences-scroll-{}", self.section.id()))
+                            .test_support()
                             .flex_1()
                             .min_w_0()
                             .min_h_0()
@@ -1949,6 +1950,94 @@ mod update_tests {
     use crate::updates::Status;
     use beacon_updater::{Asset, Format, Release};
     use gpui_kit::test::TestWindowExt as _;
+
+    #[::core::prelude::v1::test]
+    fn update_notes_and_errors_scroll_without_moving_the_settings_page() {
+        use crate::feature_test_support as support;
+        let directory = tempfile::tempdir().unwrap();
+        let cx = &mut support::context();
+        support::workspace(cx, directory.path());
+        cx.update(|cx| {
+            settings::store(cx).update(cx, |state, _| state.preferences.updates.auto_check = false);
+            crate::updates::init(cx);
+            crate::updates::store(cx).update(cx, |updater, _| {
+                updater.status = Status::Available(Release {
+                    version: "9.0.0".parse().unwrap(), notes: "Release note\n".repeat(200),
+                    page: "https://github.com/yoogoc/beacon/releases/tag/v9.0.0".parse().unwrap(),
+                    asset: Asset {
+                        url: "https://github.com/yoogoc/beacon/releases/download/v9.0.0/Beacon.app.tar.gz".parse().unwrap(),
+                        signature: String::new(), size: 1024, format: Format::App,
+                    },
+                });
+            });
+        });
+        let (window, view) = cx.update(|cx| {
+            gpui_kit::open_window(
+                WindowOptions {
+                    window_bounds: Some(WindowBounds::Windowed(Bounds::new(
+                        point(px(0.), px(0.)),
+                        size(px(900.), px(650.)),
+                    ))),
+                    ..Default::default()
+                },
+                cx,
+                |window, cx| {
+                    window.set_view_retention(false);
+                    cx.new(|cx| {
+                        let mut view = PreferencesView::new(None, window, cx);
+                        view.section = Section::Updates;
+                        view.update_notes_expanded = true;
+                        view
+                    })
+                },
+            )
+            .unwrap()
+        });
+        cx.update_window(window, |_, window, cx| {
+            window.render_frame(cx);
+            support::assert_scroll_contained(
+                "update-notes-scroll",
+                "update-notes-content",
+                Axis::Vertical,
+                window,
+                cx,
+            );
+            support::assert_outer_scrolls(
+                "preferences-scroll-settings-updates",
+                "update-status-card",
+                window,
+                cx,
+            );
+            // Exercise the other independently scrolling region in a shorter window.
+            view.update(cx, |view, cx| {
+                view.update_notes_expanded = false;
+                cx.notify();
+            });
+            crate::updates::store(cx).update(cx, |updater, cx| {
+                updater.status = Status::Failed {
+                    message: "Update failure\n".repeat(200),
+                    release: None,
+                };
+                cx.notify();
+            });
+            window.resize(size(px(900.), px(500.)));
+            window.render_frame(cx);
+            support::assert_scroll_contained(
+                "update-error-scroll",
+                "update-error-content",
+                Axis::Vertical,
+                window,
+                cx,
+            );
+            support::assert_outer_scrolls(
+                "preferences-scroll-settings-updates",
+                "update-status-card",
+                window,
+                cx,
+            );
+        })
+        .unwrap();
+    }
 
     #[::core::prelude::v1::test]
     fn settings_render_update_states_without_retained_views() {
