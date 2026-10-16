@@ -47,3 +47,24 @@ mouse events, and verifies that selection returns the original text:
 ```sh
 cargo test --manifest-path vendor/gpui-base/Cargo.toml --target-dir target --features gpui-fast --lib selectable_text
 ```
+
+`src/text_selection.rs` finishes pointer selections and handle drags during the
+capture phase of `MouseUp`, before an application click handler can consume the
+release. If no release arrives (for example, the pointer was released outside
+the window), a mouse move without the left button held ends the gesture without
+changing the selected range. Long-press captures and active touch selections keep
+their separate lifecycle.
+
+Application regressions exercise the actual copyable-message container, including
+its consumed click, clipboard contents, and suppression of the resource-row
+action. They also cover recovering from a missing release:
+
+```sh
+cargo test --locked -p beacon-ui --features ui-tests copyable_text::tests -- --test-threads=1
+```
+
+Run the Base pointer, touch, and selection regression tests with:
+
+```sh
+cargo test --manifest-path vendor/gpui-base/Cargo.toml --target-dir target --features gpui-fast --lib selection
+```

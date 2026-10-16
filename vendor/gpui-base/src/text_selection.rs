@@ -2987,7 +2987,7 @@ fn paint_text_selection(state: &Entity<WindowSelectionState>, window: &mut Windo
     });
     let drag_state = state.downgrade();
     window.on_mouse_event(move |event: &MouseUpEvent, phase, _, cx| {
-        if phase.bubble()
+        if phase.capture()
             && event.button == MouseButton::Left
             && let Some(state) = drag_state.upgrade()
         {
@@ -2997,8 +2997,25 @@ fn paint_text_selection(state: &Entity<WindowSelectionState>, window: &mut Windo
 
     let mouse_move_state = state.downgrade();
     window.on_mouse_event(move |event: &MouseMoveEvent, phase, window, cx| {
+        let Some(state) = mouse_move_state.upgrade() else {
+            return;
+        };
+        // The release may happen outside the window, or before this frame's
+        // listeners were installed. A free pointer cannot continue a mouse
+        // selection. Long presses and touch handles have their own lifecycle.
+        if phase.capture()
+            && event.pressed_button != Some(MouseButton::Left)
+            && state.read(cx).is_selecting
+            && !state.read(cx).touch.active
+            && !window.has_long_press_capture(&state)
+        {
+            state.update(cx, |state, cx| {
+                state.mouse_down_prepared = false;
+                state.end(cx);
+            });
+            return;
+        }
         if phase.bubble()
-            && let Some(state) = mouse_move_state.upgrade()
             // Moving the pointer only moves a selection being made.
             && state.read(cx).is_selecting
         {
@@ -3016,7 +3033,10 @@ fn paint_text_selection(state: &Entity<WindowSelectionState>, window: &mut Windo
 
     let mouse_up_state = state.downgrade();
     window.on_mouse_event(move |_: &MouseUpEvent, phase, _, cx| {
-        if phase.bubble()
+        // Click handlers can stop MouseUp propagation (for example, to keep a
+        // text selection from activating its resource row). Finish in capture
+        // so those controls cannot leave the selection or auto-scroll held.
+        if phase.capture()
             && let Some(state) = mouse_up_state.upgrade()
         {
             state.update(cx, |state, cx| {
