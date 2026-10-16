@@ -1085,7 +1085,6 @@ impl ClusterView {
                             view.rescope(BTreeSet::from([namespace.clone()]), window, cx);
                         }
                         view.table.update(cx, |table, cx| {
-                            table.delegate_mut().finish_loading();
                             table
                                 .delegate_mut()
                                 .apply(vec![Delta::Upsert(Arc::new((**object).clone()))]);
@@ -1758,8 +1757,10 @@ impl ClusterView {
 
         let columns = self.columns(&kind, None);
         let layout = self.resource_preferences(cx).columns;
+        let scopes = self.watch_scopes(&kind);
         self.table.update(cx, |state, cx| {
             state.delegate_mut().reset(columns);
+            state.delegate_mut().expect_scopes(&scopes);
             state.delegate_mut().apply_layout(layout);
             // The table lays its columns out once and caches the result, so a
             // different set of them is not visible until it is told to look
@@ -1775,8 +1776,7 @@ impl ClusterView {
         // Replaced wholesale: dropping the old tasks drops the old
         // subscriptions, which is what releases watches on namespaces that are
         // no longer on screen.
-        self._objects = self
-            .watch_scopes(&kind)
+        self._objects = scopes
             .into_iter()
             .map(|namespace| {
                 let key = WatchKey::all(kind.resource.clone()).in_namespace(namespace.clone());
@@ -1789,11 +1789,6 @@ impl ClusterView {
                         let namespace = namespace.clone();
                         let listed = batch.iter().any(|delta| matches!(delta, Delta::Reset(_)));
                         view.table.update(cx, |state, cx| {
-                            // The first batch from *any* of the namespaces ends
-                            // the skeleton, rather than waiting for all of
-                            // them: rows that have arrived are worth more on
-                            // screen than behind a placeholder.
-                            state.delegate_mut().finish_loading();
                             state.delegate_mut().apply_from(namespace.as_deref(), batch);
                             cx.notify();
                         });
@@ -1897,18 +1892,8 @@ impl ClusterView {
                 let current = health.borrow_and_update().clone();
                 let updated = this.update(cx, |view, cx| {
                     if view.health != current {
-                        // A watch that cannot start never sends a first batch,
-                        // so the skeleton would spin for as long as the app is
-                        // open. Degraded health is that news arriving by
-                        // another route: stop waiting, show the empty table,
-                        // and let the status bar say why.
-                        if matches!(current, Health::Degraded { .. }) {
-                            view.table.update(cx, |state, cx| {
-                                if state.delegate_mut().finish_loading() {
-                                    cx.notify();
-                                }
-                            });
-                        }
+                        // Each watch reports its own listing progress. A
+                        // failure in another watch must not finish this list.
                         view.health = current;
                         cx.notify();
                     }
@@ -2602,18 +2587,6 @@ impl ClusterView {
                                 .child("No matching namespaces"),
                         )
                     })
-                    .child(
-                        div()
-                            .mt_1()
-                            .px_2()
-                            .pt_2()
-                            .pb_1()
-                            .border_t_1()
-                            .border_color(cx.theme().border)
-                            .text_size(cx.theme().font_size * 0.6875)
-                            .text_color(muted)
-                            .child("Tick for multiple · Click a name for one"),
-                    )
             })
     }
 
@@ -2730,6 +2703,15 @@ impl ClusterView {
                 let matching: Vec<_> = values.iter()
                     .filter(|(key, value)| search.matches(&format!("{key}={value}")))
                     .collect();
+                let hint = if values.is_empty() {
+                    Some("No labels in this scope. You can still enter a selector.".to_string())
+                } else if matching.is_empty() {
+                    Some("No matching labels.".to_string())
+                } else if matching.len() > 200 {
+                    Some(format!("Showing 200 of {} matching labels. Refine your search to find more.", matching.len()))
+                } else {
+                    None
+                };
                 let rows = matching.iter().take(200).map(|(key, value)| {
                     let view = choosing.clone();
                     let key = key.clone();
@@ -2746,7 +2728,13 @@ impl ClusterView {
                 });
                 v_flex().w(px(430.)).min_h_0().max_h(px(540.)).gap_2()
                     .text_sm().text_color(cx.theme().foreground)
-                    .child(div().font_weight(FontWeight::MEDIUM).child("Label selector"))
+                    .child(h_flex().items_center().gap_1()
+                        .child(div().font_weight(FontWeight::MEDIUM).child("Label selector"))
+                        .child(Button::new("label-selector-help").xsmall().ghost()
+                            .icon(Icon::new(gpui_kit::assets::IconName::Info).size(px(13.)))
+                            .text_color(cx.theme().muted_foreground)
+                            .accessibility_label("Label selector syntax")
+                            .tooltip("Use =, ==, !=, in, notin, key or !key. Commas require all conditions. Press Enter to apply.")))
                     .child(Input::new(&input).small())
                     .child(h_flex().gap_2()
                         .child(Button::new("apply-label-filter").small().primary().label("Apply")
@@ -2757,16 +2745,10 @@ impl ClusterView {
                                 view.apply_label_filter(true, window, cx);
                             }); }))
                     )
-                    .child(div().text_xs().text_color(cx.theme().muted_foreground)
-                        .child("Use =, ==, !=, in, notin, key or !key. Commas require all conditions. Press Enter to apply."))
                     .children(error.clone().map(|error| div().text_xs().text_color(cx.theme().tone(Tone::Critical))
                         .child(crate::copyable_text::copyable_text("label-filter-error", error))))
                     .child(toolbar::picker_search("label-options-search", &search_input, cx))
-                    .child(div().text_xs().text_color(cx.theme().muted_foreground)
-                        .child(if values.is_empty() { "No labels in this scope. You can still enter a selector.".to_string() }
-                            else if matching.is_empty() { "No matching labels.".to_string() }
-                            else if matching.len() > 200 { format!("Showing 200 of {} matching labels. Refine your search to find more.", matching.len()) }
-                            else { "Select labels below to apply them together.".to_string() }))
+                    .children(hint.map(|hint| div().text_xs().text_color(cx.theme().muted_foreground).child(hint)))
                     .child(div().id("label-filter-values").min_h_0().flex_1().overflow_y_scroll()
                         .child(v_flex().gap_0p5().children(rows)))
             })

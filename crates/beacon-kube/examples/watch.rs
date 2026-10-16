@@ -325,6 +325,7 @@ fn describe(batch: &[Delta]) -> Vec<String> {
     batch
         .iter()
         .map(|delta| match delta {
+            Delta::Loading(loading) => format!("  loading: {loading}"),
             Delta::Reset(objects) => format!("  relisted {} objects", objects.len()),
             Delta::Upsert(object) => format!("  ~ {}", ObjectRef::of(object)),
             Delta::Remove(key) => format!("  - {key}"),

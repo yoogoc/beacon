@@ -4,8 +4,30 @@ use std::sync::{Arc, Mutex};
 use tokio::{
     io::{AsyncReadExt as _, AsyncWriteExt as _},
     net::{TcpListener, TcpStream},
-    sync::broadcast,
+    sync::{broadcast, watch},
 };
+
+/// A deterministic pause between list pages; no sleeps or real cluster needed.
+pub struct ListGate {
+    page_size: usize,
+    open: watch::Sender<bool>,
+    waiting: std::sync::atomic::AtomicBool,
+}
+impl ListGate {
+    pub fn release(&self) {
+        self.open.send_replace(true);
+    }
+    pub fn waiting(&self) -> bool {
+        self.waiting.load(std::sync::atomic::Ordering::Acquire)
+    }
+    async fn wait(&self) {
+        self.waiting
+            .store(true, std::sync::atomic::Ordering::Release);
+        let mut open = self.open.subscribe();
+        let _ = open.wait_for(|open| *open).await;
+    }
+}
+type ListGates = Arc<Mutex<std::collections::HashMap<String, Arc<ListGate>>>>;
 
 pub struct Fixture {
     pub url: String,
@@ -15,6 +37,7 @@ pub struct Fixture {
     denied: Arc<Mutex<std::collections::HashSet<String>>>,
     rules: Arc<Mutex<Value>>,
     patch_error: Arc<Mutex<Option<Value>>>,
+    list_gates: ListGates,
     events: broadcast::Sender<Value>,
     task: tokio::task::JoinHandle<()>,
 }
@@ -41,6 +64,8 @@ impl Fixture {
         let granted_rules = rules.clone();
         let patch_error = Arc::new(Mutex::new(None));
         let mutation_error = patch_error.clone();
+        let list_gates = ListGates::default();
+        let paging = list_gates.clone();
         let recorded = requests.clone();
         let changes = events.clone();
         let task = tokio::spawn(async move {
@@ -50,7 +75,8 @@ impl Fixture {
                     accepted = listener.accept() => {
                         let Ok((stream,_)) = accepted else { break; };
                         let store = store.clone(); let recorded = recorded.clone(); let changes = changes.clone(); let exec_policy = exec_policy.clone(); let denied_resources = denied_resources.clone(); let granted_rules = granted_rules.clone(); let mutation_error = mutation_error.clone();
-                        connections.spawn(async move { serve(stream,store,recorded,changes,exec_policy,denied_resources,granted_rules,mutation_error).await; });
+                        let paging = paging.clone();
+                        connections.spawn(async move { serve(stream,store,recorded,changes,exec_policy,denied_resources,granted_rules,mutation_error,paging).await; });
                     }
                     _ = connections.join_next(), if !connections.is_empty() => {}
                 }
@@ -64,6 +90,7 @@ impl Fixture {
             denied,
             rules,
             patch_error,
+            list_gates,
             events,
             task,
         }
@@ -80,6 +107,19 @@ impl Fixture {
     }
     pub fn patch_error(&self, error: Option<Value>) {
         *self.patch_error.lock().unwrap() = error;
+    }
+    pub fn paginate(&self, resource: &str, page_size: usize) -> Arc<ListGate> {
+        assert!(page_size > 0);
+        let gate = Arc::new(ListGate {
+            page_size,
+            open: watch::channel(false).0,
+            waiting: std::sync::atomic::AtomicBool::new(false),
+        });
+        self.list_gates
+            .lock()
+            .unwrap()
+            .insert(resource.to_owned(), gate.clone());
+        gate
     }
     pub fn put(&self, object: Value) {
         let mut objects = self.objects.lock().unwrap();
@@ -199,6 +239,7 @@ async fn serve(
     denied: Arc<Mutex<std::collections::HashSet<String>>>,
     rules: Arc<Mutex<Value>>,
     patch_error: Arc<Mutex<Option<Value>>>,
+    list_gates: ListGates,
 ) {
     let mut header = Vec::new();
     while !header.ends_with(b"\r\n\r\n") {
@@ -611,6 +652,30 @@ async fn serve(
         return;
     }
     let Some(name) = name else {
+        let gate = list_gates.lock().unwrap().get(resource).cloned();
+        if let Some(gate) = gate {
+            let offset = query
+                .get("continue")
+                .and_then(|token| token.parse::<usize>().ok())
+                .unwrap_or(0);
+            if offset > 0 {
+                gate.wait().await;
+            }
+            let limit = query
+                .get("limit")
+                .and_then(|limit| limit.parse::<usize>().ok())
+                .unwrap_or(gate.page_size)
+                .min(gate.page_size);
+            let next = offset.saturating_add(limit).min(listed.len());
+            let token = if next < listed.len() {
+                next.to_string()
+            } else {
+                String::new()
+            };
+            let page: Vec<_> = listed.into_iter().skip(offset).take(limit).collect();
+            response(&mut stream,"200 OK",json!({"apiVersion":"v1","kind":"List","metadata":{"resourceVersion":"1", "continue":token},"items":page}).to_string(),"application/json").await;
+            return;
+        }
         response(&mut stream,"200 OK",json!({"apiVersion":"v1","kind":"List","metadata":{"resourceVersion":"1"},"items":listed}).to_string(),"application/json").await;
         return;
     };

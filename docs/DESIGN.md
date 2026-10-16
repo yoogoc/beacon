@@ -196,7 +196,7 @@ pub struct WatchKey {
 ```rust
 impl ClusterSession {
     pub fn subscribe(&self, key: WatchKey) -> Subscription {
-        // 已有 watch → refcount += 1，立刻把 store 快照作为 Delta::Reset 发给新订阅者
+        // 已有 watch → refcount += 1，立刻发送缓存与加载状态；仅完整快照使用 Delta::Reset
         // 无 → 启动 watcher 任务
     }
 }
@@ -237,10 +237,13 @@ fn slim(mut obj: DynamicObject) -> DynamicObject {
 ### 4.3 watch 的 desync 处理
 
 `kube::runtime::watcher` 已经处理了 410 Gone → 重新 list → 发 `Event::Init/InitApply/InitDone`。
-我们把 `InitDone` 翻译成 `Delta::Reset`，UI 直接整表替换。
+`InitApply` 按批次立即推送给 UI，首批到达即可显示，后续页继续补入。
+`Delta::Loading` 标记列表是否仍在加载；列表保留已到达的行，同时显示已加载数量和加载动画。
+`InitDone` 最后翻译成 `Delta::Reset`，按完整快照清除重新 list 时未再出现的旧对象。
+中途加入的订阅者会获得当前缓存与加载状态，只有完整快照才使用 Reset。
 K8s ≥ 1.27 可以打开 `Config::default().streaming_lists()`，初次加载走 watch bookmark，
 大集群首屏快很多。**但它依赖 API server 的 `WatchList` feature gate，没开的集群是整个 list 失败
-而不是降级**，所以要先做一次能力探测再打开。M1 暂时走 `ListWatch` + `page_size(500)`。
+而不是降级**，所以要先做一次能力探测再打开。M1 暂时走 `ListWatch` + `page_size(100)`。
 
 ### 4.4 列定义（`beacon-columns`）
 

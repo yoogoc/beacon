@@ -75,12 +75,14 @@ pub struct ResourceTable {
     /// What "now" means for the whole frame, so that every Age in a render
     /// agrees and so that tests can pin it.
     now: Timestamp,
-    /// Whether the first list is still on its way.
+    /// Whether any namespace scope is still listing. Rows received so far
+    /// remain visible while the toolbar reports loading progress.
     ///
     /// An empty table and a table that has not been filled yet look identical,
     /// and the difference matters: one means "this kind has nothing in it" and
     /// the other means "wait".
     loading: bool,
+    loading_scopes: BTreeSet<Option<String>>,
     /// CPU and memory, refreshed on its own timer. Empty on a cluster with no
     /// metrics-server, which the columns render as `<none>`.
     metrics: Metrics,
@@ -167,6 +169,7 @@ impl ResourceTable {
             now: Timestamp::now(),
             metrics: Metrics::default(),
             loading: false,
+            loading_scopes: BTreeSet::new(),
         }
     }
 
@@ -574,14 +577,20 @@ impl ResourceTable {
         self.context_view = Some(view);
     }
 
-    /// Whether the first list is still on its way.
+    /// Whether the current list still has pending pages or namespace scopes.
     pub fn is_loading(&self) -> bool {
         self.loading
     }
 
-    /// Says the first list has arrived. Returns whether that was news.
+    /// Stops the loading state for an explicit snapshot or failed operation.
     pub fn finish_loading(&mut self) -> bool {
+        self.loading_scopes.clear();
         std::mem::replace(&mut self.loading, false)
+    }
+
+    pub(crate) fn expect_scopes(&mut self, scopes: &[Option<String>]) {
+        self.loading_scopes = scopes.iter().cloned().collect();
+        self.loading = !self.loading_scopes.is_empty();
     }
 
     /// Replaces the usage figures. Returns whether anything changed, so a
@@ -606,9 +615,7 @@ impl ResourceTable {
 
     /// Applies one coalesced batch from a watch.
     pub fn apply(&mut self, batch: DeltaBatch) {
-        if self.store.apply_batch(batch) {
-            self.reindex();
-        }
+        self.apply_from(None, batch);
     }
 
     /// Applies a batch that came from the watch on one namespace.
@@ -620,10 +627,25 @@ impl ResourceTable {
     /// for that namespace, then add the snapshot -- and the other namespaces
     /// are left alone.
     pub fn apply_from(&mut self, namespace: Option<&str>, batch: DeltaBatch) {
+        let scope = namespace.map(str::to_owned);
+        for delta in &batch {
+            match delta {
+                Delta::Loading(true) => {
+                    self.loading_scopes.insert(scope.clone());
+                }
+                Delta::Loading(false) | Delta::Reset(_) => {
+                    self.loading_scopes.remove(&scope);
+                }
+                _ => {}
+            }
+        }
+        self.loading = !self.loading_scopes.is_empty();
         let Some(namespace) = namespace else {
             // A cluster-wide watch is the only one feeding the table, so
             // Reset can keep meaning what it says.
-            self.apply(batch);
+            if self.store.apply_batch(batch) {
+                self.reindex();
+            }
             return;
         };
 
@@ -644,7 +666,9 @@ impl ResourceTable {
             }
         }
 
-        self.apply(expanded);
+        if self.store.apply_batch(expanded) {
+            self.reindex();
+        }
     }
 
     /// Narrows the table to the rows matching a query.
@@ -851,6 +875,7 @@ impl ResourceTable {
         // Every reset is followed by a new subscription, so from here until
         // that watch says something the table is waiting rather than empty.
         self.loading = true;
+        self.loading_scopes = BTreeSet::from([None]);
     }
 
     /// Swaps the columns without disturbing the rows.
@@ -1104,7 +1129,7 @@ impl TableDelegate for ResourceTable {
     /// alternative is an empty grid that reads as "nothing here" for as long
     /// as the first list takes.
     fn loading(&self, _: &App) -> bool {
-        self.loading
+        self.loading && self.rows.is_empty()
     }
 
     fn rows_count(&self, _: &App) -> usize {
@@ -2126,6 +2151,69 @@ mod tests {
 
         let names: Vec<&str> = table.rows.iter().map(|row| row.name.as_str()).collect();
         assert_eq!(names, vec!["two"]);
+    }
+
+    #[test]
+    fn partial_lists_track_each_scope_and_reconcile_only_after_completion() {
+        let mut table = ResourceTable::new(ColumnSet::for_kind("", "Pod", true));
+        table.expect_scopes(&[Some("alpha".into()), Some("beta".into())]);
+        table.apply_from(
+            Some("alpha"),
+            vec![Delta::Loading(true), Delta::Upsert(named("alpha", "old"))],
+        );
+        assert!(table.is_loading());
+        assert_eq!(table.len(), 1);
+        table.apply_from(
+            Some("beta"),
+            vec![Delta::Reset(vec![named("beta", "keep")])],
+        );
+        assert!(
+            table.is_loading(),
+            "one namespace must not finish another's pending pages"
+        );
+        table.apply_from(
+            Some("alpha"),
+            vec![
+                Delta::Upsert(named("alpha", "current")),
+                Delta::Loading(false),
+            ],
+        );
+        assert!(!table.is_loading());
+        assert_eq!(
+            table.len(),
+            3,
+            "an interrupted list retains the usable rows"
+        );
+        table.apply_from(
+            Some("alpha"),
+            vec![
+                Delta::Loading(true),
+                Delta::Upsert(named("alpha", "current")),
+            ],
+        );
+        assert!(table.is_loading());
+        table.apply_from(
+            Some("alpha"),
+            vec![Delta::Reset(vec![named("alpha", "current")])],
+        );
+        assert!(!table.is_loading());
+        assert_eq!(table.len(), 2);
+        assert!(
+            table
+                .object(&beacon_kube::ObjectRef::new(Some("beta".into()), "keep"))
+                .is_some()
+        );
+        assert!(
+            table
+                .object(&beacon_kube::ObjectRef::new(Some("alpha".into()), "old"))
+                .is_none()
+        );
+        table.apply_from(Some("alpha"), vec![Delta::Reset(vec![])]);
+        assert_eq!(
+            table.len(),
+            1,
+            "empty snapshots still reconcile their namespace"
+        );
     }
 
     /// The natural order is what `kubectl get -A` prints: namespace, then name.

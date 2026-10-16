@@ -51,7 +51,7 @@ const LINGER: Duration = Duration::from_secs(30);
 
 /// Objects fetched per page during the initial list. Bounds peak memory on a
 /// cluster where one kind has tens of thousands of objects.
-const PAGE_SIZE: u32 = 500;
+const PAGE_SIZE: u32 = 100;
 
 /// What to watch: one kind, one scope, one filter.
 ///
@@ -200,10 +200,8 @@ pub(crate) async fn snapshot(
 ///
 /// Yields [`DeltaBatch`]es until the watch stops. A subscriber that joins a
 /// watch which has already listed is handed its contents immediately, as a
-/// [`Delta::Reset`]; one that joins a watch still listing waits for the real
-/// list. Either way the first `Reset` to arrive means "this is everything",
-/// which is what lets a view tell an empty namespace from one it has not
-/// heard about yet.
+/// [`Delta::Reset`]. While listing, it receives the cached partial contents
+/// with a loading marker. Only Reset means "this is everything".
 ///
 /// Dropping it releases the subscription; when it was the last one the watch
 /// lingers for [`LINGER`] and then shuts down.
@@ -235,12 +233,25 @@ struct WatchHandle {
     store: Arc<Mutex<ResourceStore>>,
     /// Whether the initial list has completed. Until it has, an empty store
     /// means "not yet", not "nothing there".
-    listed: Arc<AtomicBool>,
+    progress: Arc<Progress>,
     subscribers: Subscribers,
     /// Bumped on every new subscriber, so a pending shutdown can tell that
     /// somebody re-subscribed while it was sleeping.
     generation: u64,
     task: tokio::task::AbortHandle,
+}
+
+struct Progress {
+    listed: AtomicBool,
+    loading: AtomicBool,
+}
+impl Default for Progress {
+    fn default() -> Self {
+        Self {
+            listed: AtomicBool::new(false),
+            loading: AtomicBool::new(true),
+        }
+    }
 }
 
 impl Drop for WatchHandle {
@@ -300,10 +311,7 @@ impl Registry {
                 }
             };
 
-            // Catch the new subscriber up before it sees a single event, so it
-            // never renders an empty table over a populated watch. A watch that
-            // has not listed yet has nothing to catch up with, and sending an
-            // empty Reset would tell the subscriber the opposite.
+            // Catch up with partial lists too, without reporting them complete.
             //
             // The subscriber list is locked across the snapshot and the insert,
             // and `flush` holds the same lock across its send and its write to
@@ -312,9 +320,20 @@ impl Registry {
             // list this subscriber was not in yet -- lost, in both directions
             // at once. The lock order is subscribers, then store, in both.
             let mut subscribers = lock(&handle.subscribers);
-            if handle.listed.load(Ordering::Acquire) {
+            if handle.progress.listed.load(Ordering::Acquire) {
                 let snapshot = lock(&handle.store).snapshot();
                 let _ = sender.unbounded_send(vec![Delta::Reset(snapshot)]);
+            } else {
+                let mut batch = vec![Delta::Loading(
+                    handle.progress.loading.load(Ordering::Acquire),
+                )];
+                batch.extend(
+                    lock(&handle.store)
+                        .snapshot()
+                        .into_iter()
+                        .map(Delta::Upsert),
+                );
+                let _ = sender.unbounded_send(batch);
             }
             subscribers.insert(id, sender);
         }
@@ -349,6 +368,7 @@ impl Registry {
                     key: key.clone(),
                     subscribers: subscribers.len(),
                     objects: handle
+                        .progress
                         .listed
                         .load(Ordering::Acquire)
                         .then(|| lock(&handle.store).len()),
@@ -371,20 +391,20 @@ impl Registry {
     fn start(&self, key: &WatchKey) -> WatchHandle {
         let store = Arc::new(Mutex::new(ResourceStore::new()));
         let subscribers: Subscribers = Arc::new(Mutex::new(HashMap::new()));
-        let listed = Arc::new(AtomicBool::new(false));
+        let progress = Arc::new(Progress::default());
 
         let task = self.runtime.spawn(run(
             key.clone(),
             key.api(self.client.clone()),
             store.clone(),
             subscribers.clone(),
-            listed.clone(),
+            progress.clone(),
             self.health.clone(),
         ));
 
         WatchHandle {
             store,
-            listed,
+            progress,
             subscribers,
             generation: 0,
             task: task.abort_handle(),
@@ -444,14 +464,14 @@ fn lock<T>(value: &Arc<Mutex<T>>) -> MutexGuard<'_, T> {
 /// Turns a watcher's event stream into coalesced batches.
 ///
 /// Kept separate from the task loop because this is where the subtle part
-/// lives: an `Init`/`InitApply`/`InitDone` sequence has to become a single
-/// [`Delta::Reset`], not a stream of upserts, or the table shows objects that
-/// the relist already removed.
+/// lives: initial objects are published as they arrive, but the final Reset
+/// must still remove objects absent from a completed relist.
 #[derive(Default)]
 struct Coalescer {
     pending: DeltaBatch,
     /// `Some` while a relist is in progress.
     relisting: Option<Vec<Arc<DynamicObject>>>,
+    reported_loading: Option<bool>,
 }
 
 impl Coalescer {
@@ -467,14 +487,21 @@ impl Coalescer {
                 false
             }
             Event::InitApply(object) => {
+                if self.reported_loading != Some(true) {
+                    self.pending.push(Delta::Loading(true));
+                    self.reported_loading = Some(true);
+                }
+                let object = Arc::new(slim(object));
                 self.relisting
                     .get_or_insert_with(Vec::new)
-                    .push(Arc::new(slim(object)));
-                false
+                    .push(object.clone());
+                self.pending.push(Delta::Upsert(object));
+                self.pending.len() >= PAGE_SIZE as usize
             }
             Event::InitDone => {
                 let objects = self.relisting.take().unwrap_or_default();
                 self.pending.push(Delta::Reset(objects));
+                self.reported_loading = Some(false);
                 // The first screen should not wait for a tick.
                 true
             }
@@ -493,6 +520,16 @@ impl Coalescer {
         self.pending.is_empty()
     }
 
+    fn failed(&mut self) -> bool {
+        if self.relisting.take().is_some() && self.reported_loading != Some(false) {
+            self.pending.push(Delta::Loading(false));
+            self.reported_loading = Some(false);
+            true
+        } else {
+            false
+        }
+    }
+
     fn take(&mut self) -> DeltaBatch {
         std::mem::take(&mut self.pending)
     }
@@ -504,7 +541,7 @@ async fn run(
     api: Api<DynamicObject>,
     store: Arc<Mutex<ResourceStore>>,
     subscribers: Subscribers,
-    listed: Arc<AtomicBool>,
+    progress: Arc<Progress>,
     health: Arc<HealthState>,
 ) {
     let mut reporter = HealthState::reporter(&health, key.describe());
@@ -528,7 +565,7 @@ async fn run(
                     // `watcher` restarts itself on the next poll; this is a
                     // report, not a reason to stop.
                     reporter.failed(&error);
-                    false
+                    coalescer.failed()
                 }
                 None => break,
             },
@@ -537,20 +574,19 @@ async fn run(
 
         if flush_now {
             let batch = coalescer.take();
-            // Ordering::Release pairs with the Acquire in `subscribe`: a
-            // subscriber that sees this flag must also see the store it
-            // describes.
-            if batch.iter().any(|delta| matches!(delta, Delta::Reset(_))) {
-                listed.store(true, Ordering::Release);
-            }
-            flush(&store, &subscribers, batch);
+            flush(&store, &subscribers, &progress, batch);
         }
     }
 
     tracing::debug!(watch = %key.describe(), "watch stream ended");
 }
 
-fn flush(store: &Arc<Mutex<ResourceStore>>, subscribers: &Subscribers, batch: DeltaBatch) {
+fn flush(
+    store: &Arc<Mutex<ResourceStore>>,
+    subscribers: &Subscribers,
+    progress: &Progress,
+    batch: DeltaBatch,
+) {
     if batch.is_empty() {
         return;
     }
@@ -559,6 +595,23 @@ fn flush(store: &Arc<Mutex<ResourceStore>>, subscribers: &Subscribers, batch: De
     // is gone is dropped here; the subscriber list is what actually ends the
     // watch, so this is also how an abandoned one stops counting.
     let mut subscribers = lock(subscribers);
+    // Progress and cached contents change under the same lock used by
+    // subscribe, so a joining view cannot mistake a partial list for a reset.
+    for delta in &batch {
+        match delta {
+            Delta::Loading(value) => {
+                progress.loading.store(*value, Ordering::Release);
+                if *value {
+                    progress.listed.store(false, Ordering::Release);
+                }
+            }
+            Delta::Reset(_) => {
+                progress.listed.store(true, Ordering::Release);
+                progress.loading.store(false, Ordering::Release);
+            }
+            _ => {}
+        }
+    }
     subscribers.retain(|_, sender| sender.unbounded_send(batch.clone()).is_ok());
     // Sent before applying, so the batch is moved into the store rather than
     // cloned one more time.
@@ -648,7 +701,7 @@ mod tests {
                 query.get("labelSelector").map(|value| value.as_ref()),
                 Some("app=web")
             );
-            assert_eq!(query.get("limit").map(|value| value.as_ref()), Some("500"));
+            assert_eq!(query.get("limit").map(|value| value.as_ref()), Some("100"));
             assert_eq!(
                 query.get("continue").map(|value| value.as_ref()),
                 if index == 0 { None } else { Some("next/page") }
@@ -692,7 +745,7 @@ mod tests {
             WatchKey::namespaced(resources::pod(), "default"),
             WatchHandle {
                 store: Arc::new(Mutex::new(ResourceStore::new())),
-                listed: Arc::new(AtomicBool::new(false)),
+                progress: Arc::default(),
                 subscribers: Arc::new(Mutex::new(HashMap::from([(0, sender)]))),
                 generation: 0,
                 task: task.abort_handle(),
@@ -713,6 +766,7 @@ mod tests {
         batch
             .iter()
             .map(|delta| match delta {
+                Delta::Loading(loading) => format!("loading:{loading}"),
                 Delta::Reset(objects) => format!(
                     "reset[{}]",
                     objects
@@ -733,13 +787,16 @@ mod tests {
     }
 
     #[test]
-    fn a_relist_becomes_one_reset() {
+    fn a_relist_publishes_partial_objects_before_its_final_reset() {
         let mut coalescer = Coalescer::default();
 
         assert!(!coalescer.ingest(Event::Init));
         assert!(!coalescer.ingest(Event::InitApply(pod("api"))));
         assert!(!coalescer.ingest(Event::InitApply(pod("web"))));
-        assert!(coalescer.is_empty(), "nothing is emitted mid-relist");
+        assert_eq!(
+            names(&coalescer.take()),
+            ["loading:true", "upsert:api", "upsert:web"]
+        );
 
         assert!(coalescer.ingest(Event::InitDone), "flushes immediately");
         assert_eq!(names(&coalescer.take()), ["reset[api,web]"]);
@@ -757,7 +814,149 @@ mod tests {
         coalescer.ingest(Event::InitApply(pod("api")));
         coalescer.ingest(Event::InitDone);
 
-        assert_eq!(names(&coalescer.take()), ["reset[api]"]);
+        assert_eq!(
+            names(&coalescer.take()),
+            ["loading:true", "upsert:api", "reset[api]"]
+        );
+    }
+
+    #[test]
+    fn failed_partial_lists_keep_rows_until_a_complete_relist_prunes_them() {
+        let mut coalescer = Coalescer::default();
+        let mut store = ResourceStore::new();
+        store.apply(Delta::Reset(vec![Arc::new(pod("old"))]));
+        coalescer.ingest(Event::Init);
+        coalescer.ingest(Event::InitApply(pod("partial")));
+        store.apply_batch(coalescer.take());
+        assert_eq!(store.len(), 2);
+        assert!(coalescer.failed());
+        assert_eq!(names(&coalescer.take()), ["loading:false"]);
+        coalescer.ingest(Event::Init);
+        assert!(
+            !coalescer.failed(),
+            "repeated failures do not flood subscribers"
+        );
+        coalescer.ingest(Event::Init);
+        coalescer.ingest(Event::InitApply(pod("current")));
+        store.apply_batch(coalescer.take());
+        assert_eq!(store.len(), 3, "old rows stay usable until reconciliation");
+        coalescer.ingest(Event::InitDone);
+        store.apply_batch(coalescer.take());
+        assert_eq!(store.len(), 1);
+        assert!(
+            store
+                .get(&ObjectRef::new(Some("default".into()), "current"))
+                .is_some()
+        );
+    }
+
+    #[tokio::test]
+    async fn first_page_and_late_subscribers_are_usable_before_the_next_page_arrives() {
+        use crate::test_support::Fixture;
+        use serde_json::json;
+        let fixture = Fixture::start((0..3).map(|i| json!({
+            "apiVersion":"v1","kind":"Pod", "metadata":{
+                "name":format!("pod-{i}"),"namespace":"default", "uid":format!("uid-{i}"),"resourceVersion":"1"
+            }
+        })).collect()).await;
+        let gate = fixture.paginate("pods", 2);
+        let client =
+            kube::Client::try_from(kube::Config::new(fixture.url.parse().unwrap())).unwrap();
+        let registry = Arc::new(Registry::new(
+            client,
+            tokio::runtime::Handle::current(),
+            Arc::new(HealthState::new(crate::Health::Connected)),
+        ));
+        let key = WatchKey::namespaced(resources::pod(), "default");
+        let mut first = registry.subscribe(key.clone());
+        let mut store = ResourceStore::new();
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while let Some(batch) = first.next().await {
+                assert!(
+                    !batch.iter().any(|delta| matches!(delta, Delta::Reset(_))),
+                    "second page is still blocked"
+                );
+                store.apply_batch(batch);
+                if store.len() == 2 {
+                    break;
+                }
+            }
+        })
+        .await
+        .unwrap();
+        assert_eq!(store.len(), 2);
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while !gate.waiting() {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        assert_eq!(registry.summaries()[0].objects, None);
+        let mut late = registry.subscribe(key.clone());
+        let batch = late.next().await.unwrap();
+        assert_eq!(
+            names(&batch)
+                .iter()
+                .filter(|name| name.starts_with("upsert:"))
+                .count(),
+            2
+        );
+        assert!(matches!(batch.first(), Some(Delta::Loading(true))));
+        assert!(!batch.iter().any(|delta| matches!(delta, Delta::Reset(_))));
+        gate.release();
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while let Some(batch) = first.next().await {
+                let complete = batch.iter().any(|delta| matches!(delta, Delta::Reset(_)));
+                store.apply_batch(batch);
+                if complete {
+                    break;
+                }
+            }
+        })
+        .await
+        .unwrap();
+        assert_eq!(store.len(), 3);
+        assert_eq!(registry.summaries()[0].objects, Some(3));
+        let mut warm = registry.subscribe(key);
+        assert!(
+            matches!(warm.next().await.unwrap().first(), Some(Delta::Reset(objects)) if objects.len() == 3)
+        );
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while fixture.watchers() == 0 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        fixture.put(json!({"apiVersion":"v1","kind":"Pod", "metadata":{"name":"pod-0","namespace":"default", "uid":"uid-0", "resourceVersion":"2"},"status":{"phase":"Running"}}));
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while let Some(batch) = first.next().await {
+                store.apply_batch(batch);
+                if store
+                    .get(&ObjectRef::new(Some("default".into()), "pod-0"))
+                    .is_some_and(|object| object.metadata.resource_version.as_deref() == Some("2"))
+                {
+                    break;
+                }
+            }
+        })
+        .await
+        .unwrap();
+        assert_eq!(
+            store.len(),
+            3,
+            "watch updates replace rows instead of duplicating them"
+        );
+        registry.stop_all();
+        assert!(
+            fixture
+                .requests
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|(request, _)| request.contains("continue=2"))
+        );
     }
 
     #[test]

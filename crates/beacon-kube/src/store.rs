@@ -55,6 +55,9 @@ impl fmt::Display for ObjectRef {
 /// One change to a store.
 #[derive(Debug, Clone)]
 pub enum Delta {
+    /// Listing is still in progress, or has stopped on an error. Objects
+    /// received so far remain usable; only Reset denotes a complete snapshot.
+    Loading(bool),
     /// Replace everything. Sent for the initial list, after a watch desync, and
     /// to a subscriber that joins an already-running watch.
     Reset(Vec<Arc<DynamicObject>>),
@@ -84,6 +87,7 @@ impl ResourceStore {
     /// Applies one delta. Returns whether anything actually changed.
     pub fn apply(&mut self, delta: Delta) -> bool {
         let changed = match delta {
+            Delta::Loading(_) => false,
             Delta::Reset(objects) => {
                 self.objects = objects
                     .into_iter()

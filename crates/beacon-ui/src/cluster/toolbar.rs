@@ -489,7 +489,11 @@ impl ClusterView {
             Mode::Forwards => self.session.forwards().len().to_string(),
         };
         let count_label = if loading {
-            "Loading resources".to_owned()
+            if self.mode == Mode::Objects && total > 0 {
+                format!("{total} resources loaded; loading more")
+            } else {
+                "Loading resources".to_owned()
+            }
         } else if count == "1" {
             "1 resource".to_owned()
         } else {
@@ -569,11 +573,12 @@ impl ClusterView {
                                 .max_w(px(100.))
                                 .items_center()
                                 .justify_center()
+                                .gap_1p5()
                                 .text_color(cx.theme().muted_foreground)
                                 .rounded_md()
                                 .bg(cx.theme().muted)
                                 .px_1p5()
-                                .child(if loading {
+                                .children(loading.then(|| {
                                     div()
                                         .id("resource-count-loading")
                                         .role(Role::ProgressIndicator)
@@ -584,16 +589,19 @@ impl ClusterView {
                                                 .xsmall()
                                                 .color(cx.theme().muted_foreground),
                                         )
-                                        .into_any_element()
-                                } else {
-                                    div()
-                                        .id("resource-count-value")
-                                        .test_support()
-                                        .min_w_0()
-                                        .text_ellipsis()
-                                        .child(count)
-                                        .into_any_element()
-                                }),
+                                }))
+                                .children(
+                                    (!loading || self.mode == Mode::Objects && total > 0).then(
+                                        || {
+                                            div()
+                                                .id("resource-count-value")
+                                                .test_support()
+                                                .min_w_0()
+                                                .text_ellipsis()
+                                                .child(count)
+                                        },
+                                    ),
+                                ),
                         )
                     }),
             )
@@ -646,6 +654,92 @@ mod integration_tests {
             cx.update_window(window, |_, window, cx| window.render_frame(cx))
                 .unwrap();
         }
+    }
+
+    #[::core::prelude::v1::test]
+    fn first_page_is_visible_and_searchable_while_later_pages_are_loading() {
+        let directory = tempfile::tempdir().unwrap();
+        let cx = &mut support::context();
+        support::workspace(cx, directory.path());
+        let (fixture, session) = support::fixture(cx, "progressive-list", (0..3).map(|i| json!({
+            "apiVersion":"v1","kind":"Pod", "metadata":{"name":format!("page-pod-{i}"),"namespace":"default","uid":format!("pod-{i}"),"resourceVersion":"1"},
+            "spec":{"containers":[{"name":"app","image":"busybox"}]},"status":{"phase":"Running"}
+        })).collect());
+        let gate = fixture.paginate("pods", 2);
+        let (window, pane) = cx.update(|cx| {
+            gpui_kit::open_window(
+                WindowOptions {
+                    window_bounds: Some(WindowBounds::Windowed(Bounds::new(
+                        Point::default(),
+                        size(px(1000.), px(720.)),
+                    ))),
+                    ..Default::default()
+                },
+                cx,
+                |window, cx| {
+                    window.set_view_retention(false);
+                    let view = cx.new(|cx| {
+                        ClusterView::new(
+                            session,
+                            Some("default".into()),
+                            Some(Arc::new(support::kind("", "Pod", "pods"))),
+                            None,
+                            false,
+                            window,
+                            cx,
+                        )
+                    });
+                    cx.new(|_| Pane {
+                        view,
+                        width: px(1000.),
+                    })
+                },
+            )
+            .unwrap()
+        });
+        let view = pane.read_with(cx, |pane, _| pane.view.clone());
+        support::settle(cx, |cx| {
+            view.read_with(cx, |view, cx| view.table.read(cx).delegate().total() == 2)
+        });
+        draw(cx, window);
+        cx.update_window(window, |_, window, cx| {
+            assert!(window.find("resource-count-loading").visible());
+            assert!(window.find("resource-count-value").visible());
+            assert_eq!(
+                window.find("resource-count").label(),
+                Some("2 resources loaded; loading more")
+            );
+            assert!(
+                window.find("select-default-page-pod-0").visible(),
+                "the table must show data instead of skeleton rows"
+            );
+            view.update(cx, |view, cx| {
+                view.table.update(cx, |table, cx| {
+                    assert!(table.delegate().is_loading());
+                    table.delegate_mut().set_filter("page-pod-2");
+                    cx.notify();
+                })
+            });
+        })
+        .unwrap();
+        assert!(view.read_with(cx, |view, cx| view.table.read(cx).delegate().is_empty()));
+        gate.release();
+        support::settle(cx, |cx| {
+            view.read_with(cx, |view, cx| {
+                let table = view.table.read(cx).delegate();
+                !table.is_loading() && table.total() == 3 && table.len() == 1
+            })
+        });
+        draw(cx, window);
+        cx.update_window(window, |_, window, _| {
+            assert!(window.try_find("resource-count-loading").is_none());
+            assert_eq!(
+                window.find("resource-count").label(),
+                Some("1 of 3 resources")
+            );
+            assert!(window.find("select-default-page-pod-2").visible());
+        })
+        .unwrap();
     }
 
     #[::core::prelude::v1::test]

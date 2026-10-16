@@ -210,7 +210,9 @@ fn render_pods_content(
 ) -> impl IntoElement {
     let state = table.read(cx).delegate();
     let loading = state.is_loading();
-    let count = if loading {
+    let count = if loading && state.total() > 0 {
+        format!("{} Pods · Loading…", state.total())
+    } else if loading {
         "Loading Pods…".into()
     } else if error.is_some() {
         "Pods".into()
@@ -232,7 +234,7 @@ fn render_pods_content(
             ))
             .test_support()
             .into_any_element()
-    } else if loading {
+    } else if loading && state.total() == 0 {
         // Keep the loading state lightweight until the snapshot is ready.
         div()
             .id("node-pods-loading")
