@@ -253,6 +253,8 @@ runner 正在退役。本机实测过这条路 —— 产物落在 `target/x86_6
 macOS CI 与发布打包通过 `.github/actions/macos-sdk` 固定使用 Xcode 27.0 / macOS 27.0 SDK，
 同时准备 GPUI 编译着色器需要的 Metal 工具。`DEVELOPER_DIR` 与 `SDKROOT` 显式传给后续构建，
 缓存按工具链版本隔离；构建后校验 Mach-O 中实际记录的 SDK 与最低系统版本。
+Metal 工具准备会实际执行编译器检查；下载完成后清理工具查找缓存并等待组件可用，
+最多重试三轮。若仍不可用，输出组件诊断并停止构建，避免把下载成功误当成安装就绪。
 SDK 升级保留 `MACOSX_DEPLOYMENT_TARGET=11.0`，与安装包的最低系统版本配置一致。
 `xcode-27` 镜像当前仍标记为预览，Xcode 27.0 本身使用正式版本，详情见
 [GitHub runner 工具链清单](https://github.com/actions/runner-images/blob/main/images/macos/xcode-27-arm64-Readme.md)。
@@ -260,6 +262,9 @@ SDK 升级保留 `MACOSX_DEPLOYMENT_TARGET=11.0`，与安装包的最低系统�
 macOS CI and release packaging pin Xcode 27.0 and the macOS 27.0 SDK, prepare the Metal
 compiler, and isolate caches by toolchain version. Every binary's recorded SDK and deployment
 target are checked before packaging. The deployment target remains macOS 11.0.
+Metal preparation verifies that the compiler executes, clears cached tool lookups after downloading,
+and waits for component availability, with up to three attempts. Persistent failures print component
+diagnostics and stop the build.
 
 CI 先用矩阵里的 target 显式执行
 `cargo build --locked --release -p beacon --target <triple>`，再把同一个 target 传给 cargo-packager。
