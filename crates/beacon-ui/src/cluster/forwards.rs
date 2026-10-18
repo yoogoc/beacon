@@ -83,8 +83,8 @@ impl ClusterView {
             .cloned()
             .collect();
         v_flex().id("forwards").size_full().overflow_y_scroll().p_4().gap_3()
-            .child(h_flex().gap_2().child(div().text_lg().child("Port Forwards")).child(div().text_sm().text_color(cx.theme().muted_foreground).child(format!("{} active",forwards.len()))))
-            .when(forwards.is_empty(),|view|view.child(div().text_sm().text_color(cx.theme().muted_foreground).child("No active forwards. Right-click a Pod, Service or Deployment to configure one, or restore a saved forward below.")))
+            .child(h_flex().gap_2().child(div().text_lg().child(crate::i18n::text("Port Forwards"))).child(div().text_sm().text_color(cx.theme().muted_foreground).child(format!("{} active",forwards.len()))))
+            .when(forwards.is_empty(),|view|view.child(div().text_sm().text_color(cx.theme().muted_foreground).child(crate::i18n::text("No active forwards. Right-click a Pod, Service or Deployment to configure one, or restore a saved forward below."))))
             .children(forwards.into_iter().map(|forward| {
                 let id=forward.id;
                 let preset=Preset {cluster:self.session.id().as_str().into(),target:forward.target.clone(),local_port:forward.local_port};
@@ -95,20 +95,20 @@ impl ClusterView {
                             .child(div().text_sm().font_family("monospace").child(copyable_text(("forward-address",id),forward.address())))
                             .child(div().text_sm().child(copyable_text(("forward-logical-target",id),forward.target.describe())))
                             .child(div().text_xs().text_color(cx.theme().muted_foreground).child(format!("{} · Pod {}:{} · {} connections",if forward.reconnecting.is_some(){"Waiting for target"}else{"Listening"},forward.pod,forward.remote_port,forward.connections))))
-                        .child(Button::new(("save-forward",id)).small().ghost().label(if saved {"Saved"}else{"Save"}).disabled(saved).on_click(cx.listener(move|view,_,_,cx|view.save_forward(preset.clone(),cx))))
-                        .child(Button::new(("close-forward",id)).small().outline().label("Stop").on_click(cx.listener(move|view,_,_,cx|view.close_forward(id,cx)))))
+                        .child(Button::new(("save-forward",id)).small().ghost().label(crate::i18n::text(if saved {"Saved"}else{"Save"})).disabled(saved).on_click(cx.listener(move|view,_,_,cx|view.save_forward(preset.clone(),cx))))
+                        .child(Button::new(("close-forward",id)).small().outline().label(crate::i18n::text("Stop")).on_click(cx.listener(move|view,_,_,cx|view.close_forward(id,cx)))))
                     .when_some(forward.reconnecting,|view,error|view.child(div().text_xs().text_color(cx.theme().warning).child(copyable_text(("forward-reconnect",id),format!("Retrying target: {error}")))))
                     .when_some(forward.failure,|view,error|view.child(div().text_xs().text_color(cx.theme().danger).child(copyable_text(("forward-failure",id),error.clone()))).children(crate::permissions::error_link(("forward-permission",id),self.session.clone(),&error,beacon_kube::rbac::Query {verb:"get".into(),resource:"pods".into(),subresource:"portforward".into(),namespace:Some(forward.namespace),name:Some(forward.pod),..Default::default()})))
             }))
-            .child(div().mt_3().text_sm().child("Saved forwards"))
-            .child(div().text_xs().text_color(cx.theme().muted_foreground).child("Restore opens the configuration for review. Saved forwards never start automatically."))
-            .when(presets.is_empty(),|view|view.child(div().text_sm().text_color(cx.theme().muted_foreground).child("No saved forwards for this cluster.")))
+            .child(div().mt_3().text_sm().child(crate::i18n::text("Saved forwards")))
+            .child(div().text_xs().text_color(cx.theme().muted_foreground).child(crate::i18n::text("Restore opens the configuration for review. Saved forwards never start automatically.")))
+            .when(presets.is_empty(),|view|view.child(div().text_sm().text_color(cx.theme().muted_foreground).child(crate::i18n::text("No saved forwards for this cluster."))))
             .children(presets.into_iter().enumerate().map(|(index,preset)| {
                 let remove=preset.clone();let active=self.session.forwards().iter().any(|f|f.target==preset.target&&f.local_port==preset.local_port);
                 h_flex().id(("forward-preset",index)).test_support().p_3().gap_3().items_center().rounded_md().border_1().border_color(cx.theme().border)
                     .child(v_flex().flex_1().min_w_0().gap_1().child(div().text_sm().child(copyable_text(("forward-preset-target",index),preset.target.describe()))).child(div().text_xs().text_color(cx.theme().muted_foreground).child(format!("Local · 127.0.0.1:{}",preset.local_port))))
                     .child(Button::new(("restore-forward",index)).small().outline().label(if active {"Active"}else{"Restore"}).disabled(active).on_click(cx.listener(move|view,_,window,cx|view.configure_forward(preset.target.clone(),preset.local_port,window,cx))))
-                    .child(Button::new(("remove-forward",index)).small().ghost().label("Remove").on_click(cx.listener(move|view,_,_,cx|{
+                    .child(Button::new(("remove-forward",index)).small().ghost().label(crate::i18n::text("Remove")).on_click(cx.listener(move|view,_,_,cx|{
                         let mut presets=crate::settings::store(cx).read(cx).preferences.forwards.clone();presets.retain(|p|p!=&remove);
                         if let Err(error)=crate::settings::save_forwards(presets,cx){view.outcome=Some(Outcome::Failed(error));}cx.notify();
                     })))

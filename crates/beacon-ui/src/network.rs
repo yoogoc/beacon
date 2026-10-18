@@ -247,7 +247,7 @@ impl Render for NetworkView {
                                                     Button::new(("network-notes-button", index))
                                                         .xsmall()
                                                         .ghost()
-                                                        .label("Details…"),
+                                                        .label(crate::i18n::text("Details…")),
                                                 )
                                                 .content(move |_, _, _| {
                                                     div()
@@ -281,9 +281,9 @@ impl Render for NetworkView {
         .pb_3();
         v_flex().size_full().gap_2()
             .child(h_flex().p_3().gap_2().child(div().flex_1().child("Ingress → Service → EndpointSlice → Pod"))
-                .child(Button::new("refresh-network").small().ghost().label("Refresh").on_click(cx.listener(|view,_,window,cx|view.load(window,cx)))))
-            .child(div().px_3().text_xs().text_color(cx.theme().muted_foreground).child("Configured resource relationships. Click a hop to inspect it; this view does not test live network connectivity."))
-            .when(self.loading.iter().any(|loading| *loading),|view|view.child(div().px_3().child("Loading network resources…")))
+                .child(Button::new("refresh-network").small().ghost().label(crate::i18n::text("Refresh")).on_click(cx.listener(|view,_,window,cx|view.load(window,cx)))))
+            .child(div().px_3().text_xs().text_color(cx.theme().muted_foreground).child(crate::i18n::text("Configured resource relationships. Click a hop to inspect it; this view does not test live network connectivity.")))
+            .when(self.loading.iter().any(|loading| *loading),|view|view.child(div().px_3().child(crate::i18n::text("Loading network resources…"))))
             .children(self.errors.iter().enumerate().filter_map(|(i,error)|error.as_ref().map(|error|div().px_3().child(copyable_text(("network-load-error",i),format!("Network view is incomplete. {error}"))))))
             .child(div().flex_1().min_size_0().relative().child(list).child(Scrollbar::horizontal(&self.scroll).mode(ScrollbarMode::Always)).child(Scrollbar::vertical(&self.scroll)))
     }

@@ -110,8 +110,8 @@ impl ReviewView {
                             .ghost()
                             .small()
                             .icon(IconName::X)
-                            .accessibility_label("Back to editing")
-                            .tooltip("Back to editing")
+                            .accessibility_label(crate::i18n::text("Back to editing"))
+                            .tooltip(crate::i18n::text("Back to editing"))
                             .on_click(cx.listener(|view, _, window, cx| {
                                 view.cancel(cx);
                                 window.defer(cx, |window, cx| window.close_dialog(cx));
@@ -165,7 +165,9 @@ impl ReviewView {
                     div()
                         .text_xs()
                         .text_color(cx.theme().tone(Tone::Warning))
-                        .child("Force apply takes ownership of conflicting fields."),
+                        .child(crate::i18n::text(
+                            "Force apply takes ownership of conflicting fields.",
+                        )),
                 )
             })
             .into_any_element()
@@ -242,8 +244,8 @@ impl ReviewView {
                             .ghost()
                             .icon(IconName::ChevronUp)
                             .disabled(count == 0)
-                            .accessibility_label("Previous change")
-                            .tooltip("Previous change")
+                            .accessibility_label(crate::i18n::text("Previous change"))
+                            .tooltip(crate::i18n::text("Previous change"))
                             .on_click(cx.listener(|view, _, _, cx| view.step_change(false, cx))),
                     )
                     .child(
@@ -263,8 +265,8 @@ impl ReviewView {
                             .ghost()
                             .icon(IconName::ChevronDown)
                             .disabled(count == 0)
-                            .accessibility_label("Next change")
-                            .tooltip("Next change")
+                            .accessibility_label(crate::i18n::text("Next change"))
+                            .tooltip(crate::i18n::text("Next change"))
                             .on_click(cx.listener(|view, _, _, cx| view.step_change(true, cx))),
                     ),
             )
@@ -371,7 +373,7 @@ impl ReviewView {
                         Button::new("cancel-yaml-review")
                             .ghost()
                             .small()
-                            .label("Back to editing")
+                            .label(crate::i18n::text("Back to editing"))
                             .on_click(cx.listener(|view, _, window, cx| {
                                 view.cancel(cx);
                                 // Keep the emitter alive until its subscriber has handled the draft.

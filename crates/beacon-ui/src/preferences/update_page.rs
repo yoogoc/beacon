@@ -31,14 +31,14 @@ fn update_actions(updater: &Updater) -> AnyElement {
             .small()
             .outline()
             .icon(IconName::RefreshCw)
-            .label("Check for updates")
+            .label(crate::i18n::text("Check for updates"))
             .on_click(|_, _, cx| crate::updates::store(cx).update(cx, |view, cx| view.check(cx)))
     };
     let action = match &updater.status {
         Status::Checking | Status::Downloading { .. } => Button::new("cancel-update")
             .small()
             .outline()
-            .label("Cancel")
+            .label(crate::i18n::text("Cancel"))
             .on_click(|_, _, cx| crate::updates::store(cx).update(cx, |view, cx| view.cancel(cx))),
         Status::Available(release)
         | Status::Failed {
@@ -64,7 +64,7 @@ fn update_actions(updater: &Updater) -> AnyElement {
                     .small()
                     .primary()
                     .icon(IconName::Download)
-                    .label("Get update package")
+                    .label(crate::i18n::text("Get update package"))
                     .on_click(move |_, _, cx| cx.open_url(&url))
             }
         }
@@ -72,14 +72,14 @@ fn update_actions(updater: &Updater) -> AnyElement {
             .small()
             .primary()
             .icon(IconName::RefreshCw)
-            .label("Restart & install")
+            .label(crate::i18n::text("Restart & install"))
             .on_click(|_, window, cx| {
                 crate::updates::store(cx).update(cx, |view, cx| view.restart(window, cx))
             }),
         Status::Installing => Button::new("install-update")
             .small()
             .outline()
-            .label("Installing…")
+            .label(crate::i18n::text("Installing…"))
             .disabled(true),
         _ => check(),
     };
@@ -100,8 +100,8 @@ fn update_actions(updater: &Updater) -> AnyElement {
                 actions.child(
                     check()
                         .label("")
-                        .accessibility_label("Check for updates")
-                        .tooltip("Check for updates"),
+                        .accessibility_label(crate::i18n::text("Check for updates"))
+                        .tooltip(crate::i18n::text("Check for updates")),
                 )
             },
         )
@@ -132,7 +132,7 @@ fn preference_row(
                 .child(
                     div()
                         .font_weight(FontWeight::MEDIUM)
-                        .child(label.to_owned()),
+                        .child(crate::i18n::text(label)),
                 )
                 .child(hint(description, cx)),
         )
@@ -164,7 +164,11 @@ impl PreferencesView {
                 if installed {
                     "Update installed successfully.".into()
                 } else {
-                    format!("Find the latest release on the {channel} channel.")
+                    crate::i18n::message(
+                        "updates.channel_latest",
+                        &[("channel", crate::i18n::text(channel).to_string())],
+                    )
+                    .to_string()
                 },
                 if installed {
                     IconName::CircleCheck
@@ -190,7 +194,11 @@ impl PreferencesView {
                 None,
             ),
             Status::Available(release) => (
-                format!("Beacon {} is available", release.version),
+                crate::i18n::message(
+                    "updates.available",
+                    &[("version", release.version.to_string())],
+                )
+                .to_string(),
                 format!(
                     "{:.1} MB · {channel} channel",
                     release.asset.size as f64 / 1_000_000.
@@ -199,17 +207,22 @@ impl PreferencesView {
                 Some(release),
             ),
             Status::Downloading { release, .. } => (
-                format!("Downloading Beacon {}", release.version),
+                crate::i18n::message(
+                    "updates.downloading",
+                    &[("version", release.version.to_string())],
+                )
+                .to_string(),
                 "You can keep using Beacon.".into(),
                 IconName::Download,
                 Some(release),
             ),
             Status::Ready(download) => (
                 "Ready to install".into(),
-                format!(
-                    "Beacon {} is verified and ready to install after restart.",
-                    download.release.version
-                ),
+                crate::i18n::message(
+                    "updates.verified",
+                    &[("version", download.release.version.to_string())],
+                )
+                .to_string(),
                 IconName::CircleCheck,
                 Some(&download.release),
             ),
@@ -280,18 +293,19 @@ impl PreferencesView {
                     .flex_1()
                     .min_w_0()
                     .gap_1()
-                    .child(
-                        div()
-                            .font_weight(FontWeight::MEDIUM)
-                            .child(crate::copyable_text::copyable_text("update-status", title)),
-                    )
+                    .child(div().font_weight(FontWeight::MEDIUM).child(
+                        crate::copyable_text::copyable_text(
+                            "update-status",
+                            crate::i18n::text(title),
+                        ),
+                    ))
                     .child(
                         div()
                             .text_xs()
                             .text_color(cx.theme().muted_foreground)
                             .child(crate::copyable_text::copyable_text(
                                 "update-status-description",
-                                description,
+                                crate::i18n::text(description),
                             )),
                     ),
             )
@@ -338,7 +352,7 @@ impl PreferencesView {
                         div()
                             .text_xs()
                             .text_color(cx.theme().muted_foreground)
-                            .child("Installed version"),
+                            .child(crate::i18n::text("Installed version")),
                     ),
             )
             .child(
@@ -377,7 +391,7 @@ impl PreferencesView {
                             .xsmall()
                             .w_full()
                             .value(percent)
-                            .accessibility_label("Downloading update"),
+                            .accessibility_label(crate::i18n::text("Downloading update")),
                     ),
             );
         }
@@ -438,7 +452,7 @@ impl PreferencesView {
                                 Button::new("update-release-page")
                                     .small()
                                     .ghost()
-                                    .label("View release")
+                                    .label(crate::i18n::text("View release"))
                                     .on_click(move |_, _, cx| cx.open_url(&url)),
                             ),
                     )
@@ -504,7 +518,7 @@ impl PreferencesView {
                             cx.theme().muted_foreground
                         })
                         .focus_visible(|style| style.border_color(cx.theme().ring))
-                        .child(label)
+                        .child(crate::i18n::text(label))
                         .on_click(cx.listener(move |view, _, window, cx| {
                             view.updates.channel = channel;
                             view.update_notes_expanded = false;
@@ -536,10 +550,10 @@ impl PreferencesView {
                 .child(v_flex().w_full().border_1().border_color(cx.theme().border).rounded_lg().overflow_hidden()
                     .child(preference_row("Release channel", if self.updates.channel == Channel::Stable { "Recommended for everyday use." } else { "Includes development releases; never downgrades." }, channel_control, false, cx))
                     .child(preference_row("Check automatically", "At startup, then every hour.",
-                        Switch::new("auto-check-updates").accessibility_label("Automatically check for updates").checked(self.updates.auto_check)
+                        Switch::new("auto-check-updates").accessibility_label(crate::i18n::text("Automatically check for updates")).checked(self.updates.auto_check)
                             .on_click(cx.listener(|view, checked, window, cx| { view.updates.auto_check = *checked; view.save_updates(window, cx); })), false, cx))
                     .child(preference_row("Download automatically", "Ask before restarting to install.",
-                        Switch::new("auto-download-updates").accessibility_label("Automatically download updates").checked(self.updates.auto_download).disabled(!can_install)
+                        Switch::new("auto-download-updates").accessibility_label(crate::i18n::text("Automatically download updates")).checked(self.updates.auto_download).disabled(!can_install)
                             .on_click(cx.listener(|view, checked, window, cx| { view.updates.auto_download = *checked; view.save_updates(window, cx); })), true, cx)))
                 .child(h_flex().items_start().gap_2().text_color(cx.theme().muted_foreground)
                     .child(Icon::new(IconName::Network).size_4().flex_shrink_0())

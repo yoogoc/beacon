@@ -343,7 +343,7 @@ impl OverviewView {
                                     .small()
                                     .ghost()
                                     .icon(IconName::RefreshCw)
-                                    .tooltip("Refresh overview")
+                                    .tooltip(crate::i18n::text("Refresh overview"))
                                     .disabled(self.loading)
                                     .on_click(
                                         cx.listener(|view, _, window, cx| view.refresh(window, cx)),
@@ -574,18 +574,21 @@ impl OverviewView {
                 .justify_between()
                 .items_center()
                 .child(
-                    h_flex().gap_2().child("Warning events").child(
-                        div()
-                            .text_xs()
-                            .text_color(cx.theme().muted_foreground)
-                            .child("Last 1h"),
-                    ),
+                    h_flex()
+                        .gap_2()
+                        .child(crate::i18n::text("Warning events"))
+                        .child(
+                            div()
+                                .text_xs()
+                                .text_color(cx.theme().muted_foreground)
+                                .child(crate::i18n::text("Last 1h")),
+                        ),
                 )
                 .child(
                     Button::new("overview-all-events")
                         .xsmall()
                         .ghost()
-                        .label("View events")
+                        .label(crate::i18n::text("View events"))
                         .on_click(
                             cx.listener(|view, _, _, cx| view.navigate("", "Event", None, cx)),
                         ),

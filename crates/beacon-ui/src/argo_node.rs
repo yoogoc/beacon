@@ -1150,7 +1150,7 @@ impl Render for ArgoNodeView {
                             Button::new("view-subgraph")
                                 .small()
                                 .outline()
-                                .label("View child graph")
+                                .label(crate::i18n::text("View child graph"))
                                 .on_click(cx.listener(|view, _, _, cx| {
                                     cx.emit(SubgraphRequested(view.node.id.clone()));
                                 })),

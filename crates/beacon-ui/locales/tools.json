@@ -1,0 +1,103 @@
+{
+  "_version": 2,
+  "tools.review_save": {
+    "en": "Review & save",
+    "zh-CN": "审阅并保存"
+  },
+  "tools.include_server_metadata": {
+    "en": "Include server metadata",
+    "zh-CN": "包含服务端元数据"
+  },
+  "tools.additional_container_fields": {
+    "en": "Additional container fields",
+    "zh-CN": "其他容器字段"
+  },
+  "tools.show_secret_values": {
+    "en": "Show Secret values",
+    "zh-CN": "显示 Secret 值"
+  },
+  "tools.add_this_exact_field_value_to_the_filter": {
+    "en": "Add this exact field value to the filter",
+    "zh-CN": "将此字段值加入筛选"
+  },
+  "tools.log_time_range": {
+    "en": "Log time range",
+    "zh-CN": "日志时间范围"
+  },
+  "tools.raw_log_unchanged": {
+    "en": "Raw log · unchanged",
+    "zh-CN": "原始日志 · 未修改"
+  },
+  "tools.from_server_time": {
+    "en": "From · server time",
+    "zh-CN": "开始时间 · 服务端时间"
+  },
+  "tools.until_optional_snapshot": {
+    "en": "Until · optional, snapshot",
+    "zh-CN": "结束时间 · 可选，快照"
+  },
+  "tools.view_child_graph": {
+    "en": "View child graph",
+    "zh-CN": "查看子图"
+  },
+  "tools.download_this_file_to_open_it_locally_its_original_bytes_are_preserved": {
+    "en": "Download this file to open it locally. Its original bytes are preserved.",
+    "zh-CN": "下载后在本地打开此文件，原始字节保持不变。"
+  },
+  "tools.export_matching_retained_lines_as_raw_text_includes_curr_81571816": {
+    "en": "Export matching retained lines as raw text; includes current level, search, fields and bookmark filters",
+    "zh-CN": "导出匹配且仍保留的原始日志，包含当前级别、搜索、字段和书签筛选条件"
+  },
+  "tools.fields_appear_as_json_or_logfmt_lines_arrive": {
+    "en": "Fields appear as JSON or logfmt lines arrive.",
+    "zh-CN": "收到 JSON 或 logfmt 日志后将显示可用字段。"
+  },
+  "tools.filter_exact_field_values_and_choose_displayed_fields": {
+    "en": "Filter exact field values and choose displayed fields",
+    "zh-CN": "按字段值精确筛选并选择显示字段"
+  },
+  "tools.no_structured_fields_in_this_line": {
+    "en": "No structured fields in this line.",
+    "zh-CN": "此日志行不包含结构化字段。"
+  },
+  "tools.regular_expression_search_case_insensitive": {
+    "en": "Regular expression search (case insensitive)",
+    "zh-CN": "正则表达式搜索（不区分大小写）"
+  },
+  "tools.saved_lines_survive_buffer_eviction_and_container_reloads_in_this_panel": {
+    "en": "Saved lines survive buffer eviction and container reloads in this panel",
+    "zh-CN": "此面板中已保存的日志行不会因缓冲区清理或容器重新加载而丢失"
+  },
+  "tools.secret_values_are_hidden_by_default_revealed_data_is_sho_a876bb91": {
+    "en": "Secret values are hidden by default. Revealed data is shown as stored, including base64 encoding.",
+    "zh-CN": "Secret 值默认隐藏。显示后按存储形式呈现，包括 Base64 编码。"
+  },
+  "tools.select_all_filtered_files": {
+    "en": "Select all filtered files",
+    "zh-CN": "选择所有符合筛选条件的文件"
+  },
+  "tools.showing_up_to_200_fields_search_to_find_other_fields": {
+    "en": "Showing up to 200 fields. Search to find other fields.",
+    "zh-CN": "最多显示 200 个字段，可通过搜索查找其他字段。"
+  },
+  "tools.these_resources_match_with_the_selected_comparison_options": {
+    "en": "These resources match with the selected comparison options.",
+    "zh-CN": "按所选对比选项，这些资源内容一致。"
+  },
+  "tools.exact_fields_status_503_service_api_server": {
+    "en": "Exact fields: status=503 service=\"api server\"",
+    "zh-CN": "精确字段：status=503 service=\"api server\""
+  },
+  "tools.find_a_field": {
+    "en": "Find a field",
+    "zh-CN": "查找字段"
+  },
+  "tools.from_rfc3339_e_g_2026_10_13t10_00_00z": {
+    "en": "From · RFC3339, e.g. 2026-10-13T10:00:00Z",
+    "zh-CN": "开始时间 · RFC3339，如 2026-10-13T10:00:00Z"
+  },
+  "tools.until_rfc3339_optional": {
+    "en": "Until · RFC3339 (optional)",
+    "zh-CN": "结束时间 · RFC3339（可选）"
+  }
+}

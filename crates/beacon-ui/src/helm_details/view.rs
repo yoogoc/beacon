@@ -74,7 +74,7 @@ impl HelmDetails {
                             .small()
                             .outline()
                             .icon(IconName::RefreshCw)
-                            .label("Refresh")
+                            .label(crate::i18n::text("Refresh"))
                             .disabled(self.loading)
                             .on_click(cx.listener(|view, _, window, cx| view.load(window, cx))),
                     ),
@@ -87,7 +87,7 @@ impl HelmDetails {
                         Button::new("helm-upgrade")
                             .small()
                             .outline()
-                            .label("Upgrade")
+                            .label(crate::i18n::text("Upgrade"))
                             .disabled(
                                 self.loading
                                     || self
@@ -121,7 +121,7 @@ impl HelmDetails {
                         Button::new("helm-rollback")
                             .small()
                             .outline()
-                            .label("Rollback to this revision")
+                            .label(crate::i18n::text("Rollback to this revision"))
                             .disabled(
                                 self.loading
                                     || self.selected().is_none()
@@ -152,7 +152,7 @@ impl HelmDetails {
                         Button::new("helm-uninstall")
                             .small()
                             .outline()
-                            .label("Uninstall")
+                            .label(crate::i18n::text("Uninstall"))
                             .disabled(
                                 self.loading
                                     || self
@@ -233,15 +233,15 @@ impl HelmDetails {
         h_flex().items_center().gap_2().flex_shrink_0().flex_wrap()
             .when(compare, |row| row
                 .child(muted("From", cx))
-                .child(Select::new(&self.from_picker).small().w(px(250.)).search_placeholder("Search revisions").accessibility_label("Original Helm revision"))
+                .child(Select::new(&self.from_picker).small().w(px(250.)).search_placeholder("Search revisions").accessibility_label(crate::i18n::text("Original Helm revision")))
                 .child(muted("To", cx))
-                .child(Select::new(&self.to_picker).small().w(px(250.)).search_placeholder("Search revisions").accessibility_label("Modified Helm revision")))
-            .when(!compare, |row| row.child(Select::new(&self.revision_picker).small().w(px(340.)).search_placeholder("Search revisions").accessibility_label("Helm revision")))
+                .child(Select::new(&self.to_picker).small().w(px(250.)).search_placeholder("Search revisions").accessibility_label(crate::i18n::text("Modified Helm revision"))))
+            .when(!compare, |row| row.child(Select::new(&self.revision_picker).small().w(px(340.)).search_placeholder("Search revisions").accessibility_label(crate::i18n::text("Helm revision"))))
             .child(div().flex_1())
             .child(Button::new("helm-reveal").small().outline().label(if self.reveal { "Hide values" } else { "Reveal values" })
-                .tooltip("Helm values can contain credentials. Secret data in manifests is also concealed until revealed.")
+                .tooltip(crate::i18n::text("Helm values can contain credentials. Secret data in manifests is also concealed until revealed."))
                 .on_click(cx.listener(|view, _, window, cx| { view.reveal = !view.reveal; view.prepare(window, cx); })))
-            .child(Button::new("helm-wrap").small().ghost().selected(self.wrap).label("Wrap")
+            .child(Button::new("helm-wrap").small().ghost().selected(self.wrap).label(crate::i18n::text("Wrap"))
                 .on_click(cx.listener(|view, _, window, cx| { view.wrap = !view.wrap; view.editor.update(cx, |state, cx| state.set_soft_wrap(view.wrap, window, cx)); cx.notify(); })))
             .into_any_element()
     }
@@ -307,11 +307,11 @@ impl HelmDetails {
             .child(div().id("helm-history").test_support().flex_1().overflow_y_scroll()
                 .child(v_flex().w_full()
                     .child(h_flex().px_3().py_2().gap_3().bg(cx.theme().muted).text_xs()
-                        .child(div().w(px(74.)).child("Revision"))
-                        .child(div().w(px(140.)).child("Status"))
-                        .child(div().flex_1().child("Chart version"))
-                        .child(div().w(px(110.)).child("App version"))
-                        .child(div().w(px(220.)).child("Deployed")))
+                        .child(div().w(px(74.)).child(crate::i18n::text("Revision")))
+                        .child(div().w(px(140.)).child(crate::i18n::text("Status")))
+                        .child(div().flex_1().child(crate::i18n::text("Chart version")))
+                        .child(div().w(px(110.)).child(crate::i18n::text("App version")))
+                        .child(div().w(px(220.)).child(crate::i18n::text("Deployed"))))
                     .children(history.revisions.iter().map(|record| {
                         let number = record.number;
                         let revision = record.revision.as_ref();

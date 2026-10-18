@@ -541,7 +541,9 @@ impl Permissions {
                     div()
                         .text_xs()
                         .text_color(cx.theme().warning)
-                        .child("Role is missing or could not be read. No rules are inferred."),
+                        .child(crate::i18n::text(
+                            "Role is missing or could not be read. No rules are inferred.",
+                        )),
                 )
             })
             .children(grant.rules.iter().enumerate().map(|(index, rule)| {
@@ -596,15 +598,15 @@ impl Render for Permissions {
             (Mode::Group, "Group"),
         ];
         v_flex().size_full().min_size_0().bg(cx.theme().background).text_color(cx.theme().foreground).on_action(|_:&crate::app::CloseTab,window,_|window.remove_window())
-            .child(TitleBar::new().child("Permissions"))
+            .child(TitleBar::new().child(crate::i18n::text("Permissions")))
             .child(v_flex().p_4().gap_2().border_b_1().border_color(cx.theme().border)
                 .child(h_flex().gap_1().children(modes.into_iter().enumerate().map(|(index,(mode,label))|Button::new(("permission-subject-mode",index)).ghost().small().label(label).selected(self.mode==mode).on_click(cx.listener(move|view,_,_,cx|{view.mode=mode;view.invalidate(cx);})))) )
                 .when(self.mode!=Mode::Current,|view|view.child(h_flex().gap_2().child(div().flex_1().child(Input::new(&self.name).small())).when(self.mode==Mode::ServiceAccount,|row|row.child(div().flex_1().child(Input::new(&self.sa_namespace).small())))))
                 .when(self.mode==Mode::User,|view|view.child(Input::new(&self.groups).small()))
-                .child(h_flex().gap_2().items_center().child(div().flex_1().child(Input::new(&self.namespace).small())).child(Button::new("permission-inspect").small().outline().label(if self.loading{"Loading…"}else{"Inspect bindings"}).disabled(self.loading).on_click(cx.listener(|view,_,window,cx|view.inspect(window,cx)))))
+                .child(h_flex().gap_2().items_center().child(div().flex_1().child(Input::new(&self.namespace).small())).child(Button::new("permission-inspect").small().outline().label(crate::i18n::text(if self.loading{"Loading…"}else{"Inspect bindings"})).disabled(self.loading).on_click(cx.listener(|view,_,window,cx|view.inspect(window,cx)))))
                 .child(h_flex().gap_2().child(div().w(px(140.)).child(Select::new(&self.verb).small())).child(div().flex_1().min_w_0().child(Select::new(&self.resource).small())))
                 .child(h_flex().gap_2().child(div().flex_1().child(Input::new(&self.subresource).small())).child(div().flex_1().child(Input::new(&self.object_name).small())).child(Button::new("permission-can-i").small().primary().label(if self.checking{"Checking…"}else{"Can I?"}).disabled(self.checking).on_click(cx.listener(|view,_,window,cx|view.check(window,cx)))))
-                .child(div().text_xs().text_color(cx.theme().muted_foreground).child("Can I uses the API server. Other subjects require SubjectAccessReview permission. User groups must be entered explicitly; Group queries test that group's grants.")))
+                .child(div().text_xs().text_color(cx.theme().muted_foreground).child(crate::i18n::text("Can I uses the API server. Other subjects require SubjectAccessReview permission. User groups must be entered explicitly; Group queries test that group's grants."))))
             .when_some(self.answer.as_ref(),|view,(allowed,message)|view.child(div().id("permission-answer").test_support().px_4().py_2().text_sm().text_color(if *allowed{cx.theme().success}else{cx.theme().warning}).child(copyable_text("permission-answer-text",message.clone()))))
             .when(!self.errors.is_empty(),|view|view.child(v_flex().id("permission-errors").max_h(px(140.)).overflow_y_scroll().children(self.errors.iter().enumerate().map(|(index,error)|div().id(("permission-error",index)).test_support().px_4().py_1().text_xs().text_color(cx.theme().warning).child(copyable_text(("permission-error-text",index),error.clone()))))))
             .child(v_flex().px_4().py_2().gap_1().child(div().text_xs().text_color(cx.theme().muted_foreground).child(if self.dirty{"Inspect bindings to refresh this subject and scope.".into()}else{format!("{} matching bindings · RBAC sources only; other authorizers may affect Can I",self.visible.len())})).child(Input::new(&self.search).small()))
@@ -625,7 +627,7 @@ pub(crate) fn open(session: Arc<ClusterSession>, subject: Subject, query: Query,
             ..TitleBar::window_options()
         };
         if let Err(error) = cx.open_window(options, |window, cx| {
-            window.set_window_title("Beacon — Permissions");
+            crate::i18n::window_title("Beacon — Permissions", window, cx);
             let view = cx.new(|cx| Permissions::new(session, subject, query, window, cx));
             cx.subscribe(&view, move |_, event: &OwnerRequested, cx| {
                 crate::app::navigate_resource(
@@ -684,7 +686,7 @@ pub(crate) fn error_link(
         Button::new(id)
             .small()
             .ghost()
-            .label("View permissions")
+            .label(crate::i18n::text("View permissions"))
             .on_click(move |_, _, cx| open(session.clone(), Subject::Current, query.clone(), cx))
             .into_any_element(),
     )

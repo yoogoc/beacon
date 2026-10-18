@@ -31,7 +31,7 @@ impl Render for DraggedColumn {
                     .size(px(14.))
                     .text_color(cx.theme().muted_foreground),
             )
-            .child(self.name.clone())
+            .child(crate::i18n::text(&self.name))
     }
 }
 
@@ -49,8 +49,8 @@ impl ListSettings {
             columns_open: false,
             presets_open: false,
             error: None,
-            name: cx.new(|cx| InputState::new(window, cx).placeholder("Filter name")),
-            search: cx.new(|cx| InputState::new(window, cx).placeholder("Search saved filters")),
+            name: cx.new(|cx| crate::i18n::input("Filter name", window, cx)),
+            search: cx.new(|cx| crate::i18n::input("Search saved filters", window, cx)),
         }
     }
     pub(super) fn close(&mut self) {
@@ -282,15 +282,17 @@ impl ClusterView {
                     .small()
                     .ghost()
                     .icon(Icon::new(gpui_kit::assets::IconName::Columns3))
-                    .accessibility_label("Columns")
-                    .tooltip("Choose visible columns"),
+                    .accessibility_label(crate::i18n::text("Columns"))
+                    .tooltip(crate::i18n::text("Choose visible columns")),
             )
             .content(move |_, _, cx| {
                 let reset = weak.clone();
                 let rows: Vec<_> = choices
                     .iter()
                     .enumerate()
-                    .filter(|(_, (_, name, _, _))| search.matches(name))
+                    .filter(|(_, (_, name, _, _))| {
+                        search.matches(name) || search.matches(&crate::i18n::text(name))
+                    })
                     .map(|(position, (id, name, visible, required))| {
                         let toggling = weak.clone();
                         let dropping = weak.clone();
@@ -340,7 +342,7 @@ impl ClusterView {
                                     .min_w_0()
                                     .h_full()
                                     .px_2()
-                                    .label(name.clone())
+                                    .label(crate::i18n::text(name))
                                     .checked(*visible)
                                     .disabled(*required)
                                     .on_click(move |_, _, cx| {
@@ -383,7 +385,7 @@ impl ClusterView {
                             .pt_1()
                             .text_xs()
                             .text_color(cx.theme().muted_foreground)
-                            .child("Visible columns"),
+                            .child(crate::i18n::text("Visible columns")),
                     )
                     .child(toolbar::picker_search("resource-column-search", &input, cx))
                     .child(
@@ -397,14 +399,16 @@ impl ClusterView {
                         div()
                             .text_xs()
                             .text_color(cx.theme().muted_foreground)
-                            .child("Drag handles to reorder. Changes save automatically."),
+                            .child(crate::i18n::text(
+                                "Drag handles to reorder. Changes save automatically.",
+                            )),
                     )
                     .child(
                         h_flex().child(
                             Button::new("reset-resource-columns")
                                 .small()
                                 .ghost()
-                                .label("Restore defaults")
+                                .label(crate::i18n::text("Restore defaults"))
                                 .on_click(move |_, _, cx| {
                                     let _ =
                                         reset.update(cx, |view, cx| view.reset_list_columns(cx));
@@ -440,12 +444,12 @@ impl ClusterView {
             })
             .trigger(Button::new("resource-saved-filters-trigger").small().ghost()
                 .icon(Icon::new(gpui_kit::assets::IconName::Bookmark))
-                .accessibility_label("Saved filters").tooltip("Save or apply resource filters"))
+                .accessibility_label(crate::i18n::text("Saved filters")).tooltip(crate::i18n::text("Save or apply resource filters")))
             .content(move |_, _, cx| {
                 let saving = weak.clone();
                 let empty = preferences.filters.is_empty();
                 let rows: Vec<_> = preferences.filters.iter()
-                    .filter(|(name, _)| search.matches(name))
+                    .filter(|(name, _)| search.matches(name) || search.matches(&crate::i18n::text(name)))
                     .map(|(name, preset)| {
                         let applying = weak.clone();
                         let removing = weak.clone();
@@ -483,7 +487,7 @@ impl ClusterView {
                                 .icon(Icon::new(Glyph::Trash).size(px(14.)))
                                 .text_color(cx.theme().muted_foreground)
                                 .accessibility_label(format!("Delete filter {name}"))
-                                .tooltip("Delete saved filter")
+                                .tooltip(crate::i18n::text("Delete saved filter"))
                                 .on_click(move |_, _, cx| {
                                     let _ = removing.update(cx, |view, cx| view.remove_filter_preset(&removed, cx));
                                 }))
@@ -497,7 +501,7 @@ impl ClusterView {
                     .text_color(cx.theme().foreground)
                     .child(h_flex().flex_shrink_0().items_center().gap_2().px_3().py_2()
                         .child(div().flex_1().text_sm().font_weight(FontWeight::SEMIBOLD)
-                            .child("Saved filters"))
+                            .child(crate::i18n::text("Saved filters")))
                         .when(!empty, |header| header.child(div()
                             .rounded_md().px_1p5().py_0p5().text_xs()
                             .bg(cx.theme().muted).text_color(cx.theme().muted_foreground)
@@ -505,8 +509,8 @@ impl ClusterView {
                         .child(Button::new("saved-filter-help").xsmall().ghost()
                             .icon(Icon::new(Glyph::Info).size(px(14.)))
                             .text_color(cx.theme().muted_foreground)
-                            .accessibility_label("About saved filters")
-                            .tooltip("Save namespaces, search, labels, resource filters and sorting for this cluster and resource type.")))
+                            .accessibility_label(crate::i18n::text("About saved filters"))
+                            .tooltip(crate::i18n::text("Save namespaces, search, labels, resource filters and sorting for this cluster and resource type."))))
                     .when(!empty, |menu| menu.child(div().px_3().pb_1()
                         .child(toolbar::picker_search("saved-filter-search", &input, cx))))
                     .when(rows.is_empty(), |menu| menu.child(v_flex()
@@ -519,9 +523,9 @@ impl ClusterView {
                                 .size(px(17.)).text_color(cx.theme().muted_foreground)))
                         .child(v_flex().items_center().gap_1()
                             .child(div().text_sm().font_weight(FontWeight::MEDIUM)
-                                .child(if empty { "No saved filters yet" } else { "No filters found" }))
+                                .child(crate::i18n::text(if empty { "No saved filters yet" } else { "No filters found" })))
                             .child(div().text_xs().text_color(cx.theme().muted_foreground)
-                                .child(if empty { "Save the current view below." } else { "Try a different name." })))))
+                                .child(crate::i18n::text(if empty { "Save the current view below." } else { "Try a different name." }))))))
                     .when(!rows.is_empty(), |menu| menu.child(div()
                         .id("saved-filter-options").min_h_0().max_h(px(232.))
                         .px_2().pb_2().overflow_y_scroll()
@@ -530,7 +534,7 @@ impl ClusterView {
                         .border_t_1().border_color(cx.theme().border)
                         .child(v_flex().gap_0p5()
                             .child(div().text_xs().font_weight(FontWeight::MEDIUM)
-                                .child("Save current view"))
+                                .child(crate::i18n::text("Save current view")))
                             .child(div().id("saved-filter-view-summary").test_support()
                                 .w_full().truncate().text_xs()
                                 .text_color(cx.theme().muted_foreground).child(summary.clone())))
@@ -542,8 +546,8 @@ impl ClusterView {
                             .child(div().flex_1().min_w_0()
                                 .child(Input::new(&name).id("saved-filter-name").small()))
                             .child(Button::new("save-resource-filter").small().primary()
-                                .label(if replacing { "Replace" } else { "Save" })
-                                .accessibility_label(if replacing { "Replace saved filter" } else { "Save current view" })
+                                .label(crate::i18n::text(if replacing { "Replace" } else { "Save" }))
+                                .accessibility_label(crate::i18n::text(if replacing { "Replace saved filter" } else { "Save current view" }))
                                 .disabled(!can_save)
                                 .on_click(move |_, window, cx| {
                                     let _ = saving.update(cx, |view, cx| view.save_filter_preset(window, cx));

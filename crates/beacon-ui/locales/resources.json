@@ -1,0 +1,51 @@
+{
+  "_version": 2,
+  "resources.capacity_allocatable": {
+    "en": "Capacity & allocatable",
+    "zh-CN": "容量与可分配量"
+  },
+  "resources.external_traffic_policy": {
+    "en": "External traffic policy",
+    "zh-CN": "外部流量策略"
+  },
+  "resources.ip_family_policy": {
+    "en": "IP family policy",
+    "zh-CN": "IP 地址族策略"
+  },
+  "resources.internal_traffic_policy": {
+    "en": "Internal traffic policy",
+    "zh-CN": "内部流量策略"
+  },
+  "resources.publish_not_ready_addresses": {
+    "en": "Publish not ready addresses",
+    "zh-CN": "发布未就绪地址"
+  },
+  "resources.replicas_rollout": {
+    "en": "Replicas & rollout",
+    "zh-CN": "副本与发布"
+  },
+  "resources.revision_history_limit": {
+    "en": "Revision history limit",
+    "zh-CN": "保留历史版本数量"
+  },
+  "resources.service_account_uid": {
+    "en": "Service account UID",
+    "zh-CN": "服务账户 UID"
+  },
+  "resources.selected": {
+    "en": "%{count} selected",
+    "zh-CN": "已选择 %{count} 项"
+  },
+  "resources.delete_many": {
+    "en": "Delete %{count} %{kind} resources?",
+    "zh-CN": "删除 %{count} 个 %{kind} 资源？"
+  },
+  "resources.delete_one": {
+    "en": "Delete %{kind}?",
+    "zh-CN": "删除 %{kind}？"
+  },
+  "resources.scale": {
+    "en": "Scale this %{kind}",
+    "zh-CN": "调整此 %{kind} 的副本数"
+  }
+}

@@ -1,0 +1,331 @@
+{
+  "_version": 2,
+  "settings.language_description": {
+    "en": "Changes apply immediately to all windows and menus.",
+    "zh-CN": "切换后立即应用于所有窗口和菜单。"
+  },
+  "settings.make_beacon_feel_at_home": {
+    "en": "Make Beacon feel at home.",
+    "zh-CN": "调整 Beacon 的外观与语言。"
+  },
+  "settings.choose_how_cluster_contexts_appear_in_the_sidebar": {
+    "en": "Choose how cluster contexts appear in the sidebar.",
+    "zh-CN": "设置侧边栏中集群上下文的显示方式。"
+  },
+  "settings.choose_a_base_make_it_yours_then_save_and_apply": {
+    "en": "Choose a base, make it yours, then save and apply.",
+    "zh-CN": "选择基础主题，调整后保存并应用。"
+  },
+  "settings.choose_how_beacon_connects_to_clusters_and_checks_for_updates": {
+    "en": "Choose how Beacon connects to clusters and checks for updates.",
+    "zh-CN": "设置集群连接和更新检查使用的代理。"
+  },
+  "settings.manage_your_version_and_update_preferences": {
+    "en": "Manage your version and update preferences.",
+    "zh-CN": "管理应用版本和更新偏好。"
+  },
+  "settings.manage_where_your_available_clusters_come_from": {
+    "en": "Manage where your available clusters come from.",
+    "zh-CN": "管理集群配置的来源。"
+  },
+  "settings.give_this_cluster_a_familiar_name_and_icon": {
+    "en": "Give this cluster a familiar name and icon.",
+    "zh-CN": "为集群设置别名和图标。"
+  },
+  "settings.configure_the_proxy_used_when_connecting_to_this_cluster": {
+    "en": "Configure the proxy used when connecting to this cluster.",
+    "zh-CN": "设置连接此集群时使用的代理。"
+  },
+  "settings.choose_where_pod_and_node_usage_metrics_come_from": {
+    "en": "Choose where pod and node usage metrics come from.",
+    "zh-CN": "选择 Pod 和节点使用量指标的来源。"
+  },
+  "settings.choose_which_fields_start_collapsed_when_opening_a_resource": {
+    "en": "Choose which fields start collapsed when opening a resource.",
+    "zh-CN": "设置打开资源时默认折叠的字段。"
+  },
+  "settings.monospace_font_family": {
+    "en": "Monospace font family",
+    "zh-CN": "等宽字体"
+  },
+  "settings.monospace_font_size": {
+    "en": "Monospace font size",
+    "zh-CN": "等宽字号"
+  },
+  "settings.bearer_token_optional": {
+    "en": "Bearer token (optional)",
+    "zh-CN": "Bearer Token（可选）"
+  },
+  "settings.theme_changes_apply_across_beacon_windows_after_saving": {
+    "en": "Theme changes apply across Beacon windows after saving.",
+    "zh-CN": "保存后主题会应用于所有 Beacon 窗口。"
+  },
+  "settings.saved_custom_theme": {
+    "en": "Saved custom theme",
+    "zh-CN": "已保存的自定义主题"
+  },
+  "settings.stored_locally_on_this_device": {
+    "en": "Stored locally on this device.",
+    "zh-CN": "保存在此设备上。"
+  },
+  "settings.edit_custom_theme": {
+    "en": "Edit custom theme",
+    "zh-CN": "编辑自定义主题"
+  },
+  "settings.your_custom_colors": {
+    "en": "Your custom colors",
+    "zh-CN": "自定义颜色"
+  },
+  "settings.choose_an_installed_font_sizes_are_in_pixels_10_30": {
+    "en": "Choose an installed font. Sizes are in pixels (10–30).",
+    "zh-CN": "选择已安装的字体，字号单位为像素（10–30）。"
+  },
+  "settings.size_px": {
+    "en": "Size · px",
+    "zh-CN": "字号 · px"
+  },
+  "settings.use_base_color": {
+    "en": "Use base color",
+    "zh-CN": "使用基础颜色"
+  },
+  "settings.advanced_color_option": {
+    "en": "Advanced color option",
+    "zh-CN": "高级颜色选项"
+  },
+  "settings.other_settings_have_unsaved_changes": {
+    "en": "Other settings have unsaved changes",
+    "zh-CN": "其他设置有未保存的更改"
+  },
+  "settings.preview_only_apply_to_use_this_theme_across_all_windows": {
+    "en": "Preview only · Apply to use this theme across all windows",
+    "zh-CN": "仅预览 · 应用后将用于所有窗口"
+  },
+  "settings.changes_apply_across_all_windows_after_saving": {
+    "en": "Changes apply across all windows after saving",
+    "zh-CN": "保存后应用于所有窗口"
+  },
+  "settings.changes_apply_across_cluster_views_after_saving": {
+    "en": "Changes apply across cluster views after saving",
+    "zh-CN": "保存后应用于此集群的所有视图"
+  },
+  "settings.connection_changes_require_a_reconnect": {
+    "en": "Connection changes require a reconnect",
+    "zh-CN": "连接设置更改需要重新连接"
+  },
+  "settings.update_preferences_save_automatically": {
+    "en": "Update preferences save automatically",
+    "zh-CN": "更新偏好会自动保存"
+  },
+  "settings.source_changes_save_automatically_connections_stay_open": {
+    "en": "Source changes save automatically · Connections stay open",
+    "zh-CN": "来源更改会自动保存 · 保持现有连接"
+  },
+  "settings.folding_applies_the_next_time_a_resource_opens": {
+    "en": "Folding applies the next time a resource opens",
+    "zh-CN": "下次打开资源时应用折叠设置"
+  },
+  "settings.settings_stored_locally": {
+    "en": "Settings stored locally",
+    "zh-CN": "设置保存在本机"
+  },
+  "settings.check_for_updates": {
+    "en": "Check for updates",
+    "zh-CN": "检查更新"
+  },
+  "settings.collapsed_by_default": {
+    "en": "Collapsed by default",
+    "zh-CN": "默认折叠"
+  },
+  "settings.get_update_package": {
+    "en": "Get update package",
+    "zh-CN": "获取更新包"
+  },
+  "settings.automatically_check_for_updates": {
+    "en": "Automatically check for updates",
+    "zh-CN": "自动检查更新"
+  },
+  "settings.automatically_download_updates": {
+    "en": "Automatically download updates",
+    "zh-CN": "自动下载更新"
+  },
+  "settings.restart_install": {
+    "en": "Restart & install",
+    "zh-CN": "重启并安装"
+  },
+  "settings.checking_for_updates_action": {
+    "en": "Checking for updates…",
+    "zh-CN": "正在检查更新…"
+  },
+  "settings.update_installed_successfully": {
+    "en": "Update installed successfully.",
+    "zh-CN": "更新安装成功。"
+  },
+  "settings.custom_svg_icon": {
+    "en": "Custom SVG icon",
+    "zh-CN": "自定义 SVG 图标"
+  },
+  "settings.bearer_token_optional_5d830c": {
+    "en": "Bearer token · optional",
+    "zh-CN": "Bearer Token · 可选"
+  },
+  "settings.pod_cpu_query": {
+    "en": "Pod CPU query",
+    "zh-CN": "Pod CPU 查询"
+  },
+  "settings.pod_memory_query": {
+    "en": "Pod memory query",
+    "zh-CN": "Pod 内存查询"
+  },
+  "settings.node_cpu_query": {
+    "en": "Node CPU query",
+    "zh-CN": "节点 CPU 查询"
+  },
+  "settings.node_memory_query": {
+    "en": "Node memory query",
+    "zh-CN": "节点内存查询"
+  },
+  "settings.container_cpu_query": {
+    "en": "Container CPU query",
+    "zh-CN": "容器 CPU 查询"
+  },
+  "settings.container_memory_query": {
+    "en": "Container memory query",
+    "zh-CN": "容器内存查询"
+  },
+  "settings.proxy_url_http_https_socks5": {
+    "en": "Proxy URL (http / https / socks5)",
+    "zh-CN": "代理地址（http / https / socks5）"
+  },
+  "settings.save_reconnect": {
+    "en": "Save & reconnect",
+    "zh-CN": "保存并重新连接"
+  },
+  "settings.a_url_with_a_base_path_is_supported": {
+    "en": "A URL with a base path is supported.",
+    "zh-CN": "支持包含基础路径的地址。"
+  },
+  "settings.all_color_options_search_by_component_such_as_button_or_sidebar": {
+    "en": "All color options. Search by component, such as button or sidebar.",
+    "zh-CN": "全部颜色选项，可按 button、sidebar 等组件名称搜索。"
+  },
+  "settings.beacon_theme_preview": {
+    "en": "Beacon · Theme preview",
+    "zh-CN": "Beacon · 主题预览"
+  },
+  "settings.beacon_settings": {
+    "en": "Beacon — Settings",
+    "zh-CN": "Beacon — 设置"
+  },
+  "settings.choose_how_you_distinguish_contexts_from_different_kubeconfig_sources": {
+    "en": "Choose how you distinguish contexts from different kubeconfig sources.",
+    "zh-CN": "设置如何区分来自不同 Kubeconfig 来源的上下文。"
+  },
+  "settings.click_a_color_to_choose_from_the_palette_or_enter_a_hex__82824c83": {
+    "en": "Click a color to choose from the palette or enter a hex value. The preview updates immediately.",
+    "zh-CN": "点击颜色选择色板或输入十六进制颜色，预览会立即更新。"
+  },
+  "settings.file_names_distinguish_matching_contexts_from_the_same_f_67844d15": {
+    "en": "File names distinguish matching contexts from the same folder. Hover a context to see its full origin.",
+    "zh-CN": "文件名用于区分同一文件夹中的同名上下文，悬停可查看完整来源。"
+  },
+  "settings.hex_value_leave_empty_to_inherit": {
+    "en": "Hex value · Leave empty to inherit",
+    "zh-CN": "十六进制颜色 · 留空以继承"
+  },
+  "settings.no_overrides_yet_all_colors_inherit_from_the_base_theme": {
+    "en": "No overrides yet. All colors inherit from the base theme.",
+    "zh-CN": "暂无自定义颜色，全部颜色继承自基础主题。"
+  },
+  "settings.queries_return_cpu_in_cores_and_memory_in_bytes_pod_resu_48b52160": {
+    "en": "Queries return CPU in cores and memory in bytes. Pod results require namespace/pod labels; node results require a node label; container results require namespace/pod/container labels. Add cluster selectors when Prometheus contains multiple clusters.",
+    "zh-CN": "查询应返回以核为单位的 CPU 和以字节为单位的内存。Pod 结果需要 namespace/pod 标签，节点结果需要 node 标签，容器结果需要 namespace/pod/container 标签。Prometheus 包含多个集群时请添加集群选择条件。"
+  },
+  "settings.socks5_cannot_carry_kubectl_s_spdy_shell_exec_fallback_u_08457f15": {
+    "en": "SOCKS5 cannot carry kubectl's SPDY Shell/Exec fallback. Use HTTP or HTTPS when that compatibility path is needed.",
+    "zh-CN": "SOCKS5 无法承载 kubectl 的 SPDY Shell/Exec 回退连接，需要此兼容方式时请使用 HTTP 或 HTTPS。"
+  },
+  "settings.source_indicators_appear_when_contexts_come_from_more_than_one_source": {
+    "en": "Source indicators appear when contexts come from more than one source.",
+    "zh-CN": "存在多个上下文来源时显示来源标识。"
+  },
+  "settings.this_installation_is_managed_externally_install_the_down_6f9d968b": {
+    "en": "This installation is managed externally. Install the downloaded package with your package manager. Automatic installation is available for macOS/Windows apps and Linux AppImage.",
+    "zh-CN": "此安装由外部工具管理，请使用包管理器安装下载的更新包。macOS、Windows 应用和 Linux AppImage 支持自动安装。"
+  },
+  "settings.use_dot_separated_paths_such_as_metadata_annotations_or__94cc3c72": {
+    "en": "Use dot-separated paths, such as metadata.annotations or spec.template.spec.containers. Paths below a list apply to every item.",
+    "zh-CN": "使用点分隔字段路径，如 metadata.annotations 或 spec.template.spec.containers；列表下的路径会应用于每个元素。"
+  },
+  "settings.used_in_the_sidebar_tabs_and_status_bar_leave_empty_to_u_fdf162dc": {
+    "en": "Used in the sidebar, tabs and status bar. Leave empty to use the kubeconfig name.",
+    "zh-CN": "用于侧边栏、标签页和状态栏。留空时使用 Kubeconfig 中的名称。"
+  },
+  "settings.uses_metrics_k8s_io_clusters_without_metrics_server_show_6ce671ba": {
+    "en": "Uses metrics.k8s.io. Clusters without metrics-server show no CPU or memory samples.",
+    "zh-CN": "使用 metrics.k8s.io，未安装 metrics-server 的集群无法显示 CPU 或内存采样。"
+  },
+  "settings.update_state_0": {
+    "en": "Update installed",
+    "zh-CN": "更新已安装"
+  },
+  "settings.update_state_1": {
+    "en": "Check for a new version",
+    "zh-CN": "检查新版本"
+  },
+  "settings.update_state_2": {
+    "en": "Looking for the latest release.",
+    "zh-CN": "正在查找最新版本。"
+  },
+  "settings.update_state_3": {
+    "en": "You're up to date",
+    "zh-CN": "当前已是最新版本"
+  },
+  "settings.update_state_4": {
+    "en": "You can keep using Beacon.",
+    "zh-CN": "下载期间可以继续使用 Beacon。"
+  },
+  "settings.update_state_5": {
+    "en": "Ready to install",
+    "zh-CN": "已准备好安装"
+  },
+  "settings.update_state_6": {
+    "en": "Preparing update and restart…",
+    "zh-CN": "正在准备更新并重启…"
+  },
+  "settings.update_state_7": {
+    "en": "Keep Beacon open while the installer is prepared.",
+    "zh-CN": "准备安装程序期间请保持 Beacon 运行。"
+  },
+  "settings.update_state_8": {
+    "en": "Couldn't download the update",
+    "zh-CN": "无法下载更新"
+  },
+  "settings.update_state_9": {
+    "en": "Couldn't check for updates",
+    "zh-CN": "无法检查更新"
+  },
+  "settings.update_state_10": {
+    "en": "Try downloading the update again.",
+    "zh-CN": "请重新尝试下载更新。"
+  },
+  "settings.update_state_11": {
+    "en": "Check your network connection and try again.",
+    "zh-CN": "请检查网络连接后重试。"
+  },
+  "updates.available": {
+    "en": "Beacon %{version} is available",
+    "zh-CN": "Beacon %{version} 已可用"
+  },
+  "updates.downloading": {
+    "en": "Downloading Beacon %{version}",
+    "zh-CN": "正在下载 Beacon %{version}"
+  },
+  "updates.verified": {
+    "en": "Beacon %{version} is verified and ready to install after restart.",
+    "zh-CN": "Beacon %{version} 已通过验证，可在重启后安装。"
+  },
+  "updates.channel_latest": {
+    "en": "Find the latest release on the %{channel} channel.",
+    "zh-CN": "查找%{channel}渠道的最新版本。"
+  }
+}

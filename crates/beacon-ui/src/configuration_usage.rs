@@ -86,9 +86,7 @@ impl ConfigurationUsageView {
             })
             .collect();
         let search = cx.new(|cx| {
-            InputState::new(window, cx)
-                .placeholder("Search resources, keys or paths")
-                .clean_on_escape()
+            crate::i18n::input("Search resources, keys or paths", window, cx).clean_on_escape()
         });
         let subscription = cx.subscribe(&search, |view, _, event: &InputEvent, cx| {
             if matches!(event, InputEvent::Change) {
@@ -279,7 +277,7 @@ impl ConfigurationUsageView {
                             div()
                                 .text_xs()
                                 .text_color(cx.theme().warning)
-                                .child("Not checked"),
+                                .child(crate::i18n::text("Not checked")),
                         )
                     }),
             )
@@ -458,7 +456,7 @@ impl Render for ConfigurationUsageView {
             .child(v_flex().p_3().gap_2().flex_shrink_0().border_b_1().border_color(cx.theme().border)
                 .child(div().text_xs().text_color(cx.theme().muted_foreground).child(if by {"Workloads and Pods that reference this configuration. Values are not shown."} else {"Configuration referenced by this resource; missing resources and keys are shown below."}))
                 .child(h_flex().gap_2().items_center().child(div().flex_1().min_w_0().child(Input::new(&self.search).small()))
-                    .child(Button::new("refresh-configuration-usage").ghost().small().label("Refresh").disabled(loading).on_click(cx.listener(|view,_,window,cx|view.load(window,cx))))))
+                    .child(Button::new("refresh-configuration-usage").ghost().small().label(crate::i18n::text("Refresh")).disabled(loading).on_click(cx.listener(|view,_,window,cx|view.load(window,cx))))))
             .children(self.sources.iter().enumerate().filter_map(|(index,source)| source.error.as_ref().map(|error|div().id(("configuration-usage-error-row",index)).test_support().px_3().py_2().text_xs().text_color(cx.theme().warning).child(copyable_text(("configuration-usage-error",index),error.clone())))))
             .child(div().px_3().py_2().text_xs().text_color(cx.theme().muted_foreground).child(if loading {"Checking references…".into()}else{format!("{} resources · {} references",self.rows.len(),self.rows.iter().map(|row|row.references.len()).sum::<usize>())}))
             .child(div().flex_1().min_size_0().when(self.rows.is_empty(),|view| view.child(div().id("configuration-usage-empty").test_support().p_3().text_sm().text_color(cx.theme().muted_foreground).child(if loading {"Loading usage…"} else if self.sources.iter().any(|source|source.error.is_some()) {"Usage could not be fully checked. Review the errors above."} else if self.search.read(cx).value().is_empty() {"No configuration references found."}else{"No references match the search."})))
@@ -477,7 +475,9 @@ impl Render for UsageWindow {
             .bg(cx.theme().background)
             .text_color(cx.theme().foreground)
             .on_action(|_: &crate::app::CloseTab, window, _| window.remove_window())
-            .child(TitleBar::new().child(div().text_sm().child(self.title.clone())))
+            .child(
+                TitleBar::new().child(div().text_sm().child(crate::i18n::title_text(&self.title))),
+            )
             .child(div().flex_1().min_size_0().child(self.view.clone()))
     }
 }
@@ -508,7 +508,7 @@ pub(crate) fn open(
         move |window, cx| {
             #[cfg(all(test, feature = "ui-tests"))]
             window.set_view_retention(false);
-            window.set_window_title(&title);
+            crate::i18n::window_title(&title, window, cx);
             let view = cx.new(|cx| ConfigurationUsageView::new(session, kind, object, window, cx));
             cx.new(|_| UsageWindow { view, title })
         },

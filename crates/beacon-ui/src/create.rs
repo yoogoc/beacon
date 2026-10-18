@@ -343,8 +343,8 @@ impl Render for CreateView {
                         Button::new("format-create-yaml")
                             .small()
                             .ghost()
-                            .label("Format")
-                            .tooltip("Format YAML; comments are not kept")
+                            .label(crate::i18n::text("Format"))
+                            .tooltip(crate::i18n::text("Format YAML; comments are not kept"))
                             .disabled(running)
                             .on_click(cx.listener(|view, _, window, cx| view.format(window, cx))),
                     )
@@ -355,7 +355,7 @@ impl Render for CreateView {
                                 Button::new("cancel-create-resource")
                                     .small()
                                     .ghost()
-                                    .label("Cancel")
+                                    .label(crate::i18n::text("Cancel"))
                                     .disabled(running)
                                     .on_click(
                                         cx.listener(|_, _, _, cx| cx.emit(CreateEvent::Cancelled)),
@@ -364,8 +364,10 @@ impl Render for CreateView {
                             .child(
                                 Button::new("validate-create-resource")
                                     .small()
-                                    .label("Validate")
-                                    .tooltip("Ask the API server to validate without saving")
+                                    .label(crate::i18n::text("Validate"))
+                                    .tooltip(crate::i18n::text(
+                                        "Ask the API server to validate without saving",
+                                    ))
                                     .disabled(running)
                                     .on_click(cx.listener(|view, _, window, cx| {
                                         view.submit(true, window, cx)

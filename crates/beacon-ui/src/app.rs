@@ -80,16 +80,62 @@ fn application_menu() -> impl IntoElement {
         Button::new("view-menu")
             .ghost()
             .small()
-            .label("Menu")
+            .label(crate::i18n::text("Menu"))
             .dropdown_menu(|menu, _, _| {
-                menu.menu("Settings…", Box::new(OpenSettings))
-                    .menu("Search & favorites…", Box::new(GlobalSearch))
-                    .menu("Kubeconfig sources…", Box::new(OpenKubeconfigSources))
-                    .menu("Check for updates…", Box::new(CheckForUpdates))
-                    .menu("App logs", Box::new(OpenAppLogs))
-                    .menu("Keyboard shortcuts", Box::new(OpenShortcuts))
+                menu.menu(crate::i18n::text("Settings…"), Box::new(OpenSettings))
+                    .menu(
+                        crate::i18n::text("Search & favorites…"),
+                        Box::new(GlobalSearch),
+                    )
+                    .menu(
+                        crate::i18n::text("Kubeconfig sources…"),
+                        Box::new(OpenKubeconfigSources),
+                    )
+                    .menu(
+                        crate::i18n::text("Check for updates…"),
+                        Box::new(CheckForUpdates),
+                    )
+                    .menu(crate::i18n::text("App logs"), Box::new(OpenAppLogs))
+                    .menu(
+                        crate::i18n::text("Keyboard shortcuts"),
+                        Box::new(OpenShortcuts),
+                    )
             }),
     )
+}
+
+pub(crate) fn rebuild_menus(cx: &mut App) {
+    let _ = &cx;
+    #[cfg(target_os = "macos")]
+    cx.set_menus([
+        Menu::new("Beacon").items([
+            MenuItem::action(crate::i18n::text("Settings…"), OpenSettings),
+            MenuItem::action(
+                crate::i18n::text("Kubeconfig sources…"),
+                OpenKubeconfigSources,
+            ),
+            MenuItem::action(crate::i18n::text("Check for updates…"), CheckForUpdates),
+            MenuItem::separator(),
+            MenuItem::os_submenu(crate::i18n::text("Services"), SystemMenuType::Services),
+            MenuItem::separator(),
+            MenuItem::action(crate::i18n::text("Quit Beacon"), Quit),
+        ]),
+        Menu::new(crate::i18n::text("File"))
+            .items([MenuItem::action(crate::i18n::text("Close"), CloseTab)]),
+        Menu::new(crate::i18n::text("View")).items([
+            MenuItem::action(crate::i18n::text("Search & favorites…"), GlobalSearch),
+            MenuItem::action(crate::i18n::text("Split right"), SplitRight),
+            MenuItem::action(crate::i18n::text("Split down"), SplitDown),
+            MenuItem::action(crate::i18n::text("Move tab to new window"), DetachTab),
+            MenuItem::action(crate::i18n::text("Move tab to main window"), MergeToMain),
+            MenuItem::separator(),
+            MenuItem::action(crate::i18n::text("App logs"), OpenAppLogs),
+        ]),
+        Menu::new(crate::i18n::text("Help")).items([MenuItem::action(
+            crate::i18n::text("Keyboard shortcuts"),
+            OpenShortcuts,
+        )]),
+    ]);
 }
 
 /// Installs the keys everything else is reachable from.
@@ -116,29 +162,7 @@ pub fn init(log_directory: PathBuf, cx: &mut App) {
     cx.on_action(|_: &OpenAppLogs, cx| app_logs::open(cx));
     cx.on_action(|_: &Quit, cx| cx.defer(request_app_quit));
 
-    #[cfg(target_os = "macos")]
-    cx.set_menus([
-        Menu::new("Beacon").items([
-            MenuItem::action("Settings…", OpenSettings),
-            MenuItem::action("Kubeconfig sources…", OpenKubeconfigSources),
-            MenuItem::action("Check for updates…", CheckForUpdates),
-            MenuItem::separator(),
-            MenuItem::os_submenu("Services", SystemMenuType::Services),
-            MenuItem::separator(),
-            MenuItem::action("Quit Beacon", Quit),
-        ]),
-        Menu::new("File").items([MenuItem::action("Close", CloseTab)]),
-        Menu::new("View").items([
-            MenuItem::action("Search & favorites…", GlobalSearch),
-            MenuItem::action("Split right", SplitRight),
-            MenuItem::action("Split down", SplitDown),
-            MenuItem::action("Move tab to new window", DetachTab),
-            MenuItem::action("Move tab to main window", MergeToMain),
-            MenuItem::separator(),
-            MenuItem::action("App logs", OpenAppLogs),
-        ]),
-        Menu::new("Help").items([MenuItem::action("Keyboard shortcuts", OpenShortcuts)]),
-    ]);
+    rebuild_menus(cx);
     let modifier = if cfg!(target_os = "macos") {
         "cmd"
     } else {
@@ -418,6 +442,7 @@ pub struct BeaconApp {
 
 impl BeaconApp {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
+        crate::i18n::follow_system(window, cx);
         Self::new_workspace(true, window, cx)
     }
 
@@ -1316,7 +1341,7 @@ impl BeaconApp {
                     ..TitleBar::window_options()
                 },
                 |window, cx| {
-                    window.set_window_title("Beacon — Detached workspace");
+                    crate::i18n::window_title("Beacon — Detached workspace", window, cx);
                     let app = cx.new(|cx| Self::new_workspace(false, window, cx));
                     destination = Some(app.clone());
                     cx.new(|cx| Root::new(app, window, cx))
@@ -1598,7 +1623,7 @@ impl BeaconApp {
         window.open_alert_dialog(cx, move |dialog, _, _| {
             let closed = view.clone();
             dialog
-                .title("Quit Beacon?")
+                .title(crate::i18n::text("Quit Beacon?"))
                 .width(px(440.))
                 .button_props(
                     DialogButtonProps::default()
@@ -1617,7 +1642,7 @@ impl BeaconApp {
                     });
                 })
                 .child(
-                    div().id("quit-confirmation").test_support().text_sm().child("All Beacon windows will close. Active cluster connections, shells and port forwards will stop. Unsaved edits will be discarded."),
+                    div().id("quit-confirmation").test_support().text_sm().child(crate::i18n::text("All Beacon windows will close. Active cluster connections, shells and port forwards will stop. Unsaved edits will be discarded.")),
                 )
         });
         cx.notify();
@@ -1926,7 +1951,7 @@ impl BeaconApp {
                         .occlude()
                         .ghost()
                         .small()
-                        .label(if is_dark { "Light" } else { "Dark" })
+                        .label(crate::i18n::text(if is_dark { "Light" } else { "Dark" }))
                         .on_click(|_, window, cx| toggle_mode(window, cx)),
                 ),
         )
@@ -2195,12 +2220,14 @@ impl BeaconApp {
                             }),
                         )
                         .item(
-                            PopupMenuItem::new("Cluster settings…").on_click(move |_, _, cx| {
-                                crate::preferences::cluster(settings_target.clone(), cx)
-                            }),
+                            PopupMenuItem::new(crate::i18n::text("Cluster settings…")).on_click(
+                                move |_, _, cx| {
+                                    crate::preferences::cluster(settings_target.clone(), cx)
+                                },
+                            ),
                         )
                         .item(
-                            PopupMenuItem::new("Permissions…")
+                            PopupMenuItem::new(crate::i18n::text("Permissions…"))
                                 .disabled(!connected)
                                 .on_click(move |_, _, cx| {
                                     let _ = permissions_connections.update(cx, |app, cx| {
@@ -2227,7 +2254,7 @@ impl BeaconApp {
                         )
                         .separator()
                         .item(
-                            PopupMenuItem::new("Disconnect")
+                            PopupMenuItem::new(crate::i18n::text("Disconnect"))
                                 .disabled(!can_disconnect)
                                 .on_click(move |_, window, cx| {
                                     let _ = view
@@ -2235,11 +2262,13 @@ impl BeaconApp {
                                 }),
                         )
                         .item(
-                            PopupMenuItem::new("Reconnect").on_click(move |_, window, cx| {
-                                let _ = reconnect_view.update(cx, |app, cx| {
-                                    app.reconnect(reconnect_target.clone(), window, cx)
-                                });
-                            }),
+                            PopupMenuItem::new(crate::i18n::text("Reconnect")).on_click(
+                                move |_, window, cx| {
+                                    let _ = reconnect_view.update(cx, |app, cx| {
+                                        app.reconnect(reconnect_target.clone(), window, cx)
+                                    });
+                                },
+                            ),
                         )
                     })
                     .on_click(cx.listener(move |view, _, window, cx| {
@@ -2459,7 +2488,12 @@ impl BeaconApp {
 
     fn tab_title(&self, tab: &Tab, cx: &App) -> SharedString {
         if let Some(pod) = &tab.files_object {
-            return format!("Files · {}", pod.metadata.name.as_deref().unwrap_or("Pod")).into();
+            return format!(
+                "{} · {}",
+                crate::i18n::text("Files"),
+                pod.metadata.name.as_deref().unwrap_or("Pod")
+            )
+            .into();
         }
         match &tab.state {
             TabState::Connected(view) => view.read(cx).title(),
@@ -2474,8 +2508,8 @@ impl BeaconApp {
                     tab.initial_mode.label().into()
                 }
             }
-            TabState::Connecting => "connecting".into(),
-            TabState::Failed(_) => "unreachable".into(),
+            TabState::Connecting => crate::i18n::text("Connecting…"),
+            TabState::Failed(_) => crate::i18n::text("Unavailable"),
         }
     }
 
@@ -2549,7 +2583,7 @@ impl BeaconApp {
                             .xsmall()
                             .ghost()
                             .label("×")
-                            .tooltip("Close tab")
+                            .tooltip(crate::i18n::text("Close tab"))
                             .on_click(cx.listener(move |view, _, window, cx| {
                                 if let Some(index) = view.index_of(id) {
                                     view.close(index, window, cx);
@@ -2566,44 +2600,53 @@ impl BeaconApp {
                         let detach = menu_view.clone();
                         let merge = menu_view.clone();
                         let close = menu_view.clone();
-                        menu.item(PopupMenuItem::new("Split right — side by side").on_click(
-                            move |_, window, cx| {
-                                let _ = right.update(cx, |app, cx| {
-                                    app.split_tab(id, Direction::Right, window, cx)
-                                });
-                            },
-                        ))
-                        .item(PopupMenuItem::new("Split down — stacked").on_click(
-                            move |_, window, cx| {
-                                let _ = down.update(cx, |app, cx| {
-                                    app.split_tab(id, Direction::Down, window, cx)
-                                });
-                            },
-                        ))
-                        .separator()
-                        .item(PopupMenuItem::new("Move to new window").on_click(
-                            move |_, window, cx| {
-                                let _ = detach
-                                    .update(cx, |app, cx| app.detach_tab(id, None, window, cx));
-                            },
-                        ))
-                        .when(detached, |menu| {
-                            menu.item(PopupMenuItem::new("Move to main window").on_click(
+                        menu.item(
+                            PopupMenuItem::new(crate::i18n::text("Split right — side by side"))
+                                .on_click(move |_, window, cx| {
+                                    let _ = right.update(cx, |app, cx| {
+                                        app.split_tab(id, Direction::Right, window, cx)
+                                    });
+                                }),
+                        )
+                        .item(
+                            PopupMenuItem::new(crate::i18n::text("Split down — stacked")).on_click(
                                 move |_, window, cx| {
-                                    let _ = merge
-                                        .update(cx, |app, cx| app.merge_to_main(id, window, cx));
+                                    let _ = down.update(cx, |app, cx| {
+                                        app.split_tab(id, Direction::Down, window, cx)
+                                    });
                                 },
-                            ))
+                            ),
+                        )
+                        .separator()
+                        .item(
+                            PopupMenuItem::new(crate::i18n::text("Move to new window")).on_click(
+                                move |_, window, cx| {
+                                    let _ = detach
+                                        .update(cx, |app, cx| app.detach_tab(id, None, window, cx));
+                                },
+                            ),
+                        )
+                        .when(detached, |menu| {
+                            menu.item(
+                                PopupMenuItem::new(crate::i18n::text("Move to main window"))
+                                    .on_click(move |_, window, cx| {
+                                        let _ = merge.update(cx, |app, cx| {
+                                            app.merge_to_main(id, window, cx)
+                                        });
+                                    }),
+                            )
                         })
                         .separator()
                         .item(
-                            PopupMenuItem::new("Close tab").on_click(move |_, window, cx| {
-                                let _ = close.update(cx, |app, cx| {
-                                    if let Some(index) = app.index_of(id) {
-                                        app.close(index, window, cx);
-                                    }
-                                });
-                            }),
+                            PopupMenuItem::new(crate::i18n::text("Close tab")).on_click(
+                                move |_, window, cx| {
+                                    let _ = close.update(cx, |app, cx| {
+                                        if let Some(index) = app.index_of(id) {
+                                            app.close(index, window, cx);
+                                        }
+                                    });
+                                },
+                            ),
                         )
                     })
             });
@@ -2613,7 +2656,7 @@ impl BeaconApp {
             .icon(IconName::Plus)
             .size(px(28.))
             .flex_shrink_0()
-            .tooltip("Open another tab in this pane")
+            .tooltip(crate::i18n::text("Open another tab in this pane"))
             .on_click(cx.listener(move |view, _, window, cx| {
                 view.focus_pane(pane_id, window, cx);
                 view.new_tab(window, cx);
@@ -2651,7 +2694,7 @@ impl BeaconApp {
                     .icon(IconName::ChevronDown)
                     .size(px(28.))
                     .flex_shrink_0()
-                    .tooltip("Tabs in this pane")
+                    .tooltip(crate::i18n::text("Tabs in this pane"))
                     .dropdown_menu(move |menu, _, _| {
                         choices.iter().fold(menu, |menu, (id, title)| {
                             let id = *id;
@@ -2689,17 +2732,17 @@ impl BeaconApp {
         let (tone, headline, detail) = match (state, &self.contexts) {
             (Some((id, TabState::Disconnected)), _) => (
                 Tone::Unknown,
-                format!("Disconnected from {}", self.cluster_display_name(id)),
+                crate::i18n::message("status.disconnected_cluster", &[("cluster", self.cluster_display_name(id))]).to_string(),
                 "Right-click the cluster in the sidebar and choose Reconnect.".to_string(),
             ),
             (Some((id, TabState::Connecting)), _) => (
                 Tone::Progressing,
-                format!("Connecting to {}", self.cluster_display_name(id)),
+                crate::i18n::message("status.connecting_cluster", &[("cluster", self.cluster_display_name(id))]).to_string(),
                 "Authenticating and reaching the API server.".to_string(),
             ),
             (Some((id, TabState::Failed(diagnosis))), _) => (
                 Tone::Critical,
-                format!("Could not connect to {}", self.cluster_display_name(id)),
+                crate::i18n::message("status.connect_cluster_failed", &[("cluster", self.cluster_display_name(id))]).to_string(),
                 diagnosis.clone(),
             ),
             (_, Err(error)) => (
@@ -2746,7 +2789,10 @@ impl BeaconApp {
                     .when(tone == Tone::Progressing, |this| {
                         this.child(Spinner::new().small().color(cx.theme().tone(tone)))
                     })
-                    .child(copyable_text("connection-headline", headline)),
+                    .child(copyable_text(
+                        "connection-headline",
+                        crate::i18n::text(headline),
+                    )),
             )
             .child(
                 div()
@@ -2754,7 +2800,15 @@ impl BeaconApp {
                     .text_sm()
                     .text_center()
                     .text_color(cx.theme().muted_foreground)
-                    .child(copyable_text("connection-detail", detail)),
+                    .child(copyable_text(
+                        "connection-detail",
+                        if matches!(state, Some((_, TabState::Failed(_)))) || self.contexts.is_err()
+                        {
+                            detail.into()
+                        } else {
+                            crate::i18n::text(detail)
+                        },
+                    )),
             )
             .when_some(
                 state.and_then(|(id, state)| {
@@ -2765,7 +2819,7 @@ impl BeaconApp {
                         Button::new("cancel-cluster-connection")
                             .outline()
                             .small()
-                            .label("Cancel connection")
+                            .label(crate::i18n::text("Cancel connection"))
                             .on_click(cx.listener(move |view, _, window, cx| {
                                 // A queued click must not disconnect a session
                                 // that finished connecting in the meantime.
@@ -2837,7 +2891,14 @@ impl BeaconApp {
                     .ghost()
                     .xsmall()
                     .h(px(20.))
-                    .label(format!("{count} {label}"))
+                    .label(crate::i18n::message(
+                        if label == "watches" {
+                            "status.watches_count"
+                        } else {
+                            "status.clusters_count"
+                        },
+                        &[("count", count.to_string())],
+                    ))
                     .tooltip(tooltip),
             )
             .content(move |_, _, cx| {
@@ -2903,7 +2964,7 @@ impl BeaconApp {
                                     .flex_shrink_0()
                                     .text_xs()
                                     .text_color(cx.theme().primary)
-                                    .child("Current"),
+                                    .child(crate::i18n::text("Current")),
                             )
                         }),
                 )
@@ -2930,7 +2991,7 @@ impl BeaconApp {
                 )
                 .child(div().text_xs().child(format!(
                     "{} · {tabs} tabs · {} watches · {} forwarding",
-                    health.label(),
+                    crate::i18n::text(health.label()),
                     session.active_watches(),
                     session.forwards().len(),
                 )))
@@ -2962,7 +3023,7 @@ impl BeaconApp {
                 .overflow_y_scroll()
                 .child(v_flex().gap_1().children(rows))
                 .when(sessions.is_empty(), |list| {
-                    list.child("No connected clusters yet.")
+                    list.child(crate::i18n::text("No connected clusters yet."))
                 }),
         )
         .into_any_element()
@@ -3037,7 +3098,7 @@ impl BeaconApp {
                     "{} · Kubernetes {} · {}",
                     name.unwrap_or_default(),
                     session.version(),
-                    health.label()
+                    crate::i18n::text(health.label())
                 );
                 if self.tabs.len() > 1 {
                     status.push_str(&format!(" · {} tabs", self.tabs.len()));
@@ -3095,7 +3156,9 @@ impl BeaconApp {
                                 .font_weight(FontWeight::MEDIUM)
                                 .cursor_pointer()
                                 .hover(move |button| button.bg(update_color.opacity(0.2)))
-                                .accessibility_label("Update available — open Updates settings")
+                                .accessibility_label(crate::i18n::text(
+                                    "Update available — open Updates settings",
+                                ))
                                 .tooltip(|window, cx| {
                                     Tooltip::new(
                                         "A new version is available. Open Updates settings.",
@@ -3105,7 +3168,7 @@ impl BeaconApp {
                                 .child(
                                     Icon::new(gpui_kit::assets::IconName::Download).size(px(11.)),
                                 )
-                                .child("Update")
+                                .child(crate::i18n::text("Update"))
                                 .on_click(|_, _, cx| crate::preferences::updates(cx)),
                         )
                     }),

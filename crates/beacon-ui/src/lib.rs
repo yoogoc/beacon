@@ -30,6 +30,7 @@ mod filters;
 mod forward_dialog;
 mod global_search;
 mod helm_details;
+mod i18n;
 mod icons;
 mod ingress_links;
 mod job_actions;
@@ -74,3 +75,5 @@ pub use bridge::Bridge;
 pub use cluster::ClusterView;
 pub use icons::Assets;
 pub use table::ResourceTable;
+
+rust_i18n::i18n!("locales", fallback = "en");

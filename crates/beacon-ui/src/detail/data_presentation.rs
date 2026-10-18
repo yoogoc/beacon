@@ -157,7 +157,11 @@ impl DetailView {
                             .gap_2()
                             .text_xs()
                             .text_color(cx.theme().muted_foreground)
-                            .child(div().font_weight(FontWeight::SEMIBOLD).child("KEYS"))
+                            .child(
+                                div()
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .child(crate::i18n::text("KEYS")),
+                            )
                             .child(format!(
                                 "{} / {}",
                                 self.data_browser.visible.len(),
@@ -248,20 +252,22 @@ impl DetailView {
                         .gap_2()
                         .text_color(cx.theme().danger)
                         .child(Icon::new(IconName::Trash).size_4())
-                        .child("Key marked for deletion"),
+                        .child(crate::i18n::text("Key marked for deletion")),
                 )
                 .child(
                     div()
                         .text_sm()
                         .text_color(cx.theme().muted_foreground)
-                        .child("Save to review and delete this key/value pair."),
+                        .child(crate::i18n::text(
+                            "Save to review and delete this key/value pair.",
+                        )),
                 )
                 .child(
                     Button::new("restore-data-key")
                         .small()
                         .outline()
                         .icon(IconName::Undo2)
-                        .label("Restore key")
+                        .label(crate::i18n::text("Restore key"))
                         .disabled(busy)
                         .on_click(cx.listener(move |view, _, window, cx| {
                             view.delete_data_key(index, window, cx)
@@ -281,12 +287,18 @@ impl DetailView {
                         .size_5()
                         .text_color(cx.theme().muted_foreground),
                 )
-                .child(div().text_sm().child("Secret values are hidden"))
+                .child(
+                    div()
+                        .text_sm()
+                        .child(crate::i18n::text("Secret values are hidden")),
+                )
                 .child(
                     div()
                         .text_xs()
                         .text_color(cx.theme().muted_foreground)
-                        .child("Reveal values to read, edit or delete a key."),
+                        .child(crate::i18n::text(
+                            "Reveal values to read, edit or delete a key.",
+                        )),
                 )
                 .into_any_element()
         } else if details {
@@ -354,9 +366,9 @@ impl DetailView {
         } else {
             v_flex().w_full().p_5().gap_2().rounded_lg().bg(cx.theme().muted.opacity(0.45))
                 .child(Icon::new(IconName::FileArchive).size_5().text_color(cx.theme().muted_foreground))
-                .child(div().text_sm().child("Binary value"))
+                .child(div().text_sm().child(crate::i18n::text("Binary value")))
                 .child(div().text_xs().text_color(cx.theme().muted_foreground)
-                    .child("This value cannot be edited as text. You can delete the entire key/value pair."))
+                    .child(crate::i18n::text("This value cannot be edited as text. You can delete the entire key/value pair.")))
                 .into_any_element()
         };
         v_flex()
@@ -392,7 +404,7 @@ impl DetailView {
                                             Icon::new(IconName::Trash)
                                                 .text_color(cx.theme().danger),
                                         )
-                                        .label("Delete key")
+                                        .label(crate::i18n::text("Delete key"))
                                         .disabled(busy || !may_apply || covered)
                                         .on_click(cx.listener(move |view, _, window, cx| {
                                             view.delete_data_key(index, window, cx)
@@ -404,7 +416,7 @@ impl DetailView {
                                     div()
                                         .text_xs()
                                         .text_color(cx.theme().danger)
-                                        .child("Deleted"),
+                                        .child(crate::i18n::text("Deleted")),
                                 )
                             }),
                     )
@@ -420,22 +432,22 @@ impl DetailView {
                                 bytes(key.entry.bytes)
                             ))
                             .when(modified && !deleted, |row| {
-                                row.child(div().text_color(cx.theme().warning).child("Modified"))
+                                row.child(div().text_color(cx.theme().warning).child(crate::i18n::text("Modified")))
                             })
-                            .when(!may_apply, |row| row.child("Read only"))
+                            .when(!may_apply, |row| row.child(crate::i18n::text("Read only")))
                             .when(role.is_some() && key.editor.is_some() && !deleted && !covered, |row| {
                                 row.child(h_flex().gap_0p5().rounded_md().bg(cx.theme().muted)
-                                    .child(Button::new("account-value-details").small().ghost().selected(self.data_browser.details).label("Details")
+                                    .child(Button::new("account-value-details").small().ghost().selected(self.data_browser.details).label(crate::i18n::text("Details"))
                                         .on_click(cx.listener(|view, _, _, cx| { view.data_browser.details = true; cx.notify(); })))
-                                    .child(Button::new("account-value-raw").small().ghost().selected(!self.data_browser.details).label("Raw value")
+                                    .child(Button::new("account-value-raw").small().ghost().selected(!self.data_browser.details).label(crate::i18n::text("Raw value"))
                                         .on_click(cx.listener(|view, _, _, cx| { view.data_browser.details = false; cx.notify(); }))))
                                     .child(Button::new("account-copy-value").small().ghost().label(if role == Some(crate::service_account_secret::Key::Token) { "Copy token" } else { "Copy value" })
                                         .on_click(cx.listener(move |view, _, _, cx| view.copy_data_value(index, cx))))
                             })
                             .when(key.editor.is_some() && !deleted && !covered && !details, |row| {
                                 row.child(Button::new("data-wrap-lines").small().ghost()
-                                    .selected(self.data_browser.wrap).label("Wrap lines")
-                                    .tooltip("Wrap long lines to fit the editor. When off, scroll horizontally.")
+                                    .selected(self.data_browser.wrap).label(crate::i18n::text("Wrap lines"))
+                                    .tooltip(crate::i18n::text("Wrap long lines to fit the editor. When off, scroll horizontally."))
                                     .on_click(cx.listener(|view, _, window, cx| view.toggle_data_wrap(window, cx))))
                             }),
                     ),

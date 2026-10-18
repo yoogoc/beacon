@@ -157,7 +157,7 @@ pub enum Section {
 impl Section {
     pub fn label(&self) -> SharedString {
         match self {
-            Self::Builtin(category) => SharedString::from(category.label()),
+            Self::Builtin(category) => crate::i18n::text(category.label()),
             Self::Group(group) => group.clone(),
         }
     }

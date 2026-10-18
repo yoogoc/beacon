@@ -207,6 +207,7 @@ pub struct Palette {
     section: Section,
     matches: Vec<Choice>,
     matcher: Matcher,
+    query: String,
 }
 
 impl Palette {
@@ -218,7 +219,13 @@ impl Palette {
             section: Section::Objects,
             matches: Vec::new(),
             matcher: crate::catalog::matcher(),
+            query: String::new(),
         };
+        cx.observe_global_in::<crate::i18n::LocaleState>(window, |palette, _, cx| {
+            palette.refresh(&palette.query.clone());
+            cx.notify();
+        })
+        .detach();
         this.refresh("");
         this
     }
@@ -242,6 +249,7 @@ impl Palette {
 
     /// Recomputes the list for a query.
     fn refresh(&mut self, query: &str) {
+        self.query = query.to_owned();
         let (section, needle) = Section::parse(query);
         self.section = section;
 
@@ -304,11 +312,12 @@ impl Palette {
                         Choice::Forward { remote_port: *port },
                     )
                 }))
-                .chain(
-                    Action::ALL
-                        .iter()
-                        .map(|action| (action.label().to_string(), Choice::Action(*action))),
-                )
+                .chain(Action::ALL.iter().map(|action| {
+                    (
+                        format!("{} {}", action.label(), crate::i18n::text(action.label())),
+                        Choice::Action(*action),
+                    )
+                }))
                 .collect(),
         };
 
@@ -352,7 +361,7 @@ impl Palette {
                             .map_or_else(|| cluster.display_name().to_string(), ContextEntry::label)
                     }),
             ),
-            Choice::Action(action) => SharedString::from(action.label()),
+            Choice::Action(action) => crate::i18n::text(action.label()),
             Choice::Operation(operation) => SharedString::from(operation.describe()),
             Choice::Forward { remote_port } => {
                 SharedString::from(format!("Forward port {remote_port}"))
@@ -613,5 +622,51 @@ mod tests {
                 "{action:?}"
             );
         }
+    }
+
+    #[cfg(feature = "ui-tests")]
+    #[::core::prelude::v1::test]
+    fn changing_language_refreshes_the_existing_command_search_and_keeps_its_query() {
+        use crate::{feature_test_support as support, i18n::Language};
+        use gpui_kit::{AppContext as _, WindowOptions};
+        let directory = tempfile::tempdir().unwrap();
+        let cx = &mut support::context();
+        support::workspace(cx, directory.path());
+        let (window, palette) = cx.update(|cx| {
+            gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
+                window.set_view_retention(false);
+                cx.new(|cx| super::Palette::new(window, cx))
+            })
+            .unwrap()
+        });
+        cx.update_window(window, |_, window, cx| {
+            palette.update(cx, |palette, cx| {
+                palette
+                    .state
+                    .update(cx, |state, cx| state.set_query(">应用设置", window, cx));
+                palette.refresh(">应用设置");
+                assert!(palette.matches.is_empty());
+            })
+        })
+        .unwrap();
+        cx.run_until_parked();
+        cx.update(|cx| crate::i18n::apply(Language::SimplifiedChinese, cx));
+        cx.run_until_parked();
+        palette.read_with(cx, |palette, cx| {
+            assert!(
+                palette
+                    .matches
+                    .iter()
+                    .any(|choice| matches!(choice, Choice::Action(Action::OpenSettings)))
+            );
+            assert_eq!(palette.state.read(cx).query(cx).as_ref(), ">应用设置");
+            assert_eq!(
+                palette
+                    .label(&Choice::Action(Action::OpenSettings))
+                    .as_ref(),
+                "应用设置"
+            );
+        });
+        cx.update(|cx| crate::i18n::apply(Language::English, cx));
     }
 }

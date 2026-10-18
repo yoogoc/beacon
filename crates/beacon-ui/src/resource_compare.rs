@@ -179,7 +179,7 @@ fn comparison_window(
             #[cfg(all(test, feature = "ui-tests"))]
             window.set_view_retention(false);
             let view = comparison_view(left, kind, object, target, window, cx);
-            window.set_window_title(&view.read(cx).title);
+            crate::i18n::window_title(view.read(cx).title.clone(), window, cx);
             window.activate_window();
             view
         },

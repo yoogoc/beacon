@@ -11,9 +11,13 @@ pub(crate) fn workspace(cx: &TestAppContext, directory: &std::path::Path) {
         crate::app::init(directory.join("logs"), cx);
         crate::settings::store(cx).update(cx, |state, _| {
             state.preferences = Default::default();
+            state.preferences.language = crate::i18n::Language::English;
             state.directory = directory.to_owned();
         });
         crate::settings::apply(None, cx);
+        // Existing interaction tests assert English UI text independently of
+        // the developer or runner's system language.
+        crate::i18n::apply(crate::i18n::Language::English, cx);
     });
 }
 

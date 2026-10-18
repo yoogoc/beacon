@@ -668,7 +668,7 @@ impl PreferencesView {
                         div()
                             .text_xs()
                             .text_color(theme.muted_foreground)
-                            .child("Live preview"),
+                            .child(crate::i18n::text("Live preview")),
                     ),
             )
             .child(
@@ -691,7 +691,7 @@ impl PreferencesView {
                                     .child("Pods"),
                             )
                             .child("Nodes")
-                            .child("Events"),
+                            .child(crate::i18n::text("Events")),
                     )
                     .child(
                         v_flex()
@@ -712,10 +712,14 @@ impl PreferencesView {
                                             .rounded_sm()
                                             .bg(theme.button_primary)
                                             .text_color(theme.button_primary_foreground)
-                                            .child("Create"),
+                                            .child(crate::i18n::text("Create")),
                                     ),
                             )
-                            .child(div().text_color(theme.muted_foreground).child("Name"))
+                            .child(
+                                div()
+                                    .text_color(theme.muted_foreground)
+                                    .child(crate::i18n::text("Name")),
+                            )
                             .child(
                                 h_flex()
                                     .gap_1()
@@ -726,7 +730,11 @@ impl PreferencesView {
                                             .text_size(theme.mono_font_size * 0.75)
                                             .child("api-server"),
                                     )
-                                    .child(div().text_color(theme.success).child("Running")),
+                                    .child(
+                                        div()
+                                            .text_color(theme.success)
+                                            .child(crate::i18n::text("Running")),
+                                    ),
                             ),
                     ),
             )
@@ -783,7 +791,7 @@ impl PreferencesView {
                                                 "Reset {} to base color",
                                                 role.label
                                             ))
-                                            .tooltip("Use base color")
+                                            .tooltip(crate::i18n::text("Use base color"))
                                             .disabled(!overridden)
                                             .on_click(cx.listener(move |view, _, window, cx| {
                                                 view.change_theme_color(key, None, window, cx)
@@ -813,7 +821,7 @@ impl PreferencesView {
                     .small()
                     .outline()
                     .selected(t.custom.dark == dark)
-                    .label(label)
+                    .label(crate::i18n::text(label))
                     .on_click(cx.listener(move |view, _, window, cx| {
                         if let Page::Application(t) = &mut view.page {
                             t.custom.dark = dark;
@@ -832,7 +840,7 @@ impl PreferencesView {
                 .small()
                 .ghost()
                 .selected(t.controls.panel == panel)
-                .label(label)
+                .label(crate::i18n::text(label))
                 .on_click(cx.listener(move |view, _, window, cx| {
                     if let Page::Application(t) = &mut view.page {
                         t.controls.panel = panel;
@@ -849,7 +857,7 @@ impl PreferencesView {
                     .small()
                     .outline()
                     .selected(t.controls.group == group)
-                    .label(label)
+                    .label(crate::i18n::text(label))
                     .on_click(cx.listener(move |view, _, _, cx| {
                         if let Page::Application(t) = &mut view.page {
                             t.controls.group = group;
@@ -859,7 +867,7 @@ impl PreferencesView {
             });
         let panel = match t.controls.panel {
             Panel::Colors => v_flex().gap_3().child(h_flex().gap_2().flex_wrap().children(groups))
-                .child(div().text_xs().text_color(cx.theme().muted_foreground).child("Click a color to choose from the palette or enter a hex value. The preview updates immediately."))
+                .child(div().text_xs().text_color(cx.theme().muted_foreground).child(crate::i18n::text("Click a color to choose from the palette or enter a hex value. The preview updates immediately.")))
                 .child(self.color_cards(t, cx)).into_any_element(),
             Panel::Typography => v_flex().gap_4()
                 .child(hint("Choose an installed font. Sizes are in pixels (10–30).", cx))
@@ -870,10 +878,10 @@ impl PreferencesView {
                 })).into_any_element(),
             Panel::Advanced => v_flex().gap_3()
                 .child(hint("All color options. Search by component, such as button or sidebar.", cx))
-                .child(Select::new(&t.controls.roles).w_full().search_placeholder("Search color options").accessibility_label("Advanced color option"))
+                .child(Select::new(&t.controls.roles).w_full().search_placeholder("Search color options").accessibility_label(crate::i18n::text("Advanced color option")))
                 .child(h_flex().gap_2().items_center()
                     .child(color_control(&t.controls.advanced_color, "Advanced color", cx))
-                    .child(Button::new("reset-advanced-color").outline().label("Use base color").on_click(cx.listener(|view, _, window, cx| {
+                    .child(Button::new("reset-advanced-color").outline().label(crate::i18n::text("Use base color")).on_click(cx.listener(|view, _, window, cx| {
                         if let Page::Application(t) = &view.page { let role = t.role.clone(); view.change_theme_color(&role, None, window, cx); }
                     }))))
                 .child(field("Hex value · Leave empty to inherit", &t.color))
@@ -915,7 +923,7 @@ impl PreferencesView {
                         Button::new("new-custom-theme")
                             .outline()
                             .icon(IconName::Plus)
-                            .label("New theme")
+                            .label(crate::i18n::text("New theme"))
                             .on_click(cx.listener(|view, _, window, cx| {
                                 view.request_theme(None, window, cx)
                             })),

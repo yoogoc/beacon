@@ -14,7 +14,7 @@ fn action(id: &'static str, icon: IconName, label: &'static str) -> Button {
         .ghost()
         .icon(Icon::new(icon).size(px(15.)))
         .accessibility_label(label)
-        .tooltip(label)
+        .tooltip(crate::i18n::text(label))
 }
 
 fn separator(cx: &App) -> Div {
@@ -61,7 +61,7 @@ fn empty_state(icon: IconName, title: &str, hint: &str, cx: &App) -> AnyElement 
         .child(
             div()
                 .font_weight(FontWeight::MEDIUM)
-                .child(title.to_owned()),
+                .child(crate::i18n::text(title)),
         )
         .child(
             div()
@@ -99,7 +99,7 @@ impl FilesView {
             return action("files-more", IconName::Ellipsis, "File operations")
                 .dropdown_menu_with_anchor(Anchor::TopRight, move |menu, _, _| {
                     menu.item(
-                        PopupMenuItem::new("Upload file…")
+                        PopupMenuItem::new(crate::i18n::text("Upload file…"))
                             .icon(Icon::new(IconName::Upload))
                             .disabled(!writable)
                             .on_click({
@@ -110,7 +110,7 @@ impl FilesView {
                             }),
                     )
                     .item(
-                        PopupMenuItem::new("New folder")
+                        PopupMenuItem::new(crate::i18n::text("New folder"))
                             .icon(Icon::new(IconName::FolderPlus))
                             .disabled(!writable)
                             .on_click({
@@ -122,7 +122,7 @@ impl FilesView {
                     )
                     .separator()
                     .item(
-                        PopupMenuItem::new("Download selection…")
+                        PopupMenuItem::new(crate::i18n::text("Download selection…"))
                             .icon(Icon::new(IconName::Download))
                             .disabled(!may_download)
                             .on_click({
@@ -133,7 +133,7 @@ impl FilesView {
                             }),
                     )
                     .item(
-                        PopupMenuItem::new("Rename selection")
+                        PopupMenuItem::new(crate::i18n::text("Rename selection"))
                             .icon(Icon::new(IconName::Pencil))
                             .disabled(!may_rename)
                             .on_click({
@@ -144,7 +144,7 @@ impl FilesView {
                             }),
                     )
                     .item(
-                        PopupMenuItem::new("Delete selection…")
+                        PopupMenuItem::new(crate::i18n::text("Delete selection…"))
                             .icon(Icon::new(IconName::Trash))
                             .disabled(!may_modify)
                             .on_click({
@@ -165,14 +165,14 @@ impl FilesView {
             .child(
                 action("files-upload", IconName::Upload, "Upload file…")
                     .outline()
-                    .when(text_actions, |b| b.label("Upload"))
+                    .when(text_actions, |b| b.label(crate::i18n::text("Upload")))
                     .disabled(!writable)
                     .on_click(cx.listener(|v, _, w, cx| v.upload(w, cx))),
             )
             .child(
                 action("files-mkdir", IconName::FolderPlus, "New folder")
                     .outline()
-                    .when(text_actions, |b| b.label("New folder"))
+                    .when(text_actions, |b| b.label(crate::i18n::text("New folder")))
                     .disabled(!writable)
                     .on_click(cx.listener(|v, _, w, cx| v.mkdir(w, cx))),
             )
@@ -374,12 +374,14 @@ impl FilesView {
                                 v.read(cx).listing.as_ref().is_some_and(|l| l.writable)
                             }) && menu_entry.writable;
                             popup
-                                .item(PopupMenuItem::new("Open").on_click(move |_, window, cx| {
-                                    let _ = open.update(cx, |v, cx| {
-                                        v.open_entry(target.clone(), window, cx)
-                                    });
-                                }))
-                                .item(PopupMenuItem::new("Download…").on_click(
+                                .item(PopupMenuItem::new(crate::i18n::text("Open")).on_click(
+                                    move |_, window, cx| {
+                                        let _ = open.update(cx, |v, cx| {
+                                            v.open_entry(target.clone(), window, cx)
+                                        });
+                                    },
+                                ))
+                                .item(PopupMenuItem::new(crate::i18n::text("Download…")).on_click(
                                     move |_, window, cx| {
                                         let _ = download.update(cx, |v, cx| {
                                             v.selected =
@@ -390,17 +392,19 @@ impl FilesView {
                                 ))
                                 .item(crate::copyable_text::copy_item("Copy path", copy))
                                 .separator()
-                                .item(PopupMenuItem::new("Delete…").disabled(!writable).on_click(
-                                    move |_, window, cx| {
-                                        let _ = delete.update(cx, |v, cx| {
-                                            if !v.selected.contains(&for_delete.path) {
-                                                v.selected =
-                                                    BTreeSet::from([for_delete.path.clone()]);
-                                            }
-                                            v.delete(window, cx);
-                                        });
-                                    },
-                                ))
+                                .item(
+                                    PopupMenuItem::new(crate::i18n::text("Delete…"))
+                                        .disabled(!writable)
+                                        .on_click(move |_, window, cx| {
+                                            let _ = delete.update(cx, |v, cx| {
+                                                if !v.selected.contains(&for_delete.path) {
+                                                    v.selected =
+                                                        BTreeSet::from([for_delete.path.clone()]);
+                                                }
+                                                v.delete(window, cx);
+                                            });
+                                        }),
+                                )
                         })
                         .into_any_element()
                 })
@@ -464,7 +468,7 @@ impl FilesView {
                         checkbox("files-select-all")
                             .checked(all_checked)
                             .disabled(self.busy || count == 0)
-                            .accessibility_label("Select all filtered files")
+                            .accessibility_label(crate::i18n::text("Select all filtered files"))
                             .on_click(cx.listener(|v, checked, _, cx| {
                                 if let Some(listing) = &v.listing {
                                     for index in v.visible.iter() {
@@ -479,13 +483,29 @@ impl FilesView {
                                 cx.notify();
                             })),
                     )
-                    .child(div().flex_1().min_w_0().child("Name"))
-                    .child(div().w(px(76.)).flex_shrink_0().text_right().child("Size"))
+                    .child(div().flex_1().min_w_0().child(crate::i18n::text("Name")))
+                    .child(
+                        div()
+                            .w(px(76.))
+                            .flex_shrink_0()
+                            .text_right()
+                            .child(crate::i18n::text("Size")),
+                    )
                     .when(show_modified, |row| {
-                        row.child(div().w(px(138.)).flex_shrink_0().child("Modified (UTC)"))
+                        row.child(
+                            div()
+                                .w(px(138.))
+                                .flex_shrink_0()
+                                .child(crate::i18n::text("Modified (UTC)")),
+                        )
                     })
                     .when(show_mode, |row| {
-                        row.child(div().w(px(68.)).flex_shrink_0().child("Mode"))
+                        row.child(
+                            div()
+                                .w(px(68.))
+                                .flex_shrink_0()
+                                .child(crate::i18n::text("Mode")),
+                        )
                     }),
             )
             .child(div().flex_1().min_size_0().child(if count > 0 {
@@ -541,7 +561,7 @@ impl FilesView {
                     .child(div().flex_1())
                     .when(self.listing.as_ref().is_some_and(|l| !l.writable), |bar| {
                         bar.child(Icon::new(IconName::Lock).size(px(12.)))
-                            .child("Read-only")
+                            .child(crate::i18n::text("Read-only"))
                     }),
             )
             .into_any_element()
@@ -610,7 +630,7 @@ impl FilesView {
                         bar.child(
                             action("edit-file", IconName::Pencil, "Edit file")
                                 .outline()
-                                .label("Edit file")
+                                .label(crate::i18n::text("Edit file"))
                                 .disabled(!preview.editable() || self.busy)
                                 .on_click(cx.listener(|v, _, w, cx| v.edit(w, cx))),
                         )
@@ -619,7 +639,7 @@ impl FilesView {
                         bar.child(
                             action("save-file", IconName::Check, "Review and save changes")
                                 .primary()
-                                .label("Review & save")
+                                .label(crate::i18n::text("Review & save"))
                                 .disabled(self.busy || !dirty)
                                 .on_click(cx.listener(|v, _, w, cx| v.save(w, cx))),
                         )
@@ -636,7 +656,7 @@ impl FilesView {
                     .child(div().flex_1())
                     .child(
                         action("download-preview", IconName::Download, "Download file…")
-                            .when(!editing, |b| b.label("Download"))
+                            .when(!editing, |b| b.label(crate::i18n::text("Download")))
                             .disabled(self.busy)
                             .on_click(cx.listener(|v, _, w, cx| {
                                 v.selected.clear();
@@ -663,14 +683,18 @@ impl FilesView {
                     .child("·")
                     .child(size(entry.size))
                     .when(dirty, |bar| {
-                        bar.child(div().text_color(cx.theme().foreground).child("· Unsaved"))
+                        bar.child(
+                            div()
+                                .text_color(cx.theme().foreground)
+                                .child(crate::i18n::text("· Unsaved")),
+                        )
                     })
                     .child(div().flex_1())
                     .child(
                         Button::new("files-details-toggle")
                             .xsmall()
                             .ghost()
-                            .label("Details")
+                            .label(crate::i18n::text("Details"))
                             .icon(if self.details {
                                 IconName::ChevronUp
                             } else {
@@ -796,7 +820,7 @@ impl FilesView {
                 .bg(cx.theme().background)
                 .child(h_flex().w_full().h(px(28.)).px_3().flex_shrink_0()
                     .text_size(cx.theme().font_size * 0.6875).text_color(cx.theme().muted_foreground)
-                    .child("Text preview").child(div().flex_1()).child("UTF-8"))
+                    .child(crate::i18n::text("Text preview")).child(div().flex_1()).child("UTF-8"))
                 .child(div().id("file-preview-scroll").test_support().flex_1().min_size_0()
                     .overflow_scroll().p_3().pt_1().font_family(cx.theme().mono_font_family.clone()).text_size(cx.theme().mono_font_size)
                     .line_height(relative(1.6)).whitespace_nowrap()
@@ -807,7 +831,7 @@ impl FilesView {
                 .child(Icon::new(file_icon(entry)).size(px(32.)).text_color(cx.theme().muted_foreground))
                 .child(copyable_text("file-binary", "Text preview unavailable"))
                 .child(div().max_w(px(280.)).text_color(cx.theme().muted_foreground)
-                    .child("Download this file to open it locally. Its original bytes are preserved."))
+                    .child(crate::i18n::text("Download this file to open it locally. Its original bytes are preserved.")))
                 .into_any_element()
         }).into_any_element()
     }
@@ -896,7 +920,11 @@ impl Render for FilesView {
                             .flex_1()
                             .min_w_0()
                             .gap_1()
-                            .child(div().font_weight(FontWeight::SEMIBOLD).child("Pod files"))
+                            .child(
+                                div()
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .child(crate::i18n::text("Pod files")),
+                            )
                             .child(
                                 div()
                                     .overflow_hidden()
@@ -1083,7 +1111,7 @@ impl Render for FilesView {
                             Button::new("files-cancel")
                                 .xsmall()
                                 .ghost()
-                                .label("Cancel")
+                                .label(crate::i18n::text("Cancel"))
                                 .on_click(cx.listener(|v, _, _, cx| v.cancel(cx))),
                         ),
                 )

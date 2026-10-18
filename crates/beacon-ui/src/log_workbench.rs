@@ -52,10 +52,9 @@ impl LogWorkbench {
     ) -> Entity<Self> {
         cx.new(|cx| {
             let field_filter = cx.new(|cx| {
-                InputState::new(window, cx)
-                    .placeholder("Exact fields: status=503 service=\"api server\"")
+                crate::i18n::input("Exact fields: status=503 service=\"api server\"", window, cx)
             });
-            let field_search = cx.new(|cx| InputState::new(window, cx).placeholder("Find a field"));
+            let field_search = cx.new(|cx| crate::i18n::input("Find a field", window, cx));
             let range = cx.new(|cx| {
                 SelectState::new(
                     SearchableVec::new(
@@ -77,10 +76,10 @@ impl LogWorkbench {
                 .searchable(true)
             });
             let since = cx.new(|cx| {
-                InputState::new(window, cx).placeholder("From · RFC3339, e.g. 2026-10-13T10:00:00Z")
+                crate::i18n::input("From · RFC3339, e.g. 2026-10-13T10:00:00Z", window, cx)
             });
             let until =
-                cx.new(|cx| InputState::new(window, cx).placeholder("Until · RFC3339 (optional)"));
+                cx.new(|cx| crate::i18n::input("Until · RFC3339 (optional)", window, cx));
             let subscriptions = vec![
                 cx.subscribe(
                     &field_filter,
@@ -286,27 +285,27 @@ impl Render for LogWorkbench {
         let bookmark_count = self.display.borrow().bookmarks.len();
         v_flex().w_full().flex_shrink_0().border_b_1().border_color(cx.theme().border).bg(cx.theme().background).text_xs()
             .child(h_flex().id("structured-log-toolbar").w_full().min_w_0().overflow_x_scroll().whitespace_nowrap().gap_1().px_3().py_1()
-                .child(Button::new("log-regex").xsmall().ghost().selected(self.filter.regex).label(".*").tooltip("Regular expression search (case insensitive)").on_click(cx.listener(|view, _, _, cx| { view.filter.regex = !view.filter.regex; cx.emit(Changed::Filter); cx.notify(); })))
+                .child(Button::new("log-regex").xsmall().ghost().selected(self.filter.regex).label(".*").tooltip(crate::i18n::text("Regular expression search (case insensitive)")).on_click(cx.listener(|view, _, _, cx| { view.filter.regex = !view.filter.regex; cx.emit(Changed::Filter); cx.notify(); })))
                 .children(Level::ALL.map(|level| { let label = level.label(); Button::new(format!("log-level-{label}")).xsmall().ghost().selected(self.filter.levels.contains(label)).label(label).on_click(cx.listener(move |view, _, _, cx| { if !view.filter.levels.remove(label) { view.filter.levels.insert(label.into()); } cx.emit(Changed::Filter); cx.notify(); })) }))
                 .child(div().h(px(16.)).border_l_1().border_color(cx.theme().border).mx_1())
-                .child(Button::new("log-fields").xsmall().ghost().selected(self.fields_open).label(format!("Fields{}", if self.filter.predicates.is_empty() { String::new() } else { format!(" {}", self.filter.predicates.len()) })).tooltip("Filter exact field values and choose displayed fields").on_click(cx.listener(|view, _, _, cx| { view.fields_open = !view.fields_open; cx.notify(); })))
-                .child(Button::new("log-compact").xsmall().ghost().selected(self.filter.compact).label("Compact").on_click(cx.listener(|view, _, _, cx| { view.filter.compact = !view.filter.compact; cx.emit(Changed::Filter); cx.notify(); })))
-                .child(div().w(px(170.)).flex_shrink_0().child(Select::new(&self.range).id("log-time-range").accessibility_label("Log time range").search_placeholder("Search time ranges").xsmall().w_full()))
-                .when(self.custom_time, |bar| bar.child(Button::new("log-edit-range").xsmall().ghost().label("Edit range").on_click(cx.listener(|view, _, _, cx| { view.time_open = !view.time_open; cx.notify(); }))))
-                .child(Button::new("log-bookmarks").xsmall().ghost().selected(self.filter.bookmarks).label(format!("Bookmarks {bookmark_count}")).tooltip("Saved lines survive buffer eviction and container reloads in this panel").on_click(cx.listener(|view, _, _, cx| { view.filter.bookmarks = !view.filter.bookmarks; cx.emit(Changed::Filter); cx.notify(); })))
-                .when(!self.filter.levels.is_empty() || !self.filter.predicates.is_empty() || self.filter.regex || self.filter.bookmarks, |bar| bar.child(Button::new("log-reset-filters").xsmall().ghost().label("Reset filters").on_click(cx.listener(|view, _, window, cx| { view.filter.levels.clear(); view.filter.predicates.clear(); view.filter.regex = false; view.filter.bookmarks = false; view.error = None; view.field_filter.update(cx, |input, cx| input.set_value("", window, cx)); view.search.update(cx, |input, cx| input.set_value("", window, cx)); cx.emit(Changed::Filter); cx.notify(); }))))
+                .child(Button::new("log-fields").xsmall().ghost().selected(self.fields_open).label(format!("Fields{}", if self.filter.predicates.is_empty() { String::new() } else { format!(" {}", self.filter.predicates.len()) })).tooltip(crate::i18n::text("Filter exact field values and choose displayed fields")).on_click(cx.listener(|view, _, _, cx| { view.fields_open = !view.fields_open; cx.notify(); })))
+                .child(Button::new("log-compact").xsmall().ghost().selected(self.filter.compact).label(crate::i18n::text("Compact")).on_click(cx.listener(|view, _, _, cx| { view.filter.compact = !view.filter.compact; cx.emit(Changed::Filter); cx.notify(); })))
+                .child(div().w(px(170.)).flex_shrink_0().child(Select::new(&self.range).id("log-time-range").accessibility_label(crate::i18n::text("Log time range")).search_placeholder("Search time ranges").xsmall().w_full()))
+                .when(self.custom_time, |bar| bar.child(Button::new("log-edit-range").xsmall().ghost().label(crate::i18n::text("Edit range")).on_click(cx.listener(|view, _, _, cx| { view.time_open = !view.time_open; cx.notify(); }))))
+                .child(Button::new("log-bookmarks").xsmall().ghost().selected(self.filter.bookmarks).label(format!("Bookmarks {bookmark_count}")).tooltip(crate::i18n::text("Saved lines survive buffer eviction and container reloads in this panel")).on_click(cx.listener(|view, _, _, cx| { view.filter.bookmarks = !view.filter.bookmarks; cx.emit(Changed::Filter); cx.notify(); })))
+                .when(!self.filter.levels.is_empty() || !self.filter.predicates.is_empty() || self.filter.regex || self.filter.bookmarks, |bar| bar.child(Button::new("log-reset-filters").xsmall().ghost().label(crate::i18n::text("Reset filters")).on_click(cx.listener(|view, _, window, cx| { view.filter.levels.clear(); view.filter.predicates.clear(); view.filter.regex = false; view.filter.bookmarks = false; view.error = None; view.field_filter.update(cx, |input, cx| input.set_value("", window, cx)); view.search.update(cx, |input, cx| input.set_value("", window, cx)); cx.emit(Changed::Filter); cx.notify(); }))))
                 .child(div().flex_1())
-                .child(Button::new("log-export-filtered").xsmall().ghost().label("Export filtered…").disabled(self.exporting || error.is_some()).tooltip("Export matching retained lines as raw text; includes current level, search, fields and bookmark filters").on_click(cx.listener(|view, _, _, cx| view.export(cx)))))
+                .child(Button::new("log-export-filtered").xsmall().ghost().label(crate::i18n::text("Export filtered…")).disabled(self.exporting || error.is_some()).tooltip(crate::i18n::text("Export matching retained lines as raw text; includes current level, search, fields and bookmark filters")).on_click(cx.listener(|view, _, _, cx| view.export(cx)))))
             .when(self.fields_open, |panel| panel.child(v_flex().id("log-fields-panel").test_support().gap_2().px_3().py_2().bg(cx.theme().muted.opacity(0.35))
-                .child(h_flex().gap_2().child(div().flex_1().child(Input::new(&self.field_filter).id("log-field-filter").xsmall())).child(Button::new("log-clear-field-filter").xsmall().ghost().label("Clear").on_click(cx.listener(|view, _, window, cx| { view.field_filter.update(cx, |input, cx| input.set_value("", window, cx)); }))))
-                .child(h_flex().gap_2().items_center().child("Display fields").child(div().w(px(180.)).child(Input::new(&self.field_search).id("log-field-search").xsmall())).child(Button::new("log-all-fields").xsmall().ghost().label("All").on_click(cx.listener(|view, _, _, cx| { view.filter.fields = None; view.filter.compact = true; cx.emit(Changed::Filter); cx.notify(); }))).child(Button::new("log-no-fields").xsmall().ghost().label("None").on_click(cx.listener(|view, _, _, cx| { view.filter.fields = Some(BTreeSet::new()); view.filter.compact = true; cx.emit(Changed::Filter); cx.notify(); }))))
+                .child(h_flex().gap_2().child(div().flex_1().child(Input::new(&self.field_filter).id("log-field-filter").xsmall())).child(Button::new("log-clear-field-filter").xsmall().ghost().label(crate::i18n::text("Clear")).on_click(cx.listener(|view, _, window, cx| { view.field_filter.update(cx, |input, cx| input.set_value("", window, cx)); }))))
+                .child(h_flex().gap_2().items_center().child(crate::i18n::text("Display fields")).child(div().w(px(180.)).child(Input::new(&self.field_search).id("log-field-search").xsmall())).child(Button::new("log-all-fields").xsmall().ghost().label(crate::i18n::text("All")).on_click(cx.listener(|view, _, _, cx| { view.filter.fields = None; view.filter.compact = true; cx.emit(Changed::Filter); cx.notify(); }))).child(Button::new("log-no-fields").xsmall().ghost().label(crate::i18n::text("None")).on_click(cx.listener(|view, _, _, cx| { view.filter.fields = Some(BTreeSet::new()); view.filter.compact = true; cx.emit(Changed::Filter); cx.notify(); }))))
                 .child(h_flex().id("log-field-options").flex_wrap().gap_1().max_h(px(120.)).overflow_y_scroll().children(fields.into_iter().filter(|field| field.to_lowercase().contains(&self.field_search.read(cx).value().to_lowercase())).take(200).enumerate().map(|(index, field)| {
                     let selected = self.filter.fields.as_ref().is_none_or(|fields| fields.contains(&field));
                     Button::new(("log-show-field", index)).xsmall().ghost().selected(selected).label(field.clone()).on_click(cx.listener(move |view, _, _, cx| { let fields = view.filter.fields.get_or_insert_with(|| view.display.borrow().fields.keys().cloned().collect::<BTreeSet<_>>()); if !fields.remove(&field) { fields.insert(field.clone()); } view.filter.compact = true; cx.emit(Changed::Filter); cx.notify(); }))
                 })))
-                .when(self.display.borrow().fields.is_empty(), |panel| panel.child("Fields appear as JSON or logfmt lines arrive."))
-                .when(self.display.borrow().fields.len() > 200, |panel| panel.child("Showing up to 200 fields. Search to find other fields."))))
-            .when(self.time_open && self.custom_time, |panel| panel.child(h_flex().id("log-custom-range").gap_2().px_3().py_2().items_end().child(v_flex().flex_1().gap_1().child("From · server time").child(Input::new(&self.since).id("log-since").xsmall())).child(v_flex().flex_1().gap_1().child("Until · optional, snapshot").child(Input::new(&self.until).id("log-until").xsmall())).child(Button::new("log-apply-range").xsmall().primary().label("Query range").on_click(cx.listener(|view, _, _, cx| view.apply_range(cx))))))
+                .when(self.display.borrow().fields.is_empty(), |panel| panel.child(crate::i18n::text("Fields appear as JSON or logfmt lines arrive.")))
+                .when(self.display.borrow().fields.len() > 200, |panel| panel.child(crate::i18n::text("Showing up to 200 fields. Search to find other fields.")))))
+            .when(self.time_open && self.custom_time, |panel| panel.child(h_flex().id("log-custom-range").gap_2().px_3().py_2().items_end().child(v_flex().flex_1().gap_1().child(crate::i18n::text("From · server time")).child(Input::new(&self.since).id("log-since").xsmall())).child(v_flex().flex_1().gap_1().child(crate::i18n::text("Until · optional, snapshot")).child(Input::new(&self.until).id("log-until").xsmall())).child(Button::new("log-apply-range").xsmall().primary().label(crate::i18n::text("Query range")).on_click(cx.listener(|view, _, _, cx| view.apply_range(cx))))))
             .children(error.map(|error| div().id("log-filter-error").test_support().px_3().py_1().text_color(cx.theme().danger).child(copyable_text("log-filter-error-text", error))))
             .children(self.applied_range.as_ref().map(|range| div().px_3().py_1().text_color(cx.theme().muted_foreground).child(copyable_text("log-applied-range", range.clone()))))
             .children(self.message.as_ref().map(|message| div().px_3().py_1().text_color(cx.theme().muted_foreground).child(copyable_text("log-export-status", message.clone()))))
@@ -338,7 +337,11 @@ impl Render for LogInspector {
                     .px_3()
                     .py_1()
                     .gap_2()
-                    .child(div().font_weight(FontWeight::SEMIBOLD).child("Log entry"))
+                    .child(
+                        div()
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .child(crate::i18n::text("Log entry")),
+                    )
                     .child(
                         div()
                             .text_color(cx.theme().muted_foreground)
@@ -359,7 +362,7 @@ impl Render for LogInspector {
                         Button::new("log-inspector-bookmark")
                             .xsmall()
                             .ghost()
-                            .label("Toggle bookmark")
+                            .label(crate::i18n::text("Toggle bookmark"))
                             .on_click(move |_, _, cx| {
                                 let _ = bookmark.update(cx, |view, cx| view.bookmark(id, cx));
                             }),
@@ -368,7 +371,7 @@ impl Render for LogInspector {
                         Button::new("log-inspector-close")
                             .xsmall()
                             .ghost()
-                            .label("Close")
+                            .label(crate::i18n::text("Close"))
                             .on_click(move |_, _, cx| {
                                 let _ = workbench.update(cx, |view, cx| {
                                     view.inspector = None;
@@ -418,8 +421,10 @@ impl Render for LogInspector {
                                             Button::new(("log-filter-value", index))
                                                 .xsmall()
                                                 .ghost()
-                                                .label("Filter")
-                                                .tooltip("Add this exact field value to the filter")
+                                                .label(crate::i18n::text("Filter"))
+                                                .tooltip(crate::i18n::text(
+                                                    "Add this exact field value to the filter",
+                                                ))
                                                 .on_click(move |_, window, cx| {
                                                     let _ = workbench.update(cx, |view, cx| {
                                                         view.filter
@@ -443,7 +448,7 @@ impl Render for LogInspector {
                                 },
                             ))
                             .when(self.record.fields.is_empty(), |view| {
-                                view.child("No structured fields in this line.")
+                                view.child(crate::i18n::text("No structured fields in this line."))
                             }),
                     )
                     .child(
@@ -454,7 +459,7 @@ impl Render for LogInspector {
                             .child(
                                 div()
                                     .text_color(cx.theme().muted_foreground)
-                                    .child("Raw log · unchanged"),
+                                    .child(crate::i18n::text("Raw log · unchanged")),
                             )
                             .child(
                                 div()

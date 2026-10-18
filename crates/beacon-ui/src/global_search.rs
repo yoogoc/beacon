@@ -98,8 +98,7 @@ impl EventEmitter<OpenRequested> for GlobalSearch {}
 impl GlobalSearch {
     pub(crate) fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let search = cx.new(|cx| {
-            InputState::new(window, cx)
-                .placeholder("Name, kind, namespace, cluster or label…")
+            crate::i18n::input("Name, kind, namespace, cluster or label…", window, cx)
                 .clean_on_escape()
         });
         let input = cx.subscribe(&search, |view, _, event: &InputEvent, cx| {
@@ -327,11 +326,11 @@ impl GlobalSearch {
                     .ghost()
                     .small()
                     .label(if saved { "★" } else { "☆" })
-                    .accessibility_label(if saved {
+                    .accessibility_label(crate::i18n::text(if saved {
                         "Remove favorite"
                     } else {
                         "Add favorite"
-                    })
+                    }))
                     .on_click(cx.listener(move |view, _, _, cx| {
                         view.save_error = toggle_resource(favorite.clone(), cx).err();
                         view.filter(cx);
@@ -384,11 +383,11 @@ impl GlobalSearch {
                             div()
                                 .text_xs()
                                 .text_color(cx.theme().muted_foreground)
-                                .child(if connected {
+                                .child(crate::i18n::text(if connected {
                                     "Connected"
                                 } else {
                                     "Click to connect"
-                                }),
+                                })),
                         )
                         .child(div().flex_1())
                         .child(
@@ -396,7 +395,7 @@ impl GlobalSearch {
                                 .ghost()
                                 .small()
                                 .label("★")
-                                .accessibility_label("Remove favorite")
+                                .accessibility_label(crate::i18n::text("Remove favorite"))
                                 .on_click(cx.listener(move |view, _, _, cx| {
                                     view.save_error = toggle_cluster(&remove, cx).err();
                                     cx.notify();
@@ -439,19 +438,19 @@ impl Render for GlobalSearch {
             .collect();
         v_flex().size_full().min_size_0().bg(cx.theme().background).text_color(cx.theme().foreground)
             .on_action(|_:&crate::app::CloseTab,window,_|window.remove_window())
-            .child(TitleBar::new().child("Search & favorites"))
+            .child(TitleBar::new().child(crate::i18n::text("Search & favorites")))
             .child(v_flex().px_4().py_3().gap_2()
-                .child(h_flex().gap_2().child(Button::new("search-page").small().ghost().label("All resources").selected(self.page==Page::Search).on_click(cx.listener(|view,_,_,cx|{view.page=Page::Search;view.filter(cx);})))
-                    .child(Button::new("favorites-page").small().ghost().label("Favorites").selected(self.page==Page::Favorites).on_click(cx.listener(|view,_,_,cx|{view.page=Page::Favorites;view.filter(cx);})))
-                    .child(div().flex_1()).child(Button::new("global-refresh").small().ghost().label("Refresh").disabled(self.loading).on_click(cx.listener(|view,_,window,cx|view.load(window,cx))))
-                    .when(self.loading,|row|row.child(Button::new("global-cancel").small().ghost().label("Cancel").on_click(cx.listener(|view,_,_,cx|{view._load=None;view.loading=false;cx.notify();})))) )
+                .child(h_flex().gap_2().child(Button::new("search-page").small().ghost().label(crate::i18n::text("All resources")).selected(self.page==Page::Search).on_click(cx.listener(|view,_,_,cx|{view.page=Page::Search;view.filter(cx);})))
+                    .child(Button::new("favorites-page").small().ghost().label(crate::i18n::text("Favorites")).selected(self.page==Page::Favorites).on_click(cx.listener(|view,_,_,cx|{view.page=Page::Favorites;view.filter(cx);})))
+                    .child(div().flex_1()).child(Button::new("global-refresh").small().ghost().label(crate::i18n::text("Refresh")).disabled(self.loading).on_click(cx.listener(|view,_,window,cx|view.load(window,cx))))
+                    .when(self.loading,|row|row.child(Button::new("global-cancel").small().ghost().label(crate::i18n::text("Cancel")).on_click(cx.listener(|view,_,_,cx|{view._load=None;view.loading=false;cx.notify();})))) )
                 .child(Input::new(&self.search).small())
                 .child(div().text_xs().text_color(cx.theme().muted_foreground).child(if self.loading {"Loading metadata from connected clusters…".into()}else{format!("{} matches · {} connected clusters · {} kinds could not be read",self.visible.len(),connected.len(),self.errors.len())})))
             .when(self.page==Page::Favorites,|view|view.children(self.favorite_clusters(cx)).children(unavailable.iter().enumerate().map(|(index,favorite)| {
                 let remove=favorite.clone();
                 h_flex().px_4().py_1().gap_2().text_xs().text_color(cx.theme().muted_foreground)
                     .child(div().flex_1().child(format!("{} · {} · {} · {} ({})",favorite.name,favorite.kind,favorite.namespace.as_deref().unwrap_or("Cluster scope"),favorite.cluster,if connected.contains(&favorite.cluster){if self.loading{"Loading"}else{"Unavailable"}}else{"Disconnected"})))
-                    .child(Button::new(("remove-unavailable-favorite",index)).small().ghost().label("Remove").on_click(cx.listener(move|view,_,_,cx| {view.save_error=toggle_resource(remove.clone(),cx).err();cx.notify();})))
+                    .child(Button::new(("remove-unavailable-favorite",index)).small().ghost().label(crate::i18n::text("Remove")).on_click(cx.listener(move|view,_,_,cx| {view.save_error=toggle_resource(remove.clone(),cx).err();cx.notify();})))
             })))
             .when_some(self.save_error.clone(),|view,error|view.child(copyable_text("favorite-save-error",error)))
             .when(!self.errors.is_empty(),|view|view.child(div().px_4().text_xs().text_color(cx.theme().warning).child(copyable_text("global-search-errors",self.errors.join("\n")))))
@@ -472,7 +471,7 @@ pub(crate) fn open(cx: &mut App) -> anyhow::Result<Entity<GlobalSearch>> {
             ..TitleBar::window_options()
         },
         |window, cx| {
-            window.set_window_title("Beacon — Search & favorites");
+            crate::i18n::window_title("Beacon — Search & favorites", window, cx);
             let view = cx.new(|cx| GlobalSearch::new(window, cx));
             let root = cx.new(|cx| gpui_kit::component::Root::new(view.clone(), window, cx));
             child = Some(view);

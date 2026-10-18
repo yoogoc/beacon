@@ -375,7 +375,9 @@ impl Render for WorkflowActions {
                     .test_support()
                     .text_sm()
                     .text_color(cx.theme().success)
-                    .child("Permissions checked · Server validation passed"),
+                    .child(crate::i18n::text(
+                        "Permissions checked · Server validation passed",
+                    )),
             );
             if plan.action.creates() {
                 content = content.child(copyable_text(
@@ -439,7 +441,7 @@ impl Render for WorkflowActions {
                         div()
                             .text_sm()
                             .text_color(cx.theme().muted_foreground)
-                            .child("No retained Pods need deleting."),
+                            .child(crate::i18n::text("No retained Pods need deleting.")),
                     );
                 }
                 for (index, pod) in plan.pods.iter().enumerate() {
@@ -465,13 +467,13 @@ impl Render for WorkflowActions {
                             ),
                     );
                 }
-                content = content.child(div().text_xs().text_color(cx.theme().muted_foreground).child("This is a retry of the same Workflow. Deletion uses the reviewed Pod UIDs. If a later update fails, partial deletions are reported; refresh before retrying."));
+                content = content.child(div().text_xs().text_color(cx.theme().muted_foreground).child(crate::i18n::text("This is a retry of the same Workflow. Deletion uses the reviewed Pod UIDs. If a later update fails, partial deletions are reported; refresh before retrying.")));
             }
             if self.action.creates() {
                 content = content.child(
                     Button::new("workflow-preview-yaml")
                         .small()
-                        .label("View proposed YAML")
+                        .label(crate::i18n::text("View proposed YAML"))
                         .on_click(cx.listener(|view, _, window, cx| view.yaml(window, cx))),
                 );
             }
@@ -484,7 +486,7 @@ impl Render for WorkflowActions {
                             div()
                                 .text_sm()
                                 .font_weight(FontWeight::SEMIBOLD)
-                                .child("Target namespace"),
+                                .child(crate::i18n::text("Target namespace")),
                         )
                         .child(Input::new(&self.namespace).small().disabled(disabled)),
                 );
@@ -497,7 +499,7 @@ impl Render for WorkflowActions {
                             div()
                                 .text_sm()
                                 .font_weight(FontWeight::SEMIBOLD)
-                                .child("Entrypoint"),
+                                .child(crate::i18n::text("Entrypoint")),
                         )
                         .child(Select::new(entrypoint).small().disabled(disabled)),
                 );
@@ -527,7 +529,7 @@ impl Render for WorkflowActions {
                                 div()
                                     .text_xs()
                                     .text_color(cx.theme().danger)
-                                    .child("Required"),
+                                    .child(crate::i18n::text("Required")),
                             )
                         }),
                 );
@@ -544,7 +546,7 @@ impl Render for WorkflowActions {
                         crate::selection::checkbox(("workflow-parameter-override", index))
                             .checked(field.override_runtime)
                             .disabled(disabled)
-                            .label("Override runtime value")
+                            .label(crate::i18n::text("Override runtime value"))
                             .on_click(cx.listener(move |view, value, _, cx| {
                                 view.fields[index].override_runtime = *value;
                                 cx.notify();
@@ -566,7 +568,7 @@ impl Render for WorkflowActions {
                         crate::selection::checkbox(("workflow-parameter-empty", index))
                             .checked(field.allow_empty)
                             .disabled(disabled)
-                            .label("Supply an empty string")
+                            .label(crate::i18n::text("Supply an empty string"))
                             .on_click(cx.listener(move |view, value, _, cx| {
                                 view.fields[index].allow_empty = *value;
                                 cx.notify();
@@ -588,7 +590,9 @@ impl Render for WorkflowActions {
                     div()
                         .text_sm()
                         .text_color(cx.theme().muted_foreground)
-                        .child("This template has no runtime parameters."),
+                        .child(crate::i18n::text(
+                            "This template has no runtime parameters.",
+                        )),
                 );
             }
         }
@@ -668,7 +672,9 @@ impl Render for WorkflowActions {
                     .px_4()
                     .py_2()
                     .text_sm()
-                    .child("Checking current state and validating permissions…")
+                    .child(crate::i18n::text(
+                        "Checking current state and validating permissions…",
+                    ))
             }))
             .children(self.error.clone().map(|error| {
                 div()
@@ -685,11 +691,11 @@ impl Render for WorkflowActions {
                     .test_support()
                     .p_4()
                     .text_sm()
-                    .child(if self.action == Action::Retry {
+                    .child(crate::i18n::text(if self.action == Action::Retry {
                         "Deleting reviewed failed Pods, then resetting Workflow state…"
                     } else {
                         "Applying the confirmed operation…"
-                    })
+                    }))
             }))
             .child(
                 h_flex()
@@ -701,14 +707,14 @@ impl Render for WorkflowActions {
                     .children((!reviewed && self.error.is_some()).then(|| {
                         Button::new("workflow-reload")
                             .small()
-                            .label("Reload source")
+                            .label(crate::i18n::text("Reload source"))
                             .disabled(disabled)
                             .on_click(cx.listener(|view, _, window, cx| view.load(window, cx)))
                     }))
                     .children(reviewed.then(|| {
                         Button::new("workflow-back")
                             .small()
-                            .label("Back")
+                            .label(crate::i18n::text("Back"))
                             .disabled(disabled)
                             .on_click(cx.listener(|view, _, _, cx| {
                                 view.plan = None;
@@ -719,7 +725,7 @@ impl Render for WorkflowActions {
                         Button::new("workflow-cancel")
                             .ghost()
                             .small()
-                            .label("Cancel")
+                            .label(crate::i18n::text("Cancel"))
                             .disabled(self.busy)
                             .on_click(cx.listener(|_, _, _, cx| cx.emit(WorkflowEvent::Closed))),
                     )

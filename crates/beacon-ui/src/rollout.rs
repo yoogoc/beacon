@@ -248,13 +248,13 @@ impl Render for RolloutView {
                         div()
                             .flex_1()
                             .font_weight(FontWeight::SEMIBOLD)
-                            .child("Deployment history"),
+                            .child(crate::i18n::text("Deployment history")),
                     )
                     .child(
                         Button::new("refresh-rollout-history")
                             .small()
                             .ghost()
-                            .label("Refresh")
+                            .label(crate::i18n::text("Refresh"))
                             .disabled(self.loading || self.busy)
                             .on_click(cx.listener(|view, _, window, cx| view.load(window, cx))),
                     ),
@@ -295,7 +295,9 @@ impl Render for RolloutView {
                     .as_ref()
                     .map(|message| copyable_text("rollout-message", message.clone())),
             )
-            .when(self.loading, |view| view.child("Loading revisions…"))
+            .when(self.loading, |view| {
+                view.child(crate::i18n::text("Loading revisions…"))
+            })
             .when(!self.loading && self.revisions.is_empty(), |view| {
                 view.child(
                     "No retained revisions. Older history may have been pruned by the controller.",

@@ -100,6 +100,7 @@ It uses your existing kubeconfig and cluster permissions, discovering both built
 | **Port forwarding** | Forward from Pods, Services, or Deployments, choose local ports, save presets, and explicitly restore them. Backend Pod replacement can select a new target and resume the forward. |
 | **Updates** | Automatic checks, optional automatic downloads, signed packages, Stable / Development channels, and restart confirmation that protects unapplied edits. |
 | **Appearance and connections** | Light, dark, and named custom themes; locally saved fonts and colors; global and per-cluster proxies. |
+| **Language** | English and Simplified Chinese, following the system by default. Switch in Settings → Appearance; open windows and menus update immediately. |
 | **Diagnostics and keyboard navigation** | Command palette, searchable shortcut guide, separate application log window, and connection / Watch inspection from the status bar. |
 
 ## Quick start

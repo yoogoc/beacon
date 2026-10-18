@@ -31,7 +31,7 @@ pub(crate) fn open(cx: &mut App) {
             ..TitleBar::window_options()
         };
         match cx.open_window(options, |window, cx| {
-            window.set_window_title("Beacon — Keyboard shortcuts");
+            crate::i18n::window_title("Beacon — Keyboard shortcuts", window, cx);
             let view = cx.new(|cx| Shortcuts::new(window, cx));
             window.activate_window();
             cx.new(|cx| Root::new(view, window, cx))
@@ -58,8 +58,7 @@ struct Shortcuts {
 
 impl Shortcuts {
     fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let search =
-            cx.new(|cx| InputState::new(window, cx).placeholder("Search shortcuts or functions"));
+        let search = cx.new(|cx| crate::i18n::input("Search shortcuts or functions", window, cx));
         let subscription = cx.subscribe(&search, |view, input, event: &InputEvent, cx| {
             if matches!(event, InputEvent::Change) {
                 view.query = input.read(cx).value().to_lowercase();
@@ -164,26 +163,35 @@ impl Render for Shortcuts {
             .iter()
             .enumerate()
             .filter(|(_, e)| {
-                format!("{} {} {} {}", e.scope, e.keys, e.function, e.description)
-                    .to_lowercase()
-                    .contains(&self.query)
+                format!(
+                    "{} {} {} {} {} {} {}",
+                    e.scope,
+                    e.keys,
+                    e.function,
+                    e.description,
+                    crate::i18n::text(&e.scope),
+                    crate::i18n::text(&e.function),
+                    crate::i18n::text(&e.description)
+                )
+                .to_lowercase()
+                .contains(&self.query)
             })
             .collect();
         v_flex().size_full().track_focus(&self.focus).bg(cx.theme().background).text_color(cx.theme().foreground)
             .on_action(|_: &crate::app::CloseTab, window, cx| window.defer(cx, |window,_| window.remove_window()))
-            .child(TitleBar::new().child(div().font_weight(FontWeight::SEMIBOLD).child("Beacon — Keyboard shortcuts")))
-            .child(v_flex().p_4().gap_2().child(div().text_lg().font_weight(FontWeight::SEMIBOLD).child("Keyboard shortcuts"))
-                .child(div().text_sm().text_color(cx.theme().muted_foreground).child("Shortcuts depend on focus. Pod Shell captures keys for the container. Focus another control to use application shortcuts."))
+            .child(TitleBar::new().child(div().font_weight(FontWeight::SEMIBOLD).child(crate::i18n::text("Beacon — Keyboard shortcuts"))))
+            .child(v_flex().p_4().gap_2().child(div().text_lg().font_weight(FontWeight::SEMIBOLD).child(crate::i18n::text("Keyboard shortcuts")))
+                .child(div().text_sm().text_color(cx.theme().muted_foreground).child(crate::i18n::text("Shortcuts depend on focus. Pod Shell captures keys for the container. Focus another control to use application shortcuts.")))
                 .child(Input::new(&self.search)))
             .child(div().id("shortcut-list").flex_1().min_h_0().overflow_y_scroll().child(
                 v_flex().px_4().children(visible.into_iter().map(|(index,e)| {
                     h_flex().id(("shortcut", index)).w_full().gap_4().py_3().items_start().border_b_1().border_color(cx.theme().border)
                         .child(div().w(px(180.)).flex_shrink_0().font_family("monospace").text_sm().child(SelectableText::new("keys",e.keys.clone())))
                         .child(v_flex().flex_1().min_w_0().gap_1()
-                            .child(div().text_sm().font_weight(FontWeight::MEDIUM).child(e.function.clone()))
-                            .child(div().text_xs().text_color(cx.theme().muted_foreground).child(format!("{} · {}",e.scope,e.description))))
+                            .child(div().text_sm().font_weight(FontWeight::MEDIUM).child(crate::i18n::text(&e.function)))
+                            .child(div().text_xs().text_color(cx.theme().muted_foreground).child(format!("{} · {}",crate::i18n::text(&e.scope),crate::i18n::text(&e.description)))))
                 }))))
-            .child(div().p_3().text_xs().text_color(cx.theme().muted_foreground).child("Command palette: @ resource kind · # namespace · ctx cluster · > command. Select with ↑ / ↓ and confirm with Enter."))
+            .child(div().p_3().text_xs().text_color(cx.theme().muted_foreground).child(crate::i18n::text("Command palette: @ resource kind · # namespace · ctx cluster · > command. Select with ↑ / ↓ and confirm with Enter.")))
     }
 }
 

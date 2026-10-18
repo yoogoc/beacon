@@ -89,17 +89,14 @@ impl RelatedView {
                 }
             })
             .collect();
-        let search = cx.new(|cx| {
-            InputState::new(window, cx)
-                .placeholder("Search related resources")
-                .clean_on_escape()
-        });
+        let search = cx
+            .new(|cx| crate::i18n::input("Search related resources", window, cx).clean_on_escape());
         let tables: Vec<_> = relationship
             .dependencies()
             .iter()
             .map(|(group, kind)| {
                 cx.new(|cx| {
-                    TableState::new(
+                    crate::i18n::table(
                         ResourceTable::new(columns(group, kind)).without_selection(),
                         window,
                         cx,
@@ -389,7 +386,7 @@ impl Render for RelatedView {
                                 Button::new("refresh-related-resources")
                                     .small()
                                     .ghost()
-                                    .label("Refresh")
+                                    .label(crate::i18n::text("Refresh"))
                                     .disabled(loading)
                                     .on_click(
                                         cx.listener(|view, _, window, cx| view.load(window, cx)),
@@ -438,7 +435,7 @@ mod rendering_tests {
             gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
                 window.set_view_retention(false);
                 let table = cx.new(|cx| {
-                    TableState::new(
+                    crate::i18n::table(
                         ResourceTable::new(columns("", "Pod")).without_selection(),
                         window,
                         cx,

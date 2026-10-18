@@ -43,14 +43,14 @@ impl CompareView {
     }
     fn comparison_options(&self, busy: bool, cx: &Context<Self>) -> AnyElement {
         let status = checkbox("compare-status")
-            .label("Include status")
+            .label(crate::i18n::text("Include status"))
             .checked(self.options.status)
             .on_click(cx.listener(|view, value, _, cx| {
                 view.options.status = *value;
                 view.rebuild(cx);
             }));
         let metadata = checkbox("compare-metadata")
-            .label("Include server metadata")
+            .label(crate::i18n::text("Include server metadata"))
             .checked(self.options.metadata)
             .on_click(cx.listener(|view, value, _, cx| {
                 view.options.metadata = *value;
@@ -60,8 +60,8 @@ impl CompareView {
             .child(status).child(metadata)
             .when(self.kind.resource.group.is_empty() && self.kind.resource.kind == "Secret", |row| {
                 row.child(checkbox("compare-reveal")
-                    .label("Show Secret values").checked(self.options.reveal)
-                    .tooltip("Secret values are hidden by default. Revealed data is shown as stored, including base64 encoding.")
+                    .label(crate::i18n::text("Show Secret values")).checked(self.options.reveal)
+                    .tooltip(crate::i18n::text("Secret values are hidden by default. Revealed data is shown as stored, including base64 encoding."))
                     .on_click(cx.listener(|view, value, _, cx| {
                         view.options.reveal = *value;
                         view.rebuild(cx);
@@ -69,11 +69,11 @@ impl CompareView {
             })
             .child(div().flex_1())
             .when(busy, |row| row.child(Button::new("compare-cancel")
-                .small().outline().label("Cancel")
+                .small().outline().label(crate::i18n::text("Cancel"))
                 .on_click(cx.listener(|view, _, _, cx| view.cancel(cx)))))
             .child(Button::new("compare-resources")
                 .small().primary().icon(IconName::RefreshCw)
-                .label(if self.snapshots.is_some() { "Refresh" } else { "Compare" })
+                .label(crate::i18n::text(if self.snapshots.is_some() { "Refresh" } else { "Compare" }))
                 .disabled(busy || self.name.read(cx).value().trim().is_empty())
                 .on_click(cx.listener(|view, _, window, cx| view.load(window, cx))))
             .into_any_element()
@@ -117,7 +117,7 @@ impl CompareView {
                     .small()
                     .ghost()
                     .selected(self.page == Page::Changes)
-                    .label("Changes")
+                    .label(crate::i18n::text("Changes"))
                     .on_click(cx.listener(|view, _, _, cx| {
                         view.page = Page::Changes;
                         cx.notify();
@@ -128,7 +128,7 @@ impl CompareView {
                     .small()
                     .ghost()
                     .selected(self.page == Page::Yaml)
-                    .label("YAML diff")
+                    .label(crate::i18n::text("YAML diff"))
                     .on_click(cx.listener(|view, _, _, cx| {
                         view.page = Page::Yaml;
                         cx.notify();
@@ -164,7 +164,7 @@ impl CompareView {
             .children(modes)
             .child(
                 checkbox("compare-collapse")
-                    .label("Collapse unchanged")
+                    .label(crate::i18n::text("Collapse unchanged"))
                     .checked(self.collapse)
                     .on_click(cx.listener(|view, value, _, cx| {
                         view.collapse = *value;
@@ -178,7 +178,7 @@ impl CompareView {
             )
             .child(
                 checkbox("compare-wrap")
-                    .label("Wrap lines")
+                    .label(crate::i18n::text("Wrap lines"))
                     .checked(self.wrap)
                     .on_click(cx.listener(|view, value, _, cx| {
                         view.wrap = *value;
@@ -191,8 +191,8 @@ impl CompareView {
                     .small()
                     .ghost()
                     .icon(IconName::ChevronUp)
-                    .accessibility_label("Previous change")
-                    .tooltip("Previous change")
+                    .accessibility_label(crate::i18n::text("Previous change"))
+                    .tooltip(crate::i18n::text("Previous change"))
                     .on_click({
                         let diff = diff.clone();
                         move |_, _, cx| diff.update(cx, |state, cx| state.previous_change(cx))
@@ -203,8 +203,8 @@ impl CompareView {
                     .small()
                     .ghost()
                     .icon(IconName::ChevronDown)
-                    .accessibility_label("Next change")
-                    .tooltip("Next change")
+                    .accessibility_label(crate::i18n::text("Next change"))
+                    .tooltip(crate::i18n::text("Next change"))
                     .on_click({
                         let diff = diff.clone();
                         move |_, _, cx| diff.update(cx, |state, cx| state.next_change(cx))
@@ -225,7 +225,7 @@ impl CompareView {
                         "Source → Target"
                     }))
                     .when(self.mode == DiffMode::Split, |row| {
-                        row.child(div().flex_1().child("Target"))
+                        row.child(div().flex_1().child(crate::i18n::text("Target")))
                     }),
             )
             .child(
@@ -290,7 +290,7 @@ impl Render for CompareView {
             .when(ready && self.page == Page::Changes && self.changes.is_empty(), |view| {
                 view.child(v_flex().flex_1().items_center().justify_center().gap_3()
                     .child(Icon::new(IconName::Check).size_6().text_color(cx.theme().success))
-                    .child("These resources match with the selected comparison options.")
+                    .child(crate::i18n::text("These resources match with the selected comparison options."))
                     .child(label("Enable status or server metadata if you want to inspect runtime differences.", cx)))
             })
             .when(ready && self.page == Page::Changes && !self.changes.is_empty() && self.visible.is_empty(), |view| {
@@ -315,7 +315,7 @@ impl Render for CompareView {
                         .min_w_0()
                         .truncate()
                         .font_weight(FontWeight::SEMIBOLD)
-                        .child(self.title.clone()),
+                        .child(crate::i18n::title_text(&self.title)),
                 ),
             )
             .child(div().flex_1().min_size_0().p_4().child(content))

@@ -94,10 +94,15 @@ pub(super) fn event_header(cx: &App) -> AnyElement {
         .py_2()
         .text_xs()
         .text_color(cx.theme().muted_foreground)
-        .child(div().flex_1().child("Reason / message"))
-        .child(div().w(px(190.)).child("Object"))
-        .child(div().w(px(60.)).child("Seen"))
-        .child(div().w(px(44.)).text_right().child("Count"))
+        .child(div().flex_1().child(crate::i18n::text("Reason / message")))
+        .child(div().w(px(190.)).child(crate::i18n::text("Object")))
+        .child(div().w(px(60.)).child(crate::i18n::text("Seen")))
+        .child(
+            div()
+                .w(px(44.))
+                .text_right()
+                .child(crate::i18n::text("Count")),
+        )
         .into_any_element()
 }
 pub(super) fn event_row(
@@ -297,7 +302,7 @@ fn capacity_card(
                     div()
                         .text_xs()
                         .text_color(cx.theme().muted_foreground)
-                        .child("Usage / allocatable"),
+                        .child(crate::i18n::text("Usage / allocatable")),
                 ),
         )
         .child(
@@ -387,7 +392,7 @@ impl OverviewView {
                         div()
                             .text_xs()
                             .text_color(cx.theme().muted_foreground)
-                            .child("Scheduled active Pods"),
+                            .child(crate::i18n::text("Scheduled active Pods")),
                     ),
             )
             .child(
@@ -397,7 +402,7 @@ impl OverviewView {
                         h_flex()
                             .justify_between()
                             .text_xs()
-                            .child("Scheduled")
+                            .child(crate::i18n::text("Scheduled"))
                             .child(
                                 percent(scheduled, alloc)
                                     .map(|p| format!("{p:.0}%"))
@@ -455,14 +460,21 @@ impl OverviewView {
                     .justify_between()
                     .items_center()
                     .gap_2()
-                    .child(div().text_sm().font_medium().child("Resource capacity"))
+                    .child(
+                        div()
+                            .text_sm()
+                            .font_medium()
+                            .child(crate::i18n::text("Resource capacity")),
+                    )
                     .child(
                         Button::new("overview-metrics-settings")
                             .xsmall()
                             .ghost()
                             .icon(IconName::Activity)
                             .label(provider)
-                            .tooltip("Configure metrics source in cluster settings")
+                            .tooltip(crate::i18n::text(
+                                "Configure metrics source in cluster settings",
+                            ))
                             .on_click(move |_, _, cx| crate::preferences::cluster(id.clone(), cx)),
                     ),
             )
@@ -515,7 +527,7 @@ impl OverviewView {
         let mut header = h_flex()
             .justify_between()
             .items_center()
-            .child("Usage trend");
+            .child(crate::i18n::text("Usage trend"));
         if self.prometheus() {
             header = header.child(
                 h_flex().gap_1().children(
@@ -540,7 +552,7 @@ impl OverviewView {
                 div()
                     .text_xs()
                     .text_color(cx.theme().muted_foreground)
-                    .child("Session samples"),
+                    .child(crate::i18n::text("Session samples")),
             );
         }
         let Some(data) = &self.data else {

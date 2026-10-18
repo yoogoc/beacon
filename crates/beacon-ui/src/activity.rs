@@ -71,7 +71,7 @@ pub(crate) fn watches(session: &ClusterSession, cx: &App) -> AnyElement {
                             div()
                                 .text_xs()
                                 .text_color(cx.theme().muted_foreground)
-                                .child("Idle · closing soon"),
+                                .child(crate::i18n::text("Idle · closing soon")),
                         )
                     }),
             )
@@ -110,14 +110,16 @@ pub(crate) fn watches(session: &ClusterSession, cx: &App) -> AnyElement {
             .overflow_y_scroll()
             .child(v_flex().children(rows))
             .when(watches.is_empty(), |list| {
-                list.child("No active watches in this cluster.")
+                list.child(crate::i18n::text("No active watches in this cluster."))
             }),
     )
     .child(
         div()
             .text_xs()
             .text_color(cx.theme().muted_foreground)
-            .child("Shared between tabs. Idle watches close after 30 seconds."),
+            .child(crate::i18n::text(
+                "Shared between tabs. Idle watches close after 30 seconds.",
+            )),
     )
     .into_any_element()
 }

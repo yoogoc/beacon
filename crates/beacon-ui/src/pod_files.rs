@@ -144,7 +144,7 @@ impl FilesView {
                 .default_value("/")
                 .placeholder("Absolute container path")
         });
-        let search = cx.new(|cx| InputState::new(window, cx).placeholder("Filter files"));
+        let search = cx.new(|cx| crate::i18n::input("Filter files", window, cx));
         let mut view = Self {
             session,
             object,
@@ -285,7 +285,8 @@ impl FilesView {
     }
     pub fn title(&self) -> SharedString {
         format!(
-            "Files · {}",
+            "{} · {}",
+            crate::i18n::text("Files"),
             self.object.metadata.name.as_deref().unwrap_or("Pod")
         )
         .into()
@@ -853,9 +854,9 @@ impl Render for FilePrompt {
                                 .py_2()
                                 .text_xs()
                                 .font_weight(FontWeight::BOLD)
-                                .child(div().flex_1().child("Container path"))
-                                .child(div().w(px(100.)).child("Type"))
-                                .child(div().w(px(90.)).child("Size")),
+                                .child(div().flex_1().child(crate::i18n::text("Container path")))
+                                .child(div().w(px(100.)).child(crate::i18n::text("Type")))
+                                .child(div().w(px(90.)).child(crate::i18n::text("Size"))),
                         )
                         .children(self.entries.iter().enumerate().map(|(i, e)| {
                             h_flex()
@@ -892,7 +893,7 @@ impl Render for FilePrompt {
                         Button::new("file-prompt-cancel")
                             .small()
                             .ghost()
-                            .label("Cancel")
+                            .label(crate::i18n::text("Cancel"))
                             .on_click(|_, window, cx| window.close_dialog(cx)),
                     )
                     .child(

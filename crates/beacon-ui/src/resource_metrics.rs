@@ -604,11 +604,11 @@ impl ResourceMetricsView {
             });
         v_flex().gap_2()
             .child(h_flex().justify_between()
-                .child(div().text_sm().font_medium().child("Restarts & events"))
+                .child(div().text_sm().font_medium().child(crate::i18n::text("Restarts & events")))
                 .child(div().text_xs().text_color(cx.theme().muted_foreground).child(format!("{restarts} total restarts · {count} markers in range"))))
-            .child(div().text_xs().text_color(cx.theme().muted_foreground).child("Red chart ticks mark OOM, termination and warning events. Available Kubernetes events only; no historical event archive."))
+            .child(div().text_xs().text_color(cx.theme().muted_foreground).child(crate::i18n::text("Red chart ticks mark OOM, termination and warning events. Available Kubernetes events only; no historical event archive.")))
             .children(rows)
-            .when(count == 0, |v| v.child(div().text_xs().py_2().text_color(cx.theme().muted_foreground).child("No restart or warning markers in the selected range.")))
+            .when(count == 0, |v| v.child(div().text_xs().py_2().text_color(cx.theme().muted_foreground).child(crate::i18n::text("No restart or warning markers in the selected range."))))
             .when(count > 6, |v| v.child(Button::new("resource-metrics-more-events").small().ghost().label(if self.expanded_events { "Show less" } else { "Show all events" })
                 .on_click(cx.listener(|view, _, _, cx| {
                     view.expanded_events = !view.expanded_events;
@@ -711,7 +711,7 @@ impl Render for ResourceMetricsView {
                     .xsmall()
                     .ghost()
                     .icon(IconName::RefreshCw)
-                    .tooltip("Refresh metrics")
+                    .tooltip(crate::i18n::text("Refresh metrics"))
                     .disabled(self.loading || self.paused)
                     .on_click(cx.listener(|view, _, window, cx| view.refresh(window, cx))),
             );
@@ -726,7 +726,9 @@ impl Render for ResourceMetricsView {
                     .ghost()
                     .icon(IconName::Activity)
                     .label(self.source())
-                    .tooltip("Configure metrics source in cluster settings")
+                    .tooltip(crate::i18n::text(
+                        "Configure metrics source in cluster settings",
+                    ))
                     .on_click(move |_, _, cx| crate::preferences::cluster(id.clone(), cx)),
             )
             .when(self.kind.resource.kind == "Pod", |v| {
@@ -734,7 +736,7 @@ impl Render for ResourceMetricsView {
                     div().w(px(195.)).child(
                         Select::new(&self.container)
                             .id("resource-metrics-scope")
-                            .accessibility_label("Metrics scope")
+                            .accessibility_label(crate::i18n::text("Metrics scope"))
                             .small()
                             .title_prefix("Scope: "),
                     ),
@@ -760,7 +762,7 @@ impl Render for ResourceMetricsView {
                 .child(if self.loading { "Reading metrics…" } else { "No metrics snapshot available." })))
             .child(self.chart(false, cx)).child(self.chart(true, cx))
             .child(div().text_xs().text_color(cx.theme().muted_foreground)
-                .child("Reference lines use current resource settings. Declared limits sum configured budgets; containers without limits remain unbounded. Pod totals include effective init/sidecar requests."))
+                .child(crate::i18n::text("Reference lines use current resource settings. Declared limits sum configured budgets; containers without limits remain unbounded. Pod totals include effective init/sidecar requests.")))
             .child(self.events(cx))
     }
 }

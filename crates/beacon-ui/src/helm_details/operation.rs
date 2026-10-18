@@ -80,7 +80,7 @@ fn operation_window(
         move |window, cx| {
             #[cfg(all(test, feature = "ui-tests"))]
             window.set_view_retention(false);
-            window.set_window_title(&format!("Beacon — Helm {}", change.label()));
+            crate::i18n::window_title(format!("Beacon — Helm {}", change.label()), window, cx);
             window.activate_window();
             let view = cx.new(|cx| {
                 OperationView::new(session, identity, change, values, on_done, window, cx)
@@ -548,7 +548,7 @@ impl Render for OperationView {
                 body=body.child(h_flex().gap_3().child(field("Chart",&self.chart)).child(field("Repository URL (optional)",&self.repository)))
                     .child(h_flex().gap_2().items_end().child(field("Exact version",&self.version))
                         .child(Select::new(&self.versions).small().w(px(260.)).placeholder("Choose a chart version").search_placeholder("Search chart versions").accessibility_label("Chart version").disabled(!editing))
-                        .child(Button::new("helm-find-versions").small().outline().label(if self.searching {"Loading…"} else {"Find versions"}).disabled(!editing||self.searching).on_click(cx.listener(|view,_,window,cx|view.search(window,cx)))))
+                        .child(Button::new("helm-find-versions").small().outline().label(crate::i18n::text(if self.searching {"Loading…"} else {"Find versions"})).disabled(!editing||self.searching).on_click(cx.listener(|view,_,window,cx|view.search(window,cx)))))
                     .child(h_flex().gap_2().items_center().child(div().flex_1().text_sm().child("Values overrides"))
                         .child(Button::new("helm-edit-reveal").small().ghost().label(if self.values_visible {"Hide values"} else {"Reveal to edit"}).disabled(!editing).on_click(cx.listener(|view,_,window,cx|view.toggle_values(window,cx)))))
                     .child(if self.values_visible {div().id("helm-operation-values").test_support().flex_1().min_size_0().overflow_hidden().border_1().border_color(cx.theme().border).child(Editor::new(&self.values).h_full().readonly(!editing)).into_any_element()} else {div().flex_1().text_sm().text_color(cx.theme().muted_foreground).child("Stored values are hidden. The current values will be reused unless you reveal and edit them.").into_any_element()});

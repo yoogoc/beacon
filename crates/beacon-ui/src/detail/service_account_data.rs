@@ -43,7 +43,7 @@ impl DetailView {
                 .p_4()
                 .gap_2()
                 .child(Spinner::new().small())
-                .child("Inspecting value…")
+                .child(crate::i18n::text("Inspecting value…"))
                 .into_any_element();
         };
         match inspection {
@@ -69,7 +69,9 @@ impl DetailView {
                     div()
                         .text_xs()
                         .text_color(cx.theme().muted_foreground)
-                        .child("Use Raw value to view or edit the original value."),
+                        .child(crate::i18n::text(
+                            "Use Raw value to view or edit the original value.",
+                        )),
                 )
                 .into_any_element(),
             Inspection::Certificate(certificates) => div()
@@ -98,12 +100,11 @@ impl DetailView {
                     .when(
                         self.target.namespace.as_deref() != Some(namespace.as_str()),
                         |view| {
-                            view.child(
-                                div()
-                                    .text_xs()
-                                    .text_color(cx.theme().warning)
-                                    .child("This value differs from the Secret's namespace."),
-                            )
+                            view.child(div().text_xs().text_color(cx.theme().warning).child(
+                                crate::i18n::text(
+                                    "This value differs from the Secret's namespace.",
+                                ),
+                            ))
                         },
                     )
                     .into_any_element()
@@ -117,11 +118,11 @@ impl DetailView {
                 v_flex().id("account-token-details").test_support().w_full().gap_4().p_3().rounded_lg()
                     .border_1().border_color(cx.theme().border)
                     .child(v_flex().gap_2()
-                        .child(div().text_sm().font_weight(FontWeight::MEDIUM).child("JWT details"))
+                        .child(div().text_sm().font_weight(FontWeight::MEDIUM).child(crate::i18n::text("JWT details")))
                         .child(div().id("account-token-timing").test_support().text_sm().text_color(cx.theme().tone(tone))
                             .child(SelectableText::new("timing", timing.label())))
                         .child(div().text_xs().text_color(cx.theme().muted_foreground)
-                            .child("Decoded locally · Signature and token validity are not verified.")))
+                            .child(crate::i18n::text("Decoded locally · Signature and token validity are not verified."))))
                     .child(self.field_rows(&token.fields(), cx))
                     .child(self.disclosure("Decoded JWT header", "account-jwt-header",
                         self.jwt_json("account-jwt-header-json", &token.header, cx), false, cx))

@@ -60,14 +60,14 @@ impl NodePodsView {
         cx: &mut Context<Self>,
     ) -> Self {
         let table = cx.new(|cx| {
-            TableState::new(
+            crate::i18n::table(
                 ResourceTable::new(columns()).without_selection(),
                 window,
                 cx,
             )
         });
-        let search = cx
-            .new(|cx| InputState::new(window, cx).placeholder("Search Pods by name or namespace"));
+        let search =
+            cx.new(|cx| crate::i18n::input("Search Pods by name or namespace", window, cx));
         let search_subscription = cx.subscribe(&search, |view, state, event: &InputEvent, cx| {
             if matches!(event, InputEvent::Change) {
                 let query = state.read(cx).value().to_string();
@@ -188,7 +188,7 @@ impl Render for NodePodsView {
         let refresh = Button::new("refresh-node-pods")
             .xsmall()
             .ghost()
-            .label("Refresh")
+            .label(crate::i18n::text("Refresh"))
             .disabled(self.table.read(cx).delegate().is_loading())
             .on_click(cx.listener(|view, _, window, cx| view.load(window, cx)));
         render_pods_content(
@@ -242,7 +242,7 @@ fn render_pods_content(
             .p_4()
             .text_sm()
             .text_color(cx.theme().muted_foreground)
-            .child("Loading Pods…")
+            .child(crate::i18n::text("Loading Pods…"))
             .test_support()
             .into_any_element()
     } else if state.is_empty() {
@@ -355,7 +355,7 @@ mod rendering_tests {
             gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
                 window.set_view_retention(retained_views);
                 let table = cx.new(|cx| {
-                    TableState::new(
+                    crate::i18n::table(
                         ResourceTable::new(columns()).without_selection(),
                         window,
                         cx,
@@ -372,7 +372,7 @@ mod rendering_tests {
                         }))
                         .unwrap(),
                     )])]);
-                    TableState::new(delegate, window, cx)
+                    crate::i18n::table(delegate, window, cx)
                 });
                 cx.new(|_| Tabs {
                     pane,

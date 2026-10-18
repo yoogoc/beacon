@@ -61,7 +61,7 @@ pub(crate) fn open(
 ) -> Entity<AggregateLogs> {
     let title = format!("Aggregated logs · {}", session.id().display_name());
     let view = cx.new(|cx: &mut Context<AggregateLogs>| {
-        let search = cx.new(|cx| InputState::new(window, cx).placeholder("Search all logs"));
+        let search = cx.new(|cx| crate::i18n::input("Search all logs", window, cx));
         let container = cx.new(|cx| {
             SelectState::new(SearchableVec::new(vec![ALL.to_owned()]), None, window, cx)
                 .searchable(true)
@@ -474,21 +474,21 @@ impl Render for AggregateLogs {
         .render(window, cx);
         v_flex().w_full().h((window.viewport_size().height * 0.78).min(px(760.))).gap_2()
             .child(h_flex().gap_2().child(div().flex_1().child(Input::new(&self.selector).small()))
-                .child(Button::new("apply-log-selector").small().ghost().label("Apply selector / retry").on_click(cx.listener(|view, _, window, cx| view.load(window, cx)))))
+                .child(Button::new("apply-log-selector").small().ghost().label(crate::i18n::text("Apply selector / retry")).on_click(cx.listener(|view, _, window, cx| view.load(window, cx)))))
             .child(h_flex().id("aggregate-log-toolbar").w_full().overflow_x_scroll().gap_2().flex_shrink_0()
                 .child(div().w(px(210.)).flex_shrink_0().child(Select::new(&self.container).small().title_prefix("Container: ")))
                 .child(div().w(px(180.)).flex_shrink_0().child(Input::new(&self.search).small()))
                 .child(Button::new("aggregate-pause").small().ghost().label(if self.follow { "Pause follow" } else { "Resume follow" }).on_click(cx.listener(|view, _, _, cx| { view.follow = !view.follow; if view.follow { view.latest(); } cx.notify(); })))
-                .child(Button::new("aggregate-latest").small().ghost().label("Latest").on_click(cx.listener(|view, _, _, cx| { view.follow = true; view.latest(); cx.notify(); })))
-                .child(Button::new("aggregate-wrap").small().ghost().label("Wrap").on_click(cx.listener(|view, _, _, cx| { view.wrap = !view.wrap; if view.follow { view.latest(); } cx.notify(); })))
+                .child(Button::new("aggregate-latest").small().ghost().label(crate::i18n::text("Latest")).on_click(cx.listener(|view, _, _, cx| { view.follow = true; view.latest(); cx.notify(); })))
+                .child(Button::new("aggregate-wrap").small().ghost().label(crate::i18n::text("Wrap")).on_click(cx.listener(|view, _, _, cx| { view.wrap = !view.wrap; if view.follow { view.latest(); } cx.notify(); })))
                 .child(Button::new("aggregate-previous").small().ghost().label(if self.previous { "Previous: on" } else { "Previous" }).on_click(cx.listener(|view, _, window, cx| { view.previous = !view.previous; view.clear_logs(); view.streams.clear(); view.sync(window, cx); })))
-                .child(Button::new("aggregate-copy").small().ghost().label("Copy").tooltip("Copy matching retained raw lines; field projection does not remove original data").on_click(cx.listener(|view, _, _, cx| cx.write_to_clipboard(ClipboardItem::new_string(view.display.borrow().text())))))
-                .child(Button::new("aggregate-download").small().ghost().label("Export all…").tooltip("Download complete available logs for every current source; active time bounds apply").disabled(self.downloading || self.streams.is_empty()).on_click(cx.listener(|view, _, window, cx| view.download(window, cx))))
-                .when(self.downloading, |bar| bar.child(Button::new("aggregate-cancel-download").small().ghost().label("Cancel download").on_click(cx.listener(|view, _, _, cx| { view._download = None; view.downloading = false; view.message = Some("Download cancelled. Completed files remain in the selected folder.".into()); cx.notify(); }))))
+                .child(Button::new("aggregate-copy").small().ghost().label(crate::i18n::text("Copy")).tooltip(crate::i18n::text("Copy matching retained raw lines; field projection does not remove original data")).on_click(cx.listener(|view, _, _, cx| cx.write_to_clipboard(ClipboardItem::new_string(view.display.borrow().text())))))
+                .child(Button::new("aggregate-download").small().ghost().label(crate::i18n::text("Export all…")).tooltip(crate::i18n::text("Download complete available logs for every current source; active time bounds apply")).disabled(self.downloading || self.streams.is_empty()).on_click(cx.listener(|view, _, window, cx| view.download(window, cx))))
+                .when(self.downloading, |bar| bar.child(Button::new("aggregate-cancel-download").small().ghost().label(crate::i18n::text("Cancel download")).on_click(cx.listener(|view, _, _, cx| { view._download = None; view.downloading = false; view.message = Some("Download cancelled. Completed files remain in the selected folder.".into()); cx.notify(); }))))
                 .child(div().whitespace_nowrap().text_sm().child(format!("{} Pods · {} sources · {} lines · {} dropped", self.pods.iter().map(ResourceStore::len).sum::<usize>(), self.streams.len(), self.display.borrow().rows.len(), self.logs.dropped()))))
             .child(self.workbench.clone())
             .children(self.message.as_ref().map(|message| copyable_text("aggregate-message", message.clone())))
-            .when(self.loading > 0, |view| view.child("Loading matching Pods…"))
+            .when(self.loading > 0, |view| view.child(crate::i18n::text("Loading matching Pods…")))
             .children(self.errors.iter().enumerate().map(|(index, (source, error))| copyable_text(("aggregate-stream-error", index), format!("{} {error}", source.prefix()))))
             .child(div().flex_1().min_size_0().child(body))
             .children(self.workbench.read(cx).inspector())

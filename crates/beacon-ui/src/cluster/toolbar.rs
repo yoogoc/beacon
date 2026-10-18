@@ -43,7 +43,7 @@ pub(super) fn filter_button(
         .small()
         .outline()
         .icon(Icon::new(glyph))
-        .label(label)
+        .label(crate::i18n::filter_text(&label))
         .dropdown_caret(true)
         .max_w(px(140.))
         .when(active, |button| {
@@ -98,7 +98,7 @@ pub(super) fn picker_choice(
     selected: bool,
     cx: &App,
 ) -> impl IntoElement + StatefulInteractiveElement + 'static {
-    let label = label.into();
+    let label = crate::i18n::text(label.into());
     h_flex()
         .id(id)
         .role(Role::ListBoxOption)
@@ -235,8 +235,8 @@ impl ClusterView {
                     .small()
                     .ghost()
                     .icon(IconName::Ellipsis)
-                    .accessibility_label("Filters and display settings")
-                    .tooltip("Filters and display settings"),
+                    .accessibility_label(crate::i18n::text("Filters and display settings"))
+                    .tooltip(crate::i18n::text("Filters and display settings")),
             )
             .content(move |_, _, cx| {
                 content
@@ -253,7 +253,7 @@ impl ClusterView {
                             .child(
                                 div()
                                     .font_weight(FontWeight::MEDIUM)
-                                    .child("Filters and display"),
+                                    .child(crate::i18n::text("Filters and display")),
                             )
                             .when(view.mode == Mode::Objects && view.kind.is_some(), |menu| {
                                 menu.child(view.render_label_picker(Layout::Full, cx))
@@ -289,8 +289,8 @@ impl ClusterView {
                             .small()
                             .ghost()
                             .icon(Icon::new(Glyph::Logs))
-                            .accessibility_label("Aggregated logs")
-                            .tooltip("Aggregate logs from the filtered Pods")
+                            .accessibility_label(crate::i18n::text("Aggregated logs"))
+                            .tooltip(crate::i18n::text("Aggregate logs from the filtered Pods"))
                             .on_click(cx.listener(|view, _, window, cx| {
                                 view.toolbar_open = false;
                                 view.aggregate_filtered(window, cx);
@@ -331,15 +331,18 @@ impl ClusterView {
                         .min_w_0()
                         .text_xs()
                         .truncate()
-                        .child(format!("{selected} selected")),
+                        .child(crate::i18n::message(
+                            "resources.selected",
+                            &[("count", selected.to_string())],
+                        )),
                 )
                 .child(
                     Button::new("clear-selected")
                         .small()
                         .ghost()
                         .icon(IconName::Close)
-                        .accessibility_label("Clear selection")
-                        .tooltip("Clear selection")
+                        .accessibility_label(crate::i18n::text("Clear selection"))
+                        .tooltip(crate::i18n::text("Clear selection"))
                         .on_click(cx.listener(|view, _, _, cx| {
                             view.table.update(cx, |table, cx| {
                                 table.delegate_mut().clear_selected();
@@ -354,9 +357,11 @@ impl ClusterView {
                             .small()
                             .outline()
                             .icon(Icon::new(Glyph::Columns3))
-                            .when(!compact, |button| button.label("Compare"))
-                            .accessibility_label("Compare selected resources")
-                            .tooltip("Compare the two selected resources")
+                            .when(!compact, |button| {
+                                button.label(crate::i18n::text("Compare"))
+                            })
+                            .accessibility_label(crate::i18n::text("Compare selected resources"))
+                            .tooltip(crate::i18n::text("Compare the two selected resources"))
                             .on_click(
                                 cx.listener(|view, _, window, cx| {
                                     view.compare_selected(window, cx)
@@ -374,9 +379,15 @@ impl ClusterView {
                                 .small()
                                 .outline()
                                 .icon(IconName::RefreshCw)
-                                .when(!compact, |button| button.label("Restart"))
-                                .accessibility_label("Restart selected Deployments")
-                                .tooltip("Restart Pods using each Deployment's update strategy")
+                                .when(!compact, |button| {
+                                    button.label(crate::i18n::text("Restart"))
+                                })
+                                .accessibility_label(crate::i18n::text(
+                                    "Restart selected Deployments",
+                                ))
+                                .tooltip(crate::i18n::text(
+                                    "Restart Pods using each Deployment's update strategy",
+                                ))
                                 .disabled(
                                     !self.may_restart_selected(cx)
                                         || self.bulk_deleting
@@ -393,9 +404,11 @@ impl ClusterView {
                         .small()
                         .danger()
                         .icon(Icon::new(Glyph::Trash))
-                        .when(!compact, |button| button.label("Delete selected"))
-                        .accessibility_label("Delete selected resources")
-                        .tooltip("Delete selected resources")
+                        .when(!compact, |button| {
+                            button.label(crate::i18n::text("Delete selected"))
+                        })
+                        .accessibility_label(crate::i18n::text("Delete selected resources"))
+                        .tooltip(crate::i18n::text("Delete selected resources"))
                         .disabled(
                             !self.may_delete() || self.bulk_deleting || self.bulk_restart.is_some(),
                         )

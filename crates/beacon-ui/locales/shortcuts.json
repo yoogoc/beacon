@@ -1,0 +1,215 @@
+{
+  "_version": 2,
+  "shortcuts.search_shortcuts_or_functions": {
+    "en": "Search shortcuts or functions",
+    "zh-CN": "搜索快捷键或功能"
+  },
+  "shortcuts.copy_selected_values": {
+    "en": "Copy selected values",
+    "zh-CN": "复制所选值"
+  },
+  "shortcuts.beacon_keyboard_shortcuts": {
+    "en": "Beacon — Keyboard shortcuts",
+    "zh-CN": "Beacon — 快捷键"
+  },
+  "shortcuts.command_palette_resource_kind_namespace_ctx_cluster_comm_d341641e": {
+    "en": "Command palette: @ resource kind · # namespace · ctx cluster · > command. Select with ↑ / ↓ and confirm with Enter.",
+    "zh-CN": "命令面板：@ 资源类型 · # 命名空间 · ctx 集群 · > 命令。使用 ↑ / ↓ 选择，按 Enter 确认。"
+  },
+  "shortcuts.shortcuts_depend_on_focus_pod_shell_captures_keys_for_th_11efc33e": {
+    "en": "Shortcuts depend on focus. Pod Shell captures keys for the container. Focus another control to use application shortcuts.",
+    "zh-CN": "快捷键取决于焦点位置。Pod Shell 会将按键发送至容器，将焦点移至其他控件后可使用应用快捷键。"
+  },
+  "shortcuts.text_fields_yaml_editor": {
+    "en": "Text fields / YAML editor",
+    "zh-CN": "文本输入框 / YAML 编辑器"
+  },
+  "shortcuts.overview_messages": {
+    "en": "Overview / messages",
+    "zh-CN": "概览 / 消息"
+  },
+  "shortcuts.send_an_interrupt_to_the_process_running_in_the_focused_shell": {
+    "en": "Send an interrupt to the process running in the focused shell.",
+    "zh-CN": "向当前 Shell 中运行的进程发送中断信号。"
+  },
+  "shortcuts.send_end_of_input_on_an_empty_shell_prompt_this_usually_exits_the_shell": {
+    "en": "Send end-of-input; on an empty shell prompt this usually exits the shell.",
+    "zh-CN": "发送输入结束信号；在空 Shell 提示符下通常会退出 Shell。"
+  },
+  "shortcuts.ask_the_remote_shell_to_suspend_its_foreground_process": {
+    "en": "Ask the remote shell to suspend its foreground process.",
+    "zh-CN": "请求远程 Shell 挂起前台进程。"
+  },
+  "shortcuts.drag_to_select_a_value_or_error_message_then_copy_the_se_29c9cd05": {
+    "en": "Drag to select a value or error message, then copy the selection. Right-click a message to copy its full text.",
+    "zh-CN": "拖动选择数值或错误信息后复制；右键点击消息可复制完整内容。"
+  },
+  "shortcuts.ask_for_confirmation_before_quitting_beacon_and_closing_its_windows": {
+    "en": "Ask for confirmation before quitting Beacon and closing its windows.",
+    "zh-CN": "退出 Beacon 并关闭所有窗口前请求确认。"
+  },
+  "shortcuts.find_resources_switch_namespaces_or_clusters_and_run_com_a1b53800": {
+    "en": "Find resources, switch namespaces or clusters, and run commands using @, #, ctx and >.",
+    "zh-CN": "使用 @、#、ctx 和 > 查找资源、切换命名空间或集群以及执行命令。"
+  },
+  "shortcuts.search_across_resource_kinds_and_namespaces_in_connected_af3345e9": {
+    "en": "Search across resource kinds and namespaces in connected clusters, and open saved cluster or resource favorites.",
+    "zh-CN": "在已连接集群中跨类型和命名空间搜索资源，也可打开已收藏的集群或资源。"
+  },
+  "shortcuts.open_the_application_s_own_logs_in_a_separate_window": {
+    "en": "Open the application's own logs in a separate window.",
+    "zh-CN": "在独立窗口中打开应用日志。"
+  },
+  "shortcuts.open_application_preferences_for_themes_fonts_and_the_global_proxy": {
+    "en": "Open application preferences for themes, fonts and the global proxy.",
+    "zh-CN": "打开应用设置，配置主题、字体和全局代理。"
+  },
+  "shortcuts.open_this_searchable_guide_to_shortcuts_and_their_functions": {
+    "en": "Open this searchable guide to shortcuts and their functions.",
+    "zh-CN": "打开可搜索的快捷键与功能说明。"
+  },
+  "shortcuts.open_another_tab_for_the_current_cluster_without_a_clust_e194b9e9": {
+    "en": "Open another tab for the current cluster; without a cluster, open the cluster picker.",
+    "zh-CN": "为当前集群打开新标签页；尚未选择集群时打开集群选择器。"
+  },
+  "shortcuts.close_the_current_resource_tab_with_no_tabs_open_ask_bef_f4e1be6a": {
+    "en": "Close the current resource tab. With no tabs open, ask before quitting Beacon. In Resource comparison, App logs, Keyboard shortcuts or Settings, close that window.",
+    "zh-CN": "关闭当前资源标签页。没有标签页时退出前请求确认；在资源对比、应用日志、快捷键或设置窗口中则关闭该窗口。"
+  },
+  "shortcuts.switch_to_the_next_resource_tab_in_the_focused_pane": {
+    "en": "Switch to the next resource tab in the focused pane.",
+    "zh-CN": "切换到当前面板的下一个资源标签页。"
+  },
+  "shortcuts.switch_to_the_previous_resource_tab_in_the_focused_pane": {
+    "en": "Switch to the previous resource tab in the focused pane.",
+    "zh-CN": "切换到当前面板的上一个资源标签页。"
+  },
+  "shortcuts.open_an_independent_resource_view_to_the_right_keeping_t_5677e6d3": {
+    "en": "Open an independent resource view to the right, keeping the namespace and filters. Drag the divider to resize.",
+    "zh-CN": "向右打开独立资源视图，保留命名空间和筛选条件，可拖动分隔线调整大小。"
+  },
+  "shortcuts.open_an_independent_resource_view_below_keeping_the_name_9548e69a": {
+    "en": "Open an independent resource view below, keeping the namespace and filters. Splits can be nested.",
+    "zh-CN": "向下打开独立资源视图，保留命名空间和筛选条件，支持嵌套拆分。"
+  },
+  "shortcuts.clear_the_table_selection": {
+    "en": "Clear the table selection.",
+    "zh-CN": "清除资源列表选择。"
+  },
+  "shortcuts.dismiss_the_open_palette_or_menu": {
+    "en": "Dismiss the open palette or menu.",
+    "zh-CN": "关闭当前命令面板或菜单。"
+  },
+  "shortcuts.activate_the_selected_command_or_menu_item": {
+    "en": "Activate the selected command or menu item.",
+    "zh-CN": "执行所选命令或菜单项。"
+  },
+  "shortcuts.confirm_a_single_line_input_or_insert_a_line_break_in_a_multiline_editor": {
+    "en": "Confirm a single-line input or insert a line break in a multiline editor.",
+    "zh-CN": "确认单行输入，或在多行编辑器中插入换行。"
+  },
+  "shortcuts.dismiss_search_or_clear_a_search_field_configured_to_clear_on_escape": {
+    "en": "Dismiss search or clear a search field configured to clear on Escape.",
+    "zh-CN": "关闭搜索，或清空支持 Escape 清除的搜索框。"
+  },
+  "shortcuts.copy_the_selected_text_to_the_clipboard": {
+    "en": "Copy the selected text to the clipboard.",
+    "zh-CN": "将所选文本复制到剪贴板。"
+  },
+  "shortcuts.copy_and_remove_the_selected_text": {
+    "en": "Copy and remove the selected text.",
+    "zh-CN": "复制并删除所选文本。"
+  },
+  "shortcuts.insert_the_clipboard_text_into_the_focused_field": {
+    "en": "Insert the clipboard text into the focused field.",
+    "zh-CN": "将剪贴板文本粘贴至当前输入框。"
+  },
+  "shortcuts.select_all_text_in_the_focused_field": {
+    "en": "Select all text in the focused field.",
+    "zh-CN": "选择当前输入框中的全部文本。"
+  },
+  "shortcuts.undo_the_last_text_edit": {
+    "en": "Undo the last text edit.",
+    "zh-CN": "撤销上一次文本编辑。"
+  },
+  "shortcuts.redo_the_last_undone_text_edit": {
+    "en": "Redo the last undone text edit.",
+    "zh-CN": "重做上一次撤销的编辑。"
+  },
+  "shortcuts.delete_the_character_before_the_cursor_or_the_selected_text": {
+    "en": "Delete the character before the cursor or the selected text.",
+    "zh-CN": "删除光标前的字符或所选文本。"
+  },
+  "shortcuts.delete_the_character_after_the_cursor_or_the_selected_text": {
+    "en": "Delete the character after the cursor or the selected text.",
+    "zh-CN": "删除光标后的字符或所选文本。"
+  },
+  "shortcuts.find_text_in_the_focused_multiline_editor": {
+    "en": "Find text in the focused multiline editor.",
+    "zh-CN": "在当前多行编辑器中查找文本。"
+  },
+  "shortcuts.find_and_replace_text_in_the_focused_multiline_editor": {
+    "en": "Find and replace text in the focused multiline editor.",
+    "zh-CN": "在当前多行编辑器中查找并替换文本。"
+  },
+  "shortcuts.select_the_previous_resource_row_command_or_menu_item": {
+    "en": "Select the previous resource row, command or menu item.",
+    "zh-CN": "选择上一个资源、命令或菜单项。"
+  },
+  "shortcuts.select_the_next_resource_row_command_or_menu_item": {
+    "en": "Select the next resource row, command or menu item.",
+    "zh-CN": "选择下一个资源、命令或菜单项。"
+  },
+  "shortcuts.move_to_the_previous_table_column": {
+    "en": "Move to the previous table column.",
+    "zh-CN": "移至上一列。"
+  },
+  "shortcuts.move_to_the_next_table_column": {
+    "en": "Move to the next table column.",
+    "zh-CN": "移至下一列。"
+  },
+  "shortcuts.select_the_first_resource_row": {
+    "en": "Select the first resource row.",
+    "zh-CN": "选择第一条资源。"
+  },
+  "shortcuts.select_the_last_resource_row": {
+    "en": "Select the last resource row.",
+    "zh-CN": "选择最后一条资源。"
+  },
+  "shortcuts.move_selection_up_by_one_table_page": {
+    "en": "Move selection up by one table page.",
+    "zh-CN": "向上移动一页资源选择。"
+  },
+  "shortcuts.move_selection_down_by_one_table_page": {
+    "en": "Move selection down by one table page.",
+    "zh-CN": "向下移动一页资源选择。"
+  },
+  "shortcuts.add_a_text_cursor_on_the_previous_editor_line": {
+    "en": "Add a text cursor on the previous editor line.",
+    "zh-CN": "在上一行添加文本光标。"
+  },
+  "shortcuts.add_a_text_cursor_on_the_next_editor_line": {
+    "en": "Add a text cursor on the next editor line.",
+    "zh-CN": "在下一行添加文本光标。"
+  },
+  "shortcuts.open_the_system_character_and_emoji_picker": {
+    "en": "Open the system character and emoji picker.",
+    "zh-CN": "打开系统字符与表情选择器。"
+  },
+  "shortcuts.show_available_editor_actions_at_the_cursor_when_supported": {
+    "en": "Show available editor actions at the cursor, when supported.",
+    "zh-CN": "显示光标处可用的编辑器操作（如支持）。"
+  },
+  "shortcuts.use_this_key_in_the_focused_control": {
+    "en": "Use this key in the focused control.",
+    "zh-CN": "在当前控件中使用此按键。"
+  },
+  "shortcuts.indent_the_selected_lines_or_insert_indentation": {
+    "en": "Indent the selected lines or insert indentation.",
+    "zh-CN": "缩进所选行或插入缩进。"
+  },
+  "shortcuts.remove_one_indentation_level_from_the_selected_lines": {
+    "en": "Remove one indentation level from the selected lines.",
+    "zh-CN": "移除所选行的一级缩进。"
+  }
+}

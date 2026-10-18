@@ -224,7 +224,7 @@ impl Render for BulkRestart {
                     .bg(cx.theme().muted)
                     .text_xs()
                     .text_color(cx.theme().muted_foreground)
-                    .child(div().w(px(132.)).child("Namespace"))
+                    .child(div().w(px(132.)).child(crate::i18n::text("Namespace")))
                     .child(div().flex_1().child("Deployment")),
             )
             .child(
@@ -248,7 +248,11 @@ impl Render for BulkRestart {
                 Button::new("bulk-restart-close")
                     .small()
                     .ghost()
-                    .label(if self.finished { "Close" } else { "Cancel" })
+                    .label(crate::i18n::text(if self.finished {
+                        "Close"
+                    } else {
+                        "Cancel"
+                    }))
                     .disabled(self.busy)
                     .on_click(cx.listener(|_, _, _, cx| cx.emit(Event::Closed))),
             )
@@ -276,7 +280,7 @@ impl Render for BulkRestart {
             .child(table)
             .when(self.finished && failed > 0, |view| view.child(div().text_xs()
                 .text_color(cx.theme().muted_foreground)
-                .child("Failed targets remain selected when still available. Review their errors before retrying.")))
+                .child(crate::i18n::text("Failed targets remain selected when still available. Review their errors before retrying."))))
             .child(footer)
     }
 }

@@ -37,11 +37,24 @@ impl Ask {
 
     fn title(&self) -> String {
         if let Some(targets) = &self.bulk_targets {
-            return format!("Delete {} {} resources?", targets.len(), self.kind);
+            return crate::i18n::message(
+                "resources.delete_many",
+                &[
+                    ("count", targets.len().to_string()),
+                    ("kind", self.kind.to_string()),
+                ],
+            )
+            .to_string();
         }
         match self.operation {
-            Operation::Delete => format!("Delete {}?", self.kind),
-            Operation::Scale { .. } => format!("Scale this {}", self.kind),
+            Operation::Delete => {
+                crate::i18n::message("resources.delete_one", &[("kind", self.kind.to_string())])
+                    .to_string()
+            }
+            Operation::Scale { .. } => {
+                crate::i18n::message("resources.scale", &[("kind", self.kind.to_string())])
+                    .to_string()
+            }
             _ => self.operation.describe(),
         }
     }
@@ -87,11 +100,7 @@ impl Prompt {
             _ => String::new(),
         };
 
-        let replicas = cx.new(|cx| {
-            InputState::new(window, cx)
-                .placeholder("Replicas")
-                .default_value(start)
-        });
+        let replicas = cx.new(|cx| crate::i18n::input("Replicas", window, cx).default_value(start));
         if ask.needs_a_number() {
             replicas.read(cx).focus_handle(cx).focus(window, cx);
         }
@@ -192,8 +201,8 @@ impl Prompt {
             .font_weight(FontWeight::MEDIUM)
             .text_color(muted)
             .child(div().w(px(32.)).child("#"))
-            .child(div().w(px(150.)).child("Namespace"))
-            .child(div().flex_1().child("Name"));
+            .child(div().w(px(150.)).child(crate::i18n::text("Namespace")))
+            .child(div().flex_1().child(crate::i18n::text("Name")));
 
         let rows = targets.iter().enumerate().map(|(index, target)| {
             h_flex()
@@ -228,7 +237,7 @@ impl Prompt {
                         Button::new(("delete-view-usage", index))
                             .small()
                             .ghost()
-                            .label("View usage")
+                            .label(crate::i18n::text("View usage"))
                             .on_click(cx.listener(move |_, _, _, cx| {
                                 cx.emit(PromptEvent::UsageRequested(target.clone()))
                             })),
@@ -289,7 +298,7 @@ impl Render for Prompt {
                 div()
                     .text_sm()
                     .text_color(cx.theme().muted_foreground)
-                    .child(self.ask.body()),
+                    .child(crate::i18n::text(self.ask.body())),
             )
             .children(self.render_targets(cx))
             .children(
@@ -307,7 +316,7 @@ impl Render for Prompt {
                             Button::new("delete-view-usage")
                                 .small()
                                 .ghost()
-                                .label("View usage")
+                                .label(crate::i18n::text("View usage"))
                                 .on_click(cx.listener(move |_, _, _, cx| {
                                     cx.emit(PromptEvent::UsageRequested(target.clone()))
                                 })),
@@ -317,7 +326,7 @@ impl Render for Prompt {
                         Button::new("cancel")
                             .ghost()
                             .small()
-                            .label("Cancel")
+                            .label(crate::i18n::text("Cancel"))
                             .on_click(cx.listener(|_, _, _, cx| {
                                 cx.emit(PromptEvent::Cancelled);
                             })),

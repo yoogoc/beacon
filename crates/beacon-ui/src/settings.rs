@@ -157,6 +157,7 @@ pub(crate) struct ClusterSettings {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub(crate) struct Preferences {
+    pub language: crate::i18n::Language,
     pub appearance: Appearance,
     pub context_display: ContextDisplay,
     pub themes: BTreeMap<String, CustomTheme>,
@@ -245,6 +246,7 @@ pub(crate) fn init(cx: &mut App) {
         base,
     });
     cx.set_global(Store(state));
+    crate::i18n::init(store(cx).read(cx).preferences.language, cx);
     apply(None, cx);
 }
 fn read(directory: &Path) -> Result<Preferences, String> {
@@ -276,6 +278,24 @@ pub(crate) fn save(
         cx.notify();
     });
     apply(Some(window), cx);
+    crate::i18n::apply(store(cx).read(cx).preferences.language, cx);
+    cx.refresh_windows();
+    Ok(())
+}
+
+/// Language saves independently of any open settings draft. The notification
+/// refreshes cached preferences without reconnecting clusters or reapplying themes.
+pub(crate) fn save_language(language: crate::i18n::Language, cx: &mut App) -> Result<(), String> {
+    let state = store(cx);
+    let mut preferences = state.read(cx).preferences.clone();
+    preferences.language = language;
+    write(&state.read(cx).directory, &preferences)?;
+    state.update(cx, |state, cx| {
+        state.preferences = preferences;
+        cx.emit(Changed(None));
+        cx.notify();
+    });
+    crate::i18n::apply(language, cx);
     cx.refresh_windows();
     Ok(())
 }

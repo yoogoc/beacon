@@ -65,7 +65,7 @@ impl PreferencesView {
                                         .flex_1()
                                         .text_sm()
                                         .font_weight(FontWeight::MEDIUM)
-                                        .child(label),
+                                        .child(crate::i18n::text(label)),
                                 )
                                 .child(Icon::new(IconName::CircleCheck).size_4().text_color(
                                     if selected {
@@ -81,7 +81,7 @@ impl PreferencesView {
                                 .whitespace_normal()
                                 .text_xs()
                                 .text_color(cx.theme().muted_foreground)
-                                .child(description),
+                                .child(crate::i18n::text(description)),
                         ),
                 )
                 .on_click(cx.listener(move |view, _, _, cx| {

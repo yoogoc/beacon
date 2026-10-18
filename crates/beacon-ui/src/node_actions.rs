@@ -76,7 +76,7 @@ impl NodeActions {
                 .default_value("300")
                 .placeholder("Timeout seconds")
         });
-        let grace = cx.new(|cx| InputState::new(window, cx).placeholder("Pod default"));
+        let grace = cx.new(|cx| crate::i18n::input("Pod default", window, cx));
         let inputs = vec![
             cx.subscribe(&timeout, |_, _, _: &InputEvent, cx| cx.notify()),
             cx.subscribe(&grace, |_, _, _: &InputEvent, cx| cx.notify()),
@@ -464,7 +464,11 @@ impl NodeActions {
                         .child(Scrollbar::vertical(&self.scroll)),
                 )
                 .when(plan.pods.is_empty(), |view| {
-                    view.child(div().text_sm().child("No Pods are scheduled to this Node."))
+                    view.child(
+                        div()
+                            .text_sm()
+                            .child(crate::i18n::text("No Pods are scheduled to this Node.")),
+                    )
                 })
                 .into_any_element(),
         )
@@ -543,7 +547,9 @@ impl Render for NodeActions {
                     .id("node-maintenance-loading")
                     .test_support()
                     .text_sm()
-                    .child("Checking permissions, Pods, storage and disruption budgets…")
+                    .child(crate::i18n::text(
+                        "Checking permissions, Pods, storage and disruption budgets…",
+                    ))
             }))
             .children(self.render_pods(cx))
             .children(
@@ -573,7 +579,9 @@ impl Render for NodeActions {
                         checkbox("node-drain-emptydir")
                             .checked(self.allow_empty)
                             .disabled(self.busy)
-                            .label("Allow deletion of the emptyDir data listed above")
+                            .label(crate::i18n::text(
+                                "Allow deletion of the emptyDir data listed above",
+                            ))
                             .on_click(cx.listener(|view, value, _, cx| {
                                 view.allow_empty = *value;
                                 cx.notify();
@@ -583,7 +591,9 @@ impl Render for NodeActions {
                         checkbox("node-drain-unmanaged")
                             .checked(self.force)
                             .disabled(self.busy)
-                            .label("Evict Pods without a controller; they may not be recreated")
+                            .label(crate::i18n::text(
+                                "Evict Pods without a controller; they may not be recreated",
+                            ))
                             .on_click(cx.listener(|view, value, _, cx| {
                                 view.force = *value;
                                 cx.notify();
@@ -593,14 +603,22 @@ impl Render for NodeActions {
                         h_flex()
                             .gap_3()
                             .items_center()
-                            .child(div().text_sm().child("Timeout (seconds)"))
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .child(crate::i18n::text("Timeout (seconds)")),
+                            )
                             .child(
                                 Input::new(&self.timeout)
                                     .small()
                                     .w(px(90.))
                                     .disabled(self.busy),
                             )
-                            .child(div().text_sm().child("Grace period (seconds)"))
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .child(crate::i18n::text("Grace period (seconds)")),
+                            )
                             .child(
                                 Input::new(&self.grace)
                                     .small()
@@ -615,7 +633,9 @@ impl Render for NodeActions {
                     .test_support()
                     .text_sm()
                     .text_color(cx.theme().warning)
-                    .child("Node is cordoned. Uncordon it explicitly when maintenance is finished.")
+                    .child(crate::i18n::text(
+                        "Node is cordoned. Uncordon it explicitly when maintenance is finished.",
+                    ))
             }))
             .children(self.error.clone().map(|error| {
                 div()
@@ -683,9 +703,9 @@ impl Render for NodeActions {
                     })
             }))
             .children((self.busy && self.cancellation.cancelled()).then(|| {
-                div()
-                    .text_sm()
-                    .child("Cancellation requested. Waiting for submitted requests to finish…")
+                div().text_sm().child(crate::i18n::text(
+                    "Cancellation requested. Waiting for submitted requests to finish…",
+                ))
             }))
             .child(
                 h_flex()
@@ -694,21 +714,21 @@ impl Render for NodeActions {
                     .children((drain && self.busy).then(|| {
                         Button::new("node-drain-stop")
                             .small()
-                            .label("Stop draining")
+                            .label(crate::i18n::text("Stop draining"))
                             .disabled(self.cancellation.cancelled())
                             .on_click(cx.listener(|view, _, _, cx| view.stop(cx)))
                     }))
                     .children((self.error.is_some() || self.done).then(|| {
                         Button::new("node-maintenance-review")
                             .small()
-                            .label("Review again")
+                            .label(crate::i18n::text("Review again"))
                             .disabled(self.busy)
                             .on_click(cx.listener(|view, _, window, cx| view.load(window, cx)))
                     }))
                     .children(self.done.then(|| {
                         Button::new("node-maintenance-open")
                             .small()
-                            .label("Open Node")
+                            .label(crate::i18n::text("Open Node"))
                             .on_click(cx.listener(|view, _, _, cx| {
                                 view.open(view.kind.clone(), view.target.clone(), cx)
                             }))
@@ -717,7 +737,7 @@ impl Render for NodeActions {
                         Button::new("node-maintenance-close")
                             .ghost()
                             .small()
-                            .label(if self.done { "Done" } else { "Cancel" })
+                            .label(crate::i18n::text(if self.done { "Done" } else { "Cancel" }))
                             .disabled(self.busy)
                             .on_click(cx.listener(|_, _, _, cx| cx.emit(NodeEvent::Closed))),
                     )

@@ -33,3 +33,8 @@ base64.workspace = true
 sha2.workspace = true
 x509-parser = "0.18.1"
 url.workspace = true
+rust-i18n = "4.2.2"
+sys-locale = "0.3.2"
+
+[build-dependencies]
+serde_json.workspace = true

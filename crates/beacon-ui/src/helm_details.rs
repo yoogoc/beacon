@@ -183,7 +183,7 @@ fn open_window(
         move |window, cx| {
             #[cfg(all(test, feature = "ui-tests"))]
             window.set_view_retention(false);
-            window.set_window_title(&title);
+            crate::i18n::window_title(&title, window, cx);
             window.activate_window();
             cx.new(|cx| HelmDetails::new(session, identity, window, cx))
         },

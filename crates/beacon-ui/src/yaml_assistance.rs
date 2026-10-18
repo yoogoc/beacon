@@ -317,7 +317,7 @@ impl Render for YamlAssistance {
                             .xsmall()
                             .ghost()
                             .selected(self.wrap)
-                            .label("Wrap lines")
+                            .label(crate::i18n::text("Wrap lines"))
                             .tooltip(
                                 "Wrap long lines to fit the editor. When off, scroll horizontally.",
                             )
@@ -330,8 +330,8 @@ impl Render for YamlAssistance {
                             .xsmall()
                             .ghost()
                             .icon(IconName::Ellipsis)
-                            .accessibility_label("YAML tools")
-                            .tooltip("YAML tools")
+                            .accessibility_label(crate::i18n::text("YAML tools"))
+                            .tooltip(crate::i18n::text("YAML tools"))
                             .dropdown_menu(move |menu, _, _| {
                                 let suggest = owner.clone();
                                 let help = owner.clone();
@@ -339,7 +339,7 @@ impl Render for YamlAssistance {
                                 let details = owner.clone();
                                 let validation = owner.clone();
                                 menu.item(
-                                    PopupMenuItem::new("Suggest fields")
+                                    PopupMenuItem::new(crate::i18n::text("Suggest fields"))
                                         .disabled(!ready)
                                         .on_click(move |_, window, cx| {
                                             let _ = suggest.update(cx, |view, cx| {
@@ -353,11 +353,13 @@ impl Render for YamlAssistance {
                                             });
                                         }),
                                 )
-                                .item(PopupMenuItem::new("Field help").disabled(!ready).on_click(
-                                    move |_, _, cx| {
-                                        let _ = help.update(cx, |view, cx| view.field_help(cx));
-                                    },
-                                ))
+                                .item(
+                                    PopupMenuItem::new(crate::i18n::text("Field help"))
+                                        .disabled(!ready)
+                                        .on_click(move |_, _, cx| {
+                                            let _ = help.update(cx, |view, cx| view.field_help(cx));
+                                        }),
+                                )
                                 .item(
                                     PopupMenuItem::new(if ready {
                                         "Reload schema"
@@ -373,7 +375,7 @@ impl Render for YamlAssistance {
                                 )
                                 .separator()
                                 .item(
-                                    PopupMenuItem::new("Local validation")
+                                    PopupMenuItem::new(crate::i18n::text("Local validation"))
                                         .checked(validation_enabled)
                                         .on_click(move |_, window, cx| {
                                             let _ = validation.update(cx, |view, cx| {
@@ -382,7 +384,7 @@ impl Render for YamlAssistance {
                                         }),
                                 )
                                 .item(
-                                    PopupMenuItem::new("Schema details")
+                                    PopupMenuItem::new(crate::i18n::text("Schema details"))
                                         .checked(show_schema)
                                         .on_click(move |_, _, cx| {
                                             let _ = details.update(cx, |view, cx| {
@@ -498,14 +500,14 @@ impl Render for YamlAssistance {
                             .child(
                                 div()
                                     .text_color(cx.theme().muted_foreground)
-                                    .child("Field help"),
+                                    .child(crate::i18n::text("Field help")),
                             )
                             .child(
                                 Button::new("yaml-close-help")
                                     .xsmall()
                                     .ghost()
                                     .icon(IconName::X)
-                                    .accessibility_label("Close field help")
+                                    .accessibility_label(crate::i18n::text("Close field help"))
                                     .on_click(cx.listener(|view, _, _, cx| {
                                         view.help = None;
                                         cx.notify();

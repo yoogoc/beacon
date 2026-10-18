@@ -22,8 +22,7 @@ pub(crate) fn add(window: &mut Window, cx: &mut App) {
 }
 impl SourcesView {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let search =
-            cx.new(|cx| InputState::new(window, cx).placeholder("Search sources or contexts"));
+        let search = cx.new(|cx| crate::i18n::input("Search sources or contexts", window, cx));
         let source_store = store(cx);
         let subscriptions = vec![
             cx.observe(&source_store, |_, _, cx| cx.notify()),
@@ -122,9 +121,9 @@ impl SourcesView {
         v_flex().flex_1().min_w_0().gap_3()
             .child(h_flex().gap_3().justify_between().items_start()
                 .child(v_flex().flex_1().min_w_0().gap_1().child(div().font_weight(FontWeight::MEDIUM).child(status.name.clone())).child(hint(label, cx)))
-                .child(Switch::new("source-enabled").label("Enabled").checked(status.enabled)
+                .child(Switch::new("source-enabled").label(crate::i18n::text("Enabled")).checked(status.enabled)
                     .accessibility_label(format!("Enable {}", status.name)).on_click(cx.listener(move |view, enabled, window, cx| view.toggle(toggle_id.clone(), *enabled, window, cx)))))
-            .child(h_flex().gap_3().items_start().child(div().w(px(76.)).text_sm().text_color(cx.theme().muted_foreground).child("Location"))
+            .child(h_flex().gap_3().items_start().child(div().w(px(76.)).text_sm().text_color(cx.theme().muted_foreground).child(crate::i18n::text("Location")))
                 .child(div().flex_1().min_w_0().text_sm().child(copyable_text("source-location", if status.location.is_empty() { "No system kubeconfig path found".into() } else { status.location.clone() }))))
             .when_some(source.clone(), |column, source| {
                 column.when(matches!(source.kind, SourceKind::Directory { .. }), |column| {
@@ -133,23 +132,23 @@ impl SourcesView {
                 })
             })
             .child(h_flex().gap_2().flex_wrap()
-                .child(Button::new("source-reload").small().ghost().icon(IconName::RefreshCw).label("Reload").on_click(move |_, _, cx| { let _ = &reload; store(cx).update(cx, |state, cx| state.reload(true, cx)); }))
+                .child(Button::new("source-reload").small().ghost().icon(IconName::RefreshCw).label(crate::i18n::text("Reload")).on_click(move |_, _, cx| { let _ = &reload; store(cx).update(cx, |state, cx| state.reload(true, cx)); }))
                 .when_some(source, |row, source| {
                     let rename = source.clone(); let edit = source.clone(); let id = source.id;
-                    row.child(Button::new("source-rename").small().ghost().icon(IconName::Pencil).label("Rename").on_click(move |_, window, cx| editor::open(Some(rename.clone()), true, window, cx)))
+                    row.child(Button::new("source-rename").small().ghost().icon(IconName::Pencil).label(crate::i18n::text("Rename")).on_click(move |_, window, cx| editor::open(Some(rename.clone()), true, window, cx)))
                         .child(Button::new("source-edit").small().ghost().icon(IconName::FolderOpen).label(if matches!(edit.kind, SourceKind::Imported) { "Replace YAML" } else { "Change location" }).on_click(move |_, window, cx| editor::open(Some(edit.clone()), false, window, cx)))
-                        .child(Button::new("source-remove").small().ghost().icon(IconName::Unlink).label("Remove").on_click(cx.listener(move |view, _, window, cx| view.remove(id.clone(), window, cx))))
+                        .child(Button::new("source-remove").small().ghost().icon(IconName::Unlink).label(crate::i18n::text("Remove")).on_click(cx.listener(move |view, _, window, cx| view.remove(id.clone(), window, cx))))
                 }))
             .children(status.issues.iter().enumerate().map(|(index, issue)| {
                 v_flex().gap_1().p_3().rounded(cx.theme().radius).bg(cx.theme().warning.opacity(0.08)).text_sm()
                     .when(!issue.file.as_os_str().is_empty(), |v| v.child(div().text_color(cx.theme().muted_foreground).child(copyable_text(("source-issue-path", index), issue.file.display().to_string()))))
                     .child(div().text_color(cx.theme().warning).child(copyable_text(("source-issue", index), issue.message.clone())))
             }))
-            .child(h_flex().gap_2().py_2().border_b_1().border_color(cx.theme().border).text_sm().font_weight(FontWeight::MEDIUM).child("Contexts").child(format!("{}", status.contexts.len())))
+            .child(h_flex().gap_2().py_2().border_b_1().border_color(cx.theme().border).text_sm().font_weight(FontWeight::MEDIUM).child(crate::i18n::text("Contexts")).child(format!("{}", status.contexts.len())))
             .children(status.contexts.iter().enumerate().map(|(index, context)| {
                 v_flex().gap_1().py_2().border_b_1().border_color(cx.theme().border)
                     .child(h_flex().gap_2().child(div().flex_1().min_w_0().text_sm().child(copyable_text(("source-context", index), context.entry.id.context_name().to_string())))
-                        .child(div().text_xs().text_color(if context.included { cx.theme().success } else { cx.theme().muted_foreground }).child(if context.included { "Available" } else { "Excluded" })))
+                        .child(div().text_xs().text_color(if context.included { cx.theme().success } else { cx.theme().muted_foreground }).child(crate::i18n::text(if context.included { "Available" } else { "Excluded" }))))
                     .child(hint(&format!("{} · {}{}", context.entry.initial_namespace(), context.authentication,
                         context.file.strip_prefix(std::path::Path::new(&status.location)).ok().filter(|path| !path.as_os_str().is_empty()).map_or(String::new(), |path| format!(" · {}", path.display()))), cx))
                     .child(div().text_xs().text_color(cx.theme().muted_foreground).child(copyable_text(("source-context-server", index), context.server.clone())))
@@ -163,7 +162,7 @@ fn hint(text: &str, cx: &App) -> AnyElement {
     div()
         .text_xs()
         .text_color(cx.theme().muted_foreground)
-        .child(text.to_owned())
+        .child(crate::i18n::text(text))
         .into_any_element()
 }
 impl Render for SourcesView {
@@ -274,7 +273,11 @@ impl Render for SourcesView {
                             .small()
                             .ghost()
                             .icon(IconName::RefreshCw)
-                            .label(if loading { "Loading…" } else { "Reload all" })
+                            .label(crate::i18n::text(if loading {
+                                "Loading…"
+                            } else {
+                                "Reload all"
+                            }))
                             .disabled(loading)
                             .on_click(|_, _, cx| {
                                 store(cx).update(cx, |state, cx| state.reload(true, cx))
@@ -285,7 +288,7 @@ impl Render for SourcesView {
                             .small()
                             .primary()
                             .icon(IconName::Plus)
-                            .label("Add source")
+                            .label(crate::i18n::text("Add source"))
                             .on_click(|_, window, cx| add(window, cx)),
                     ),
             )

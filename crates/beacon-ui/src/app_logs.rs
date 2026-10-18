@@ -57,7 +57,7 @@ pub(crate) fn open(cx: &mut App) {
             ..TitleBar::window_options()
         };
         match cx.open_window(options, |window, cx| {
-            window.set_window_title("Beacon — App logs");
+            crate::i18n::window_title("Beacon — App logs", window, cx);
             let view = cx.new(|cx| AppLogs::new(directory, window, cx));
             window.activate_window();
             cx.new(|cx| Root::new(view, window, cx))
@@ -93,7 +93,7 @@ impl AppLogs {
     pub fn new(directory: PathBuf, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let focus = cx.focus_handle();
         focus.focus(window, cx);
-        let search = cx.new(|cx| InputState::new(window, cx).placeholder("Search app logs"));
+        let search = cx.new(|cx| crate::i18n::input("Search app logs", window, cx));
         let search_events =
             cx.subscribe_in(&search, window, |view, input, event: &InputEvent, _, cx| {
                 if matches!(event, InputEvent::Change) {
@@ -293,7 +293,7 @@ impl Render for AppLogs {
                 TitleBar::new().child(
                     div()
                         .font_weight(FontWeight::SEMIBOLD)
-                        .child("Beacon — App logs"),
+                        .child(crate::i18n::text("Beacon — App logs")),
                 ),
             )
             .child(
@@ -308,14 +308,14 @@ impl Render for AppLogs {
                             .flex_1()
                             .text_sm()
                             .font_weight(FontWeight::SEMIBOLD)
-                            .child("App logs"),
+                            .child(crate::i18n::text("App logs")),
                     )
                     .child(
                         Button::new("pause-app-logs")
                             .small()
                             .ghost()
                             .label(if self.paused { "Resume" } else { "Pause" })
-                            .tooltip("Pause updates to read earlier lines")
+                            .tooltip(crate::i18n::text("Pause updates to read earlier lines"))
                             .on_click(cx.listener(|view, _, _, cx| {
                                 view.paused = !view.paused;
                                 if !view.paused {
@@ -328,8 +328,10 @@ impl Render for AppLogs {
                         Button::new("copy-app-logs")
                             .small()
                             .ghost()
-                            .label("Copy")
-                            .tooltip("Copy all lines matching the current filters")
+                            .label(crate::i18n::text("Copy"))
+                            .tooltip(crate::i18n::text(
+                                "Copy all lines matching the current filters",
+                            ))
                             .disabled(self.visible.is_empty())
                             .on_click(cx.listener(|view, _, _, cx| {
                                 let text = view
@@ -345,7 +347,7 @@ impl Render for AppLogs {
                         Button::new("open-app-log-folder")
                             .small()
                             .ghost()
-                            .label("Open log folder")
+                            .label(crate::i18n::text("Open log folder"))
                             .on_click(
                                 cx.listener(|view, _, _, cx| cx.open_with_system(&view.directory)),
                             ),

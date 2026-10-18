@@ -94,11 +94,8 @@ impl DetailView {
         self.data_resize = None;
         self.data = Data::Ready(keys);
         if self.data_browser.search.is_none() {
-            let search = cx.new(|cx| {
-                InputState::new(window, cx)
-                    .placeholder("Search keys…")
-                    .clean_on_escape()
-            });
+            let search =
+                cx.new(|cx| crate::i18n::input("Search keys…", window, cx).clean_on_escape());
             self.data_browser._search = Some(cx.subscribe_in(
                 &search,
                 window,

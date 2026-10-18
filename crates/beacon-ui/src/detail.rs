@@ -1332,7 +1332,7 @@ impl DetailView {
                     .children(
                         self.tabs
                             .iter()
-                            .map(|tab| Tab::new().child(tab.label()))
+                            .map(|tab| Tab::new().child(crate::i18n::text(tab.label())))
                             .collect::<Vec<_>>(),
                     )
                     .on_click(cx.listener(|view, index: &usize, window, cx| {
@@ -1576,7 +1576,10 @@ impl DetailView {
                                 .bg(cx.theme().tone(summary.tone)),
                         )
                     })
-                    .child(SelectableText::new("summary-status", summary.label)),
+                    .child(SelectableText::new(
+                        "summary-status",
+                        crate::i18n::text(summary.label),
+                    )),
             );
         for (index, hint) in summary.hints.into_iter().enumerate() {
             line = line.child(SelectableText::new(("summary-hint", index), hint));
@@ -1622,7 +1625,7 @@ impl DetailView {
                 div()
                     .text_xs()
                     .text_color(cx.theme().muted_foreground)
-                    .child(label.to_string()),
+                    .child(crate::i18n::text(label)),
             )
             .child(self.overview_value(cell, cx))
     }
@@ -1763,7 +1766,7 @@ impl DetailView {
                             .py_1p5()
                             .text_xs()
                             .text_color(cx.theme().muted_foreground)
-                            .child(*label)
+                            .child(crate::i18n::text(*label))
                     })),
             )
             .children(table.rows.iter().enumerate().map(|(index, cells)| {
@@ -1808,14 +1811,14 @@ impl DetailView {
                     .ghost()
                     .small()
                     .max_w_full()
-                    .tooltip(title.to_string())
+                    .tooltip(crate::i18n::text(title))
                     .toggled(expanded)
                     .icon(if expanded {
                         gpui_kit::component::IconName::ChevronDown
                     } else {
                         gpui_kit::component::IconName::ChevronRight
                     })
-                    .label(title.to_string())
+                    .label(crate::i18n::text(title))
                     .on_click(cx.listener(move |view, _, _, cx| {
                         if !view.expanded_sections.remove(&key) {
                             view.expanded_sections.insert(key.clone());
@@ -1909,7 +1912,11 @@ impl DetailView {
                     .flex_wrap()
                     .gap_2()
                     .items_center()
-                    .child(div().font_weight(FontWeight::SEMIBOLD).child(title))
+                    .child(
+                        div()
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .child(crate::i18n::text(title)),
+                    )
                     .child(div().text_xs().text_color(cx.theme().tone(tone)).child(
                         SelectableText::new("validity", certificate.validity_at(now)),
                     )),
@@ -2473,7 +2480,7 @@ impl DetailView {
                             Button::new("reveal")
                                 .ghost()
                                 .small()
-                                .label(if revealed { "Hide" } else { "Reveal" })
+                                .label(crate::i18n::text(if revealed { "Hide" } else { "Reveal" }))
                                 .on_click(cx.listener(|view, _, window, cx| {
                                     view.revealed = !view.revealed;
                                     if view.revealed {

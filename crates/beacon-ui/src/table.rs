@@ -358,7 +358,7 @@ impl ResourceTable {
             }),
         );
         menu = menu.item(
-            PopupMenuItem::new("Permissions…").on_click(move |_, _, cx| {
+            PopupMenuItem::new(crate::i18n::text("Permissions…")).on_click(move |_, _, cx| {
                 let _ = permission_view.update(cx, |view, cx| {
                     view.show_permissions(permission_target.clone(), None, cx)
                 });
@@ -385,7 +385,7 @@ impl ResourceTable {
                 .is_none_or(|rules| rules.allows("patch", "", "pods/ephemeralcontainers"))
                 && actions::may_exec(rules.as_deref());
             menu = menu.item(
-                PopupMenuItem::new("Debug container…")
+                PopupMenuItem::new(crate::i18n::text("Debug container…"))
                     .disabled(!may_debug)
                     .on_click(move |_, window, cx| {
                         let _ = debug_view
@@ -411,11 +411,14 @@ impl ResourceTable {
 
             let files_view = view.clone();
             let files_target = target.clone();
-            menu = menu.item(PopupMenuItem::new("Files…").disabled(!may_exec).on_click(
-                move |_, _, cx| {
-                    let _ = files_view.update(cx, |view, cx| view.open_files(&files_target, cx));
-                },
-            ));
+            menu = menu.item(
+                PopupMenuItem::new(crate::i18n::text("Files…"))
+                    .disabled(!may_exec)
+                    .on_click(move |_, _, cx| {
+                        let _ =
+                            files_view.update(cx, |view, cx| view.open_files(&files_target, cx));
+                    }),
+            );
         }
         if beacon_kube::forward::TargetKind::from_resource(group, name).is_some()
             && target.namespace.is_some()
@@ -462,12 +465,14 @@ impl ResourceTable {
         {
             let logs_view = view.clone();
             let logs_target = target.clone();
-            menu = menu.item(PopupMenuItem::new("View aggregated logs").on_click(
-                move |_, window, cx| {
-                    let _ = logs_view
-                        .update(cx, |view, cx| view.aggregate_for(&logs_target, window, cx));
-                },
-            ));
+            menu = menu.item(
+                PopupMenuItem::new(crate::i18n::text("View aggregated logs")).on_click(
+                    move |_, window, cx| {
+                        let _ = logs_view
+                            .update(cx, |view, cx| view.aggregate_for(&logs_target, window, cx));
+                    },
+                ),
+            );
         }
 
         let compare_view = view.clone();
@@ -494,7 +499,7 @@ impl ResourceTable {
             let action_target = target.clone();
             let operation = choice.operation;
             menu = menu.item(
-                PopupMenuItem::new(choice.label)
+                PopupMenuItem::new(crate::i18n::text(choice.label))
                     .disabled(!choice.allowed)
                     .on_click(move |_, window, cx| {
                         let _ = action_view.update(cx, |cluster, cx| {
@@ -507,9 +512,11 @@ impl ResourceTable {
         let copy_name = target.name.clone();
         menu = menu
             .separator()
-            .item(PopupMenuItem::new("Copy name").on_click(move |_, _, cx| {
-                cx.write_to_clipboard(ClipboardItem::new_string(copy_name.clone()));
-            }));
+            .item(
+                PopupMenuItem::new(crate::i18n::text("Copy name")).on_click(move |_, _, cx| {
+                    cx.write_to_clipboard(ClipboardItem::new_string(copy_name.clone()));
+                }),
+            );
         if let Some(row) = self.rows.iter().position(|key| key == &target)
             && let Some(index) = self
                 .columns
@@ -1199,7 +1206,7 @@ impl TableDelegate for ResourceTable {
 
         Column::new(
             self.column_ids[data_index].clone(),
-            definition.header.clone(),
+            crate::i18n::text(&definition.header),
         )
         .width(px(width))
         .min_width(px(56.))
@@ -1261,7 +1268,7 @@ impl TableDelegate for ResourceTable {
                 checkbox("select-all-resources")
                     .checked(self.all_visible_selected())
                     .disabled(self.rows.is_empty())
-                    .accessibility_label("Select all visible resources")
+                    .accessibility_label(crate::i18n::text("Select all visible resources"))
                     .on_click(move |_, _, cx| {
                         let _ = table.update(cx, |state, cx| {
                             state.delegate_mut().toggle_all_visible();
@@ -1311,7 +1318,7 @@ impl TableDelegate for ResourceTable {
                         .ghost()
                         .icon(IconName::Ellipsis)
                         .accessibility_label(format!("Actions for {}", target.name))
-                        .tooltip("Resource actions")
+                        .tooltip(crate::i18n::text("Resource actions"))
                         .dropdown_menu(move |menu, _, cx| match table.upgrade() {
                             Some(table) => {
                                 table.read(cx).delegate().row_menu(target.clone(), menu, cx)
@@ -1479,7 +1486,9 @@ impl TableDelegate for ResourceTable {
                             .max_w(px(560.))
                             .gap_1()
                             .child(format!("Taints · {}", taints.len()))
-                            .when(taints.is_empty(), |this| this.child("No taints"))
+                            .when(taints.is_empty(), |this| {
+                                this.child(crate::i18n::text("No taints"))
+                            })
                             .children(taints.iter().map(|taint| div().child(taint.clone())))
                     })
                     .build(window, cx)
@@ -1501,7 +1510,11 @@ impl TableDelegate for ResourceTable {
             .size_full()
             .items_center()
             .text_color(color)
-            .child(value.display().to_string())
+            .child(if definition.header == "Status" {
+                crate::i18n::text(value.display())
+            } else {
+                value.display().to_string().into()
+            })
             .into_any_element()
     }
 
@@ -1516,7 +1529,7 @@ impl TableDelegate for ResourceTable {
             .items_center()
             .text_sm()
             .text_color(cx.theme().muted_foreground)
-            .child("Nothing here")
+            .child(crate::i18n::text("Nothing here"))
     }
 
     /// The table's own keyboard navigation and copy support read cells through

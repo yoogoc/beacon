@@ -57,7 +57,7 @@ pub(crate) struct ArgoCanvas {
 impl EventEmitter<CanvasEvent> for ArgoCanvas {}
 impl ArgoCanvas {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let search = cx.new(|cx| InputState::new(window, cx).placeholder("Find a node…"));
+        let search = cx.new(|cx| crate::i18n::input("Find a node…", window, cx));
         let subscription = cx.subscribe_in(
             &search,
             window,
@@ -546,16 +546,21 @@ impl ArgoCanvas {
                             .shadow_md()
                             .child(Spinner::new().small())
                             .child(
-                                v_flex().gap_1().child("Preparing execution graph").child(
-                                    div()
-                                        .text_xs()
-                                        .text_color(cx.theme().muted_foreground)
-                                        .child(
-                                            self.expected
-                                                .map(|n| format!("Reading {n} nodes…"))
-                                                .unwrap_or_else(|| "Reading node status…".into()),
-                                        ),
-                                ),
+                                v_flex()
+                                    .gap_1()
+                                    .child(crate::i18n::text("Preparing execution graph"))
+                                    .child(
+                                        div()
+                                            .text_xs()
+                                            .text_color(cx.theme().muted_foreground)
+                                            .child(
+                                                self.expected
+                                                    .map(|n| format!("Reading {n} nodes…"))
+                                                    .unwrap_or_else(|| {
+                                                        "Reading node status…".into()
+                                                    }),
+                                            ),
+                                    ),
                             ),
                     ),
             )
@@ -664,7 +669,7 @@ impl Render for ArgoCanvas {
                     .text_color(cx.theme().muted_foreground)
                     .gap_2()
                     .child(Icon::new(IconName::Workflow).size_5())
-                    .child("No execution nodes yet"),
+                    .child(crate::i18n::text("No execution nodes yet")),
             );
         } else {
             graph = graph.child(self.background(cx));
@@ -803,7 +808,7 @@ impl Render for ArgoCanvas {
                             .small()
                             .ghost()
                             .icon(IconName::Minus)
-                            .accessibility_label("Zoom out")
+                            .accessibility_label(crate::i18n::text("Zoom out"))
                             .on_click(cx.listener(|view, _, _, cx| view.zoom(1. / 1.2, None, cx))),
                     )
                     .child(div().id("argo-zoom-value").test_support().text_xs().child(
@@ -820,7 +825,7 @@ impl Render for ArgoCanvas {
                             .small()
                             .ghost()
                             .icon(IconName::Plus)
-                            .accessibility_label("Zoom in")
+                            .accessibility_label(crate::i18n::text("Zoom in"))
                             .on_click(cx.listener(|view, _, _, cx| view.zoom(1.2, None, cx))),
                     )
                     .child(
@@ -828,7 +833,7 @@ impl Render for ArgoCanvas {
                             .small()
                             .ghost()
                             .icon(IconName::Maximize)
-                            .label("Fit")
+                            .label(crate::i18n::text("Fit"))
                             .on_click(cx.listener(|view, _, _, cx| {
                                 view.camera = Camera::default();
                                 cx.notify();
@@ -861,8 +866,8 @@ impl Render for ArgoCanvas {
                     .icon(IconName::Layers)
                     .selected(self.grouped)
                     .disabled(!ready)
-                    .accessibility_label("Group nodes")
-                    .tooltip("Group parallel tasks and long sequences")
+                    .accessibility_label(crate::i18n::text("Group nodes"))
+                    .tooltip(crate::i18n::text("Group parallel tasks and long sequences"))
                     .on_click(cx.listener(|view, _, _, cx| {
                         view.grouped = !view.grouped;
                         view.camera = Camera::default();
@@ -876,8 +881,8 @@ impl Render for ArgoCanvas {
                     .ghost()
                     .icon(IconName::Maximize)
                     .disabled(!ready)
-                    .accessibility_label("Fit graph")
-                    .tooltip("Fit graph to viewport")
+                    .accessibility_label(crate::i18n::text("Fit graph"))
+                    .tooltip(crate::i18n::text("Fit graph to viewport"))
                     .on_click(cx.listener(|view, _, _, cx| {
                         view.camera = Camera::default();
                         cx.notify();
@@ -908,7 +913,7 @@ impl Render for ArgoCanvas {
                             .small()
                             .ghost()
                             .icon(IconName::ChevronLeft)
-                            .label("Back")
+                            .label(crate::i18n::text("Back"))
                             .on_click(cx.listener(|view, _, _, cx| {
                                 view.stack.pop();
                                 view.pinned = None;
@@ -966,7 +971,7 @@ impl Render for ArgoCanvas {
                 })
                 .when(ready && size.width >= px(520.), |row| {
                     row.child(div().flex_1())
-                        .child("Drag to pan · Click a node for details")
+                        .child(crate::i18n::text("Drag to pan · Click a node for details"))
                 }),
         );
         if !self.search.read(cx).value().trim().is_empty() && ready {
@@ -1001,7 +1006,12 @@ impl Render for ArgoCanvas {
                 );
             }
             if self.matches.is_empty() {
-                results = results.child(div().p_3().text_xs().child("No matching nodes"));
+                results = results.child(
+                    div()
+                        .p_3()
+                        .text_xs()
+                        .child(crate::i18n::text("No matching nodes")),
+                );
             }
             view = view.child(deferred(results).with_priority(1));
         }

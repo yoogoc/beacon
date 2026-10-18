@@ -310,26 +310,16 @@ impl ClusterView {
         let catalog = Catalog::new(session.discovery().kinds());
         let kind = initial_kind;
 
-        let sidebar_search = cx.new(|cx| {
-            InputState::new(window, cx)
-                .placeholder("Filter resources")
-                .clean_on_escape()
-        });
-        let row_search = cx.new(|cx| {
-            InputState::new(window, cx)
-                .placeholder("Search")
-                .clean_on_escape()
-        });
+        let sidebar_search =
+            cx.new(|cx| crate::i18n::input("Filter resources", window, cx).clean_on_escape());
+        let row_search = cx.new(|cx| crate::i18n::input("Search", window, cx).clean_on_escape());
         let label_input =
             cx.new(|cx| InputState::new(window, cx).placeholder("app=web,env in (dev,prod)"));
-        let picker_search = cx.new(|cx| {
-            InputState::new(window, cx)
-                .placeholder("Search options")
-                .clean_on_escape()
-        });
+        let picker_search =
+            cx.new(|cx| crate::i18n::input("Search options", window, cx).clean_on_escape());
 
         let table = cx.new(|cx| {
-            TableState::new(ResourceTable::new(ColumnSet::fallback(true)), window, cx)
+            crate::i18n::table(ResourceTable::new(ColumnSet::fallback(true)), window, cx)
                 .row_selectable(true)
         });
         let split = cx.new(|_| ResizableState::default());
@@ -448,7 +438,7 @@ impl ClusterView {
                 Some(kind) => SharedString::from(kind.resource.kind.clone()),
                 None => SharedString::from("Cluster"),
             },
-            mode => SharedString::from(mode.label()),
+            mode => crate::i18n::text(mode.label()),
         }
     }
 
@@ -2182,19 +2172,20 @@ impl ClusterView {
                             .context_menu(move |menu, _, _| {
                                 let view = menu_view.clone();
                                 let kind = menu_kind.clone();
-                                menu.item(PopupMenuItem::new("Open in new tab").on_click(
-                                    move |_, _, cx| {
-                                        let _ = view.update(cx, |view, cx| {
-                                            view.open_resource(kind.clone(), cx);
-                                        });
-                                    },
-                                ))
+                                menu.item(
+                                    PopupMenuItem::new(crate::i18n::text("Open in new tab"))
+                                        .on_click(move |_, _, cx| {
+                                            let _ = view.update(cx, |view, cx| {
+                                                view.open_resource(kind.clone(), cx);
+                                            });
+                                        }),
+                                )
                             })
                     };
                     let mut children: Vec<_> = entries.into_iter().map(item).collect();
                     if !controllers.is_empty() {
                         children.push(
-                            SidebarMenuItem::new("Controller resources")
+                            SidebarMenuItem::new(crate::i18n::text("Controller resources"))
                                 .icon(crate::icons::tools())
                                 .click_to_toggle(true)
                                 .default_open(controller_open)
@@ -2221,24 +2212,27 @@ impl ClusterView {
         // without making Workloads and Config three levels deep.
         let overview_menu_view = cx.entity().downgrade();
         let mut items = vec![
-            SidebarMenuItem::new("Overview")
+            SidebarMenuItem::new(crate::i18n::text("Overview"))
                 .icon(Icon::new(IconName::LayoutDashboard))
                 .active(self.mode == Mode::Overview)
                 .on_click(cx.listener(|_, _, _, cx| cx.emit(OverviewRequested { new_tab: false })))
                 .context_menu(move |menu, _, _| {
                     let view = overview_menu_view.clone();
                     menu.item(
-                        PopupMenuItem::new("Open in new tab").on_click(move |_, _, cx| {
-                            let _ = view
-                                .update(cx, |_, cx| cx.emit(OverviewRequested { new_tab: true }));
-                        }),
+                        PopupMenuItem::new(crate::i18n::text("Open in new tab")).on_click(
+                            move |_, _, cx| {
+                                let _ = view.update(cx, |_, cx| {
+                                    cx.emit(OverviewRequested { new_tab: true })
+                                });
+                            },
+                        ),
                     )
                 }),
         ];
         items.extend(menu(cluster_sections));
         if !custom_sections.is_empty() {
             items.push(
-                SidebarMenuItem::new("Custom resources")
+                SidebarMenuItem::new(crate::i18n::text("Custom resources"))
                     .icon(crate::icons::custom())
                     .click_to_toggle(true)
                     .default_open(custom_open)
@@ -2246,7 +2240,7 @@ impl ClusterView {
             );
         }
         items.push(
-            SidebarMenuItem::new("Cluster tools")
+            SidebarMenuItem::new(crate::i18n::text("Cluster tools"))
                 .icon(crate::icons::tools())
                 .click_to_toggle(true)
                 .default_open(matches!(mode, Mode::Releases | Mode::Forwards))
@@ -2346,13 +2340,13 @@ impl ClusterView {
                     .items_center()
                     .border_b_1()
                     .border_color(cx.theme().border)
-                    .child("Helm releases")
+                    .child(crate::i18n::text("Helm releases"))
                     .child(
                         Button::new("helm-install-chart")
                             .small()
                             .primary()
                             .icon(IconName::Plus)
-                            .label("Install chart")
+                            .label(crate::i18n::text("Install chart"))
                             .on_click(cx.listener(|view, _, window, cx| {
                                 let origin = window.window_handle();
                                 let weak = cx.entity().downgrade();
@@ -2497,7 +2491,7 @@ impl ClusterView {
                     let tick = checkbox(SharedString::from(format!("ns-tick-{name}")))
                         .checked(ticked)
                         .accessibility_label(format!("Include namespace {name}"))
-                        .tooltip("Add or remove this namespace")
+                        .tooltip(crate::i18n::text("Add or remove this namespace"))
                         .on_click(move |_, window, cx| {
                             let toggled = toggled.to_string();
                             let _ = box_view.update(cx, |view, cx| {
@@ -2584,7 +2578,7 @@ impl ClusterView {
                                 .py_2()
                                 .text_sm()
                                 .text_color(muted)
-                                .child("No matching namespaces"),
+                                .child(crate::i18n::text("No matching namespaces")),
                         )
                     })
             })
@@ -2729,17 +2723,17 @@ impl ClusterView {
                 v_flex().w(px(430.)).min_h_0().max_h(px(540.)).gap_2()
                     .text_sm().text_color(cx.theme().foreground)
                     .child(h_flex().items_center().gap_1()
-                        .child(div().font_weight(FontWeight::MEDIUM).child("Label selector"))
+                        .child(div().font_weight(FontWeight::MEDIUM).child(crate::i18n::text("Label selector")))
                         .child(Button::new("label-selector-help").xsmall().ghost()
                             .icon(Icon::new(gpui_kit::assets::IconName::Info).size(px(13.)))
                             .text_color(cx.theme().muted_foreground)
-                            .accessibility_label("Label selector syntax")
-                            .tooltip("Use =, ==, !=, in, notin, key or !key. Commas require all conditions. Press Enter to apply.")))
+                            .accessibility_label(crate::i18n::text("Label selector syntax"))
+                            .tooltip(crate::i18n::text("Use =, ==, !=, in, notin, key or !key. Commas require all conditions. Press Enter to apply."))))
                     .child(Input::new(&input).small())
                     .child(h_flex().gap_2()
-                        .child(Button::new("apply-label-filter").small().primary().label("Apply")
+                        .child(Button::new("apply-label-filter").small().primary().label(crate::i18n::text("Apply"))
                             .on_click(move |_, window, cx| { let _ = applying.update(cx, |view, cx| view.apply_label_filter(true, window, cx)); }))
-                        .child(Button::new("clear-label-filter").small().ghost().label("Clear labels")
+                        .child(Button::new("clear-label-filter").small().ghost().label(crate::i18n::text("Clear labels"))
                             .on_click(move |_, window, cx| { let _ = clearing.update(cx, |view, cx| {
                                 view.label_input.update(cx, |input, cx| input.set_value("", window, cx));
                                 view.apply_label_filter(true, window, cx);
@@ -2812,8 +2806,14 @@ impl ClusterView {
                 } else {
                     140.
                 }))
-                .accessibility_label(format!("{}: {label}", field.label()))
-                .tooltip(format!("{}: {label}", field.label())),
+                .accessibility_label(crate::i18n::filter_text(&format!(
+                    "{}: {label}",
+                    field.label()
+                )))
+                .tooltip(crate::i18n::filter_text(&format!(
+                    "{}: {label}",
+                    field.label()
+                ))),
             )
             .content(move |_, _, cx| {
                 let matching: Vec<_> = types
@@ -2876,7 +2876,7 @@ impl ClusterView {
                                 .px_2()
                                 .py_1()
                                 .text_color(cx.theme().muted_foreground)
-                                .child("No matching options"),
+                                .child(crate::i18n::text("No matching options")),
                         )
                     })
             })
@@ -2915,7 +2915,9 @@ impl Render for ClusterView {
                     div()
                         .text_sm()
                         .text_color(cx.theme().muted_foreground)
-                        .child("Select a resource from the sidebar to open its page."),
+                        .child(crate::i18n::text(
+                            "Select a resource from the sidebar to open its page.",
+                        )),
                 )
                 .into_any_element();
         }

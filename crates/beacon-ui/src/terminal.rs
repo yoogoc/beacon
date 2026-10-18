@@ -177,8 +177,7 @@ impl TerminalView {
             parser: Processor::new(),
             shell: None,
             state: State::Idle,
-            command: cx
-                .new(|cx| InputState::new(window, cx).placeholder("bash, falling back to sh")),
+            command: cx.new(|cx| crate::i18n::input("bash, falling back to sh", window, cx)),
             focus: cx.focus_handle(),
             measured: Rc::new(StdCell::new(None)),
             _output: None,
@@ -689,7 +688,7 @@ impl Render for TerminalView {
                     div()
                         .text_sm()
                         .text_color(cx.theme().muted_foreground)
-                        .child("An interactive shell in this container."),
+                        .child(crate::i18n::text("An interactive shell in this container.")),
                 )
                 .child(self.render_launcher("Open a shell", cx))
                 .into_any_element();

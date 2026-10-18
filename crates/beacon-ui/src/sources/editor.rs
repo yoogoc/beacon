@@ -491,16 +491,16 @@ impl SourceEditor {
             .when(self.kind != Kind::Paste, |v| v.child(v_flex().gap_2()
                 .child(div().text_sm().font_weight(FontWeight::MEDIUM).child(if self.kind == Kind::Directory { "Folder" } else { "Kubeconfig file" }))
                 .child(h_flex().gap_2().items_center().child(div().flex_1().min_w_0().child(Input::new(&self.path).small()))
-                    .child(Button::new("browse-kubeconfig").small().outline().label("Browse…").on_click(cx.listener(|view, _, window, cx| view.choose(false, window, cx)))))
+                    .child(Button::new("browse-kubeconfig").small().outline().label(crate::i18n::text("Browse…")).on_click(cx.listener(|view, _, window, cx| view.choose(false, window, cx)))))
                 .children(self.extra_files.iter().enumerate().map(|(index, path)| h_flex().gap_2().items_center()
                     .child(div().flex_1().min_w_0().text_xs().child(copyable_text(("extra-source-path",index), path.display().to_string())))
-                    .child(Button::new(("remove-source-file",index)).xsmall().ghost().icon(IconName::X).tooltip("Remove this file from the selection").on_click(cx.listener(move |view, _, _, cx| { view.extra_files.remove(index); cx.notify(); })))))))
+                    .child(Button::new(("remove-source-file",index)).xsmall().ghost().icon(IconName::X).tooltip(crate::i18n::text("Remove this file from the selection")).on_click(cx.listener(move |view, _, _, cx| { view.extra_files.remove(index); cx.notify(); })))))))
             .when(self.kind == Kind::Directory, |v| v.child(Self::field("File names", &self.patterns))
-                .child(checkbox("recursive-kubeconfig-scan").label("Include subfolders").checked(self.recursive).on_click(cx.listener(|view, value, _, cx| { view.recursive = *value; cx.notify(); }))))
-            .when(self.kind == Kind::Paste, |v| v.child(v_flex().gap_2().child(div().text_sm().font_weight(FontWeight::MEDIUM).child("Kubeconfig YAML"))
+                .child(checkbox("recursive-kubeconfig-scan").label(crate::i18n::text("Include subfolders")).checked(self.recursive).on_click(cx.listener(|view, value, _, cx| { view.recursive = *value; cx.notify(); }))))
+            .when(self.kind == Kind::Paste, |v| v.child(v_flex().gap_2().child(div().text_sm().font_weight(FontWeight::MEDIUM).child(crate::i18n::text("Kubeconfig YAML")))
                 .child(div().h(px(190.)).border_1().border_color(cx.theme().border).rounded(cx.theme().radius).child(Editor::new(&self.yaml).h_full())))
                 .child(Self::field("Base folder (only for relative file references)", &self.base))
-                .child(Button::new("browse-kubeconfig-base").small().ghost().icon(IconName::FolderOpen).label("Choose base folder…").on_click(cx.listener(|view, _, window, cx| view.choose(true, window, cx)))))
+                .child(Button::new("browse-kubeconfig-base").small().ghost().icon(IconName::FolderOpen).label(crate::i18n::text("Choose base folder…")).on_click(cx.listener(|view, _, window, cx| view.choose(true, window, cx)))))
             .child(div().text_xs().text_color(cx.theme().muted_foreground).child(match self.kind { Kind::File => "Choose one or more files. Each file becomes a separate source and the originals stay in place.", Kind::Directory => "Only matching kubeconfig files are loaded. Invalid files do not block the rest of the folder.", Kind::Paste => "Beacon keeps an owner-only copy locally. Credentials and exec helpers are not used during this preview." }))
             .into_any_element()
     }
@@ -526,7 +526,7 @@ impl SourceEditor {
                             })))
                         .child(div().pl_6().text_xs().text_color(cx.theme().muted_foreground).child(format!("{} · {} · {}", context.entry.initial_namespace(), context.authentication, context.file.file_name().unwrap_or_default().to_string_lossy())))
                 }))
-        })).child(div().text_xs().text_color(cx.theme().muted_foreground).child("Contexts with the same name stay separate. Adding a source does not connect a cluster; exec credential helpers run only when you connect."))
+        })).child(div().text_xs().text_color(cx.theme().muted_foreground).child(crate::i18n::text("Contexts with the same name stay separate. Adding a source does not connect a cluster; exec credential helpers run only when you connect.")))
             .into_any_element()
     }
 }
@@ -587,7 +587,7 @@ impl Render for SourceEditor {
                         Button::new("cancel-source-editor")
                             .small()
                             .outline()
-                            .label(if reviewed { "Back" } else { "Cancel" })
+                            .label(crate::i18n::text(if reviewed { "Back" } else { "Cancel" }))
                             .disabled(self.busy)
                             .on_click(cx.listener(|view, _, window, cx| {
                                 if view.review.is_some() {

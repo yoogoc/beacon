@@ -1,4 +1,6 @@
 //! Application and cluster settings, presented in independent native windows.
+#[cfg(all(test, feature = "ui-tests"))]
+mod language_tests;
 mod theme_page;
 mod update_page;
 mod workspace_page;
@@ -125,7 +127,7 @@ fn open_section(id: Option<ClusterId>, section: Option<Section>, cx: &mut App) {
                 }
                 view
             });
-            window.set_window_title(&view.read(cx).title());
+            crate::i18n::window_title(view.read(cx).title(), window, cx);
             window.activate_window();
             cx.new(|cx| Root::new(view, window, cx))
         }) {
@@ -149,8 +151,7 @@ fn input(
     cx: &mut Context<PreferencesView>,
 ) -> Entity<InputState> {
     cx.new(|cx| {
-        InputState::new(window, cx)
-            .placeholder(label.to_string())
+        crate::i18n::input(label.to_owned(), window, cx)
             .default_value(value)
             .masked(masked)
     })
@@ -168,7 +169,7 @@ fn field(label: &str, input: &Entity<InputState>) -> AnyElement {
             div()
                 .text_sm()
                 .font_weight(FontWeight::MEDIUM)
-                .child(label.to_string()),
+                .child(crate::i18n::text(label)),
         )
         .child(Input::new(input))
         .into_any_element()
@@ -177,7 +178,7 @@ fn heading(text: &str) -> AnyElement {
     div()
         .text_sm()
         .font_weight(FontWeight::MEDIUM)
-        .child(text.to_string())
+        .child(crate::i18n::text(text))
         .into_any_element()
 }
 fn setting_row(label: &str, description: &str, control: impl IntoElement, cx: &App) -> AnyElement {
@@ -198,7 +199,7 @@ fn setting_row(label: &str, description: &str, control: impl IntoElement, cx: &A
                     div()
                         .text_sm()
                         .font_weight(FontWeight::MEDIUM)
-                        .child(label.to_owned()),
+                        .child(crate::i18n::text(label)),
                 )
                 .child(hint(description, cx)),
         )
@@ -300,7 +301,7 @@ fn hint(text: &str, cx: &App) -> AnyElement {
     div()
         .text_sm()
         .text_color(cx.theme().muted_foreground)
-        .child(text.to_string())
+        .child(crate::i18n::text(text))
         .into_any_element()
 }
 fn inline_action(button: impl IntoElement) -> AnyElement {
@@ -401,6 +402,7 @@ struct PreferencesView {
 }
 impl PreferencesView {
     fn new(id: Option<ClusterId>, window: &mut Window, cx: &mut Context<Self>) -> Self {
+        crate::i18n::follow_system(window, cx);
         let store = settings::store(cx);
         let preferences = store.read(cx).preferences.clone();
         let message = store.read(cx).load_error.clone().map(|e| (true, e));
@@ -909,11 +911,11 @@ impl PreferencesView {
             .child(heading("Collapsed by default"))
             .child(h_flex().text_xs().text_color(cx.theme().muted_foreground).justify_between()
                 .pb_2().border_b_1().border_color(cx.theme().border)
-                .child("Field path").child(div().pr(px(46.)).child("Collapse")))
+                .child(crate::i18n::text("Field path")).child(div().pr(px(46.)).child(crate::i18n::text("Collapse"))))
             .children(rows)
             .child(h_flex().gap_2().items_center()
                 .child(div().flex_1().min_w_0().child(Input::new(&c.yaml_field)))
-                .child(Button::new("add-yaml-fold-field").outline().label("Add field")
+                .child(Button::new("add-yaml-fold-field").outline().label(crate::i18n::text("Add field"))
                     .on_click(cx.listener(|view, _, window, cx| {
                         if let Err(error) = view.add_yaml_field(window, cx) {
                             view.message = Some((true, error));
@@ -921,7 +923,7 @@ impl PreferencesView {
                         }
                     }))))
             .child(hint("Use dot-separated paths, such as metadata.annotations or spec.template.spec.containers. Paths below a list apply to every item.", cx))
-            .child(inline_action(Button::new("reset-yaml-folding").link().icon(IconName::RotateCcw).label("Restore defaults")
+            .child(inline_action(Button::new("reset-yaml-folding").link().icon(IconName::RotateCcw).label(crate::i18n::text("Restore defaults"))
                 .on_click(cx.listener(|view, _, window, cx| {
                     if let Page::Cluster(c) = &mut view.page {
                         c.yaml_folding = Default::default();
@@ -1059,7 +1061,7 @@ impl PreferencesView {
                     .border_b_1()
                     .border_color(cx.theme().border)
                     .checked(self.proxy.choice == choice)
-                    .label(label)
+                    .label(crate::i18n::text(label))
                     .child(hint(description, cx))
                     .on_click(cx.listener(move |view, _, _, cx| {
                         view.proxy.choice = choice;
@@ -1239,7 +1241,7 @@ impl PreferencesView {
                                 .w_full()
                                 .justify_between()
                                 .text_sm()
-                                .child(label)
+                                .child(crate::i18n::text(label))
                                 .child(Icon::new(IconName::CircleCheck).size_4().text_color(
                                     if selected {
                                         cx.theme().primary
@@ -1262,6 +1264,7 @@ impl PreferencesView {
         v_flex()
             .gap_3()
             .w_full()
+            .child(self.language_picker(cx))
             .child(heading("Theme"))
             .child(h_flex().w_full().gap_3().items_stretch().children(choices))
             .child(setting_row(
@@ -1274,7 +1277,7 @@ impl PreferencesView {
                 Button::new("edit-custom-theme")
                     .link()
                     .icon(IconName::SlidersHorizontal)
-                    .label("Edit custom theme")
+                    .label(crate::i18n::text("Edit custom theme"))
                     .on_click(cx.listener(|view, _, window, cx| {
                         if let Page::Application(t) = &mut view.page {
                             t.appearance = Appearance::Custom(t.custom.name.clone());
@@ -1290,6 +1293,40 @@ impl PreferencesView {
             .child(heading("Preview"))
             .child(self.theme_preview(t))
             .into_any_element()
+    }
+
+    fn language_picker(&self, cx: &Context<Self>) -> AnyElement {
+        let language = settings::store(cx).read(cx).preferences.language;
+        let view = cx.entity().downgrade();
+        setting_row(
+            "Language",
+            "Changes apply immediately to all windows and menus.",
+            Button::new("settings-language")
+                .small()
+                .outline()
+                .label(language.label())
+                .accessibility_label(language.label())
+                .dropdown_caret(true)
+                .dropdown_menu(move |mut menu, _, _| {
+                    for choice in crate::i18n::Language::ALL {
+                        let view = view.clone();
+                        menu = menu.item(
+                            PopupMenuItem::new(choice.label())
+                                .checked(choice == language)
+                                .on_click(move |_, _, cx| {
+                                    let _ = view.update(cx, |view, cx| {
+                                        if let Err(error) = settings::save_language(choice, cx) {
+                                            view.message = Some((true, error));
+                                            cx.notify();
+                                        }
+                                    });
+                                }),
+                        );
+                    }
+                    menu
+                }),
+            cx,
+        )
     }
 
     fn theme_preview(&self, t: &ThemeEditor) -> AnyElement {
@@ -1315,7 +1352,7 @@ impl PreferencesView {
                     .text_size(theme.font_size * 0.6875)
                     .text_color(theme.muted_foreground)
                     .child(Icon::new(IconName::RadioTower).size_3())
-                    .child("Beacon · Theme preview"),
+                    .child(crate::i18n::text("Beacon · Theme preview")),
             )
             .child(
                 h_flex()
@@ -1331,11 +1368,23 @@ impl PreferencesView {
                             .child(
                                 div()
                                     .text_color(theme.sidebar_accent_foreground)
-                                    .child("Workloads"),
+                                    .child(crate::i18n::text("Workloads")),
                             )
-                            .child(div().text_color(theme.muted_foreground).child("Network"))
-                            .child(div().text_color(theme.muted_foreground).child("Config"))
-                            .child(div().text_color(theme.muted_foreground).child("Storage")),
+                            .child(
+                                div()
+                                    .text_color(theme.muted_foreground)
+                                    .child(crate::i18n::text("Network")),
+                            )
+                            .child(
+                                div()
+                                    .text_color(theme.muted_foreground)
+                                    .child(crate::i18n::text("Config")),
+                            )
+                            .child(
+                                div()
+                                    .text_color(theme.muted_foreground)
+                                    .child(crate::i18n::text("Storage")),
+                            ),
                     )
                     .child(
                         v_flex()
@@ -1372,7 +1421,7 @@ impl PreferencesView {
                                             .text_size(theme.font_size * 0.6875)
                                             .bg(theme.button_primary)
                                             .text_color(theme.button_primary_foreground)
-                                            .child("Create"),
+                                            .child(crate::i18n::text("Create")),
                                     ),
                             )
                             .child(
@@ -1383,8 +1432,8 @@ impl PreferencesView {
                                     .border_color(theme.border)
                                     .text_size(theme.font_size * 0.6875)
                                     .text_color(theme.muted_foreground)
-                                    .child("Name")
-                                    .child("Status"),
+                                    .child(crate::i18n::text("Name"))
+                                    .child(crate::i18n::text("Status")),
                             )
                             .children(["api-server", "worker"].into_iter().map(|name| {
                                 h_flex()
@@ -1400,7 +1449,7 @@ impl PreferencesView {
                                             .child(
                                                 div().size(px(5.)).rounded_full().bg(theme.success),
                                             )
-                                            .child("Running"),
+                                            .child(crate::i18n::text("Running")),
                                     )
                             })),
                     ),
@@ -1470,7 +1519,7 @@ impl PreferencesView {
                         .items_center()
                         .gap_2()
                         .child(settings::icon(&icon).size_5())
-                        .child(div().text_xs().child(label)),
+                        .child(div().text_xs().child(crate::i18n::text(label))),
                 )
                 .on_click(cx.listener(move |view, _, _, cx| {
                     if let Page::Cluster(c) = &mut view.page {
@@ -1489,12 +1538,12 @@ impl PreferencesView {
                     .child(crate::copyable_text::copyable_text("cluster-display-name", name)))
                     .child(hint(c.id.display_name(), cx)))
                 .child(h_flex().gap_1().items_center().text_xs().text_color(color)
-                    .child(div().size(px(5.)).rounded_full().bg(color)).child(status)))
+                    .child(div().size(px(5.)).rounded_full().bg(color)).child(crate::i18n::text(status))))
             .child(v_flex().gap_2().child(field("Display name", &c.alias))
                 .child(hint("Used in the sidebar, tabs and status bar. Leave empty to use the kubeconfig name.", cx)))
             .child(v_flex().gap_3().child(heading("Cluster icon"))
                 .child(div().grid().grid_cols(columns).gap_2().children(icons))
-                .child(inline_action(Button::new("custom-cluster-icon").link().icon(IconName::Upload).label("Import SVG…")
+                .child(inline_action(Button::new("custom-cluster-icon").link().icon(IconName::Upload).label(crate::i18n::text("Import SVG…"))
                     .on_click(cx.listener(|view, _, window, cx| view.choose_icon(window, cx)))))
                 .when(matches!(c.icon, ClusterIcon::Custom(_)), |form| form.child(h_flex().gap_2()
                     .child(settings::icon(&c.icon)).child(hint("Custom SVG icon", cx)))))
@@ -1523,7 +1572,7 @@ impl PreferencesView {
                 .border_b_1()
                 .border_color(cx.theme().border)
                 .checked(c.metrics == source)
-                .label(label)
+                .label(crate::i18n::text(label))
                 .child(hint(description, cx))
                 .on_click(cx.listener(move |view, _, _, cx| {
                     if let Page::Cluster(c) = &mut view.page {
@@ -1542,7 +1591,7 @@ impl PreferencesView {
                 .child(field("Bearer token · optional", &c.token))
                 .child(v_flex().gap_4().pt_3().border_t_1().border_color(cx.theme().border)
                     .child(inline_action(Button::new("metrics-query-disclosure").ghost().icon(if self.queries_expanded { IconName::ChevronDown } else { IconName::ChevronRight })
-                        .label("Query configuration").on_click(cx.listener(|view, _, _, cx| {
+                        .label(crate::i18n::text("Query configuration")).on_click(cx.listener(|view, _, _, cx| {
                             view.queries_expanded = !view.queries_expanded;
                             cx.notify();
                         }))))
@@ -1606,11 +1655,15 @@ impl PreferencesView {
                             .flex_1()
                             .min_w_0()
                             .gap_1()
-                            .child(div().font_weight(FontWeight::MEDIUM).child(if cluster {
-                                "Cluster"
-                            } else {
-                                "Beacon"
-                            }))
+                            .child(
+                                div()
+                                    .font_weight(FontWeight::MEDIUM)
+                                    .child(crate::i18n::text(if cluster {
+                                        "Cluster"
+                                    } else {
+                                        "Beacon"
+                                    })),
+                            )
                             .child(
                                 div()
                                     .text_xs()
@@ -1653,7 +1706,11 @@ impl PreferencesView {
                                     .items_center()
                                     .child(Icon::new(section.icon()).size_4())
                                     .child(
-                                        div().flex_1().min_w_0().truncate().child(section.label()),
+                                        div()
+                                            .flex_1()
+                                            .min_w_0()
+                                            .truncate()
+                                            .child(crate::i18n::text(section.label())),
                                     ),
                             )
                             .text_sm()
@@ -1737,14 +1794,21 @@ impl Render for PreferencesView {
             .child(
                 TitleBar::new().child(
                     div()
-                        .text_sm()
-                        .font_weight(FontWeight::MEDIUM)
-                        .text_color(cx.theme().muted_foreground)
-                        .child(if cluster {
+                        .id("settings-window-title")
+                        .test_support()
+                        .aria_label(crate::i18n::text(if cluster {
                             "Cluster settings"
                         } else {
                             "Application settings"
-                        }),
+                        }))
+                        .text_sm()
+                        .font_weight(FontWeight::MEDIUM)
+                        .text_color(cx.theme().muted_foreground)
+                        .child(crate::i18n::text(if cluster {
+                            "Cluster settings"
+                        } else {
+                            "Application settings"
+                        })),
                 ),
             )
             .child(
@@ -1773,7 +1837,7 @@ impl Render for PreferencesView {
                                                 div()
                                                     .text_size(rems(1.35))
                                                     .font_weight(FontWeight::MEDIUM)
-                                                    .child(self.section.title()),
+                                                    .child(crate::i18n::text(self.section.title())),
                                             )
                                             .child(hint(self.section.description(), cx)),
                                     )
@@ -1816,7 +1880,7 @@ impl Render for PreferencesView {
                                     .min_w_0()
                                     .text_xs()
                                     .text_color(cx.theme().muted_foreground)
-                                    .child(status),
+                                    .child(crate::i18n::text(status)),
                             )
                             .child(
                                 h_flex()
@@ -1835,7 +1899,7 @@ impl Render for PreferencesView {
                                                 Button::new("open-settings-folder")
                                                     .ghost()
                                                     .icon(IconName::FolderOpen)
-                                                    .label("Config folder")
+                                                    .label(crate::i18n::text("Config folder"))
                                                     .tooltip(directory.display().to_string())
                                                     .on_click(cx.listener(
                                                         move |view, _, _, cx| {
@@ -1862,7 +1926,7 @@ impl Render for PreferencesView {
                                         bar.child(
                                             Button::new("save-reconnect")
                                                 .outline()
-                                                .label("Save & reconnect")
+                                                .label(crate::i18n::text("Save & reconnect"))
                                                 .on_click(cx.listener(|view, _, window, cx| {
                                                     view.save(true, window, cx)
                                                 })),
