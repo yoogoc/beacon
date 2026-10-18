@@ -149,7 +149,9 @@ fn container_choices(groups: &[ContainerGroup]) -> ContainerChoices {
     SearchableVec::new(
         groups
             .iter()
-            .map(|group| SelectGroup::new(group.title).items(group.names.clone()))
+            .map(|group| {
+                SelectGroup::new(crate::i18n::text(group.title)).items(group.names.clone())
+            })
             .collect::<Vec<_>>(),
     )
 }
@@ -233,7 +235,7 @@ fn render_log_row(
                     .xsmall()
                     .ghost()
                     .label("›")
-                    .tooltip("Inspect fields and raw log")
+                    .tooltip(crate::i18n::text("Inspect fields and raw log"))
                     .on_click(move |_, window, cx| {
                         inspect.update(cx, |view, cx| view.inspect(id, window, cx))
                     }),
@@ -243,7 +245,7 @@ fn render_log_row(
                     .xsmall()
                     .ghost()
                     .label(if row.bookmarked { "★" } else { "☆" })
-                    .tooltip("Bookmark this log line")
+                    .tooltip(crate::i18n::text("Bookmark this log line"))
                     .on_click(move |_, _, cx| {
                         workbench.update(cx, |view, cx| view.bookmark(id, cx))
                     }),
@@ -441,8 +443,7 @@ impl PodToolsView {
         cx: &mut Context<Self>,
     ) -> Self {
         let command = cx.new(|cx| {
-            InputState::new(window, cx)
-                .placeholder("A command to run, e.g. ls -la /etc")
+            crate::i18n::input("A command to run, e.g. ls -la /etc", window, cx)
                 .default_value("ls -la /")
         });
         let container_groups = container_groups(&object);
@@ -472,11 +473,8 @@ impl PodToolsView {
                 }
             },
         );
-        let log_search = cx.new(|cx| {
-            InputState::new(window, cx)
-                .placeholder("Search logs")
-                .clean_on_escape()
-        });
+        let log_search =
+            cx.new(|cx| crate::i18n::input("Search logs", window, cx).clean_on_escape());
         let search_subscription = cx.subscribe_in(&log_search, window, |view, _, event, _, cx| {
             if matches!(event, InputEvent::Change) {
                 view.update_log_display(cx);
@@ -484,6 +482,13 @@ impl PodToolsView {
                 cx.notify();
             }
         });
+        cx.observe_global_in::<crate::i18n::LocaleState>(window, |view, _, cx| {
+            // The next render refreshes translated group headings, keeping the
+            // container value and the existing log stream unchanged.
+            view.container_groups.clear();
+            cx.notify();
+        })
+        .detach();
         let log_display: Rc<RefCell<crate::pod_logs::Display>> = Rc::default();
         let log_workbench = crate::log_workbench::LogWorkbench::new(
             log_display.clone(),
@@ -613,7 +618,7 @@ impl PodToolsView {
                     .children(
                         PodToolTab::ALL
                             .iter()
-                            .map(|tab| Tab::new().child(tab.label())),
+                            .map(|tab| Tab::new().child(crate::i18n::text(tab.label()))),
                     )
                     .on_click(cx.listener(|view, index: &usize, window, cx| {
                         if let Some(tab) = PodToolTab::ALL.get(*index).copied() {
@@ -626,7 +631,7 @@ impl PodToolsView {
                     .xsmall()
                     .ghost()
                     .label("×")
-                    .tooltip("Close the Pod tools panel")
+                    .tooltip(crate::i18n::text("Close the Pod tools panel"))
                     .on_click(cx.listener(|_, _, _, cx| cx.emit(PodToolsClosed))),
             )
     }
@@ -703,8 +708,13 @@ impl PodToolsView {
                 }
                 Err(error) => {
                     let _ = this.update(cx, |view, cx| {
-                        view.download =
-                            Download::Failed(format!("Could not open the save dialog: {error}"));
+                        view.download = Download::Failed(
+                            crate::i18n::message(
+                                "messages.could_not_open_the_save_dialog_error",
+                                &[("error", (error).to_string())],
+                            )
+                            .to_string(),
+                        );
                         cx.notify();
                     });
                     return;
@@ -737,15 +747,27 @@ impl PodToolsView {
                 view.download_abort = None;
                 view.download = match result {
                     Ok(Ok(bytes)) => Download::Saved { path, bytes },
-                    Ok(Err(error)) => Download::Failed(format!(
-                        "Could not download logs to {}: {error}",
-                        path.display()
-                    )),
+                    Ok(Err(error)) => Download::Failed(
+                        crate::i18n::message(
+                            "messages.could_not_download_logs_to_error",
+                            &[
+                                ("value0", (path.display()).to_string()),
+                                ("error", (error).to_string()),
+                            ],
+                        )
+                        .to_string(),
+                    ),
                     Err(error) if error.is_cancelled() => Download::Cancelled,
-                    Err(error) => Download::Failed(format!(
-                        "Could not download logs to {}: {error}",
-                        path.display()
-                    )),
+                    Err(error) => Download::Failed(
+                        crate::i18n::message(
+                            "messages.could_not_download_logs_to_error",
+                            &[
+                                ("value0", (path.display()).to_string()),
+                                ("error", (error).to_string()),
+                            ],
+                        )
+                        .to_string(),
+                    ),
                 };
                 cx.notify();
             });
@@ -761,12 +783,23 @@ impl PodToolsView {
                 Tone::Progressing,
             ),
             Download::Running(container) => (
-                format!("Downloading logs for {container}…"),
+                crate::i18n::message(
+                    "messages.downloading_logs_for_container",
+                    &[("container", (container).to_string())],
+                )
+                .to_string(),
                 Tone::Progressing,
             ),
             Download::Cancelling => ("Cancelling log download…".into(), Tone::Progressing),
             Download::Saved { path, bytes } => (
-                format!("Saved logs to {} ({bytes} bytes)", path.display()),
+                crate::i18n::message(
+                    "messages.saved_logs_to_bytes_bytes",
+                    &[
+                        ("value0", (path.display()).to_string()),
+                        ("bytes", (bytes).to_string()),
+                    ],
+                )
+                .to_string(),
                 Tone::Healthy,
             ),
             Download::Cancelled => ("Log download cancelled.".into(), Tone::Unknown),
@@ -1025,10 +1058,10 @@ impl PodToolsView {
                             .xsmall()
                             .w_full()
                             .menu_width(px(300.))
-                            .title_prefix("Container: ")
-                            .placeholder("Select container")
-                            .accessibility_label("Log container")
-                            .search_placeholder("Search containers")
+                            .title_prefix(crate::i18n::text("Container: "))
+                            .placeholder(crate::i18n::text("Select container"))
+                            .accessibility_label(crate::i18n::text("Log container"))
+                            .search_placeholder(crate::i18n::text("Search containers"))
                             .disabled(self.container_groups.is_empty())
                     ))
                     .child(div().w(px(180.)).flex_shrink_0().child(Input::new(&self.log_search).id("pod-log-search").xsmall()))
@@ -1036,27 +1069,27 @@ impl PodToolsView {
                     .child(Button::new("pause-log-follow").xsmall()
                         .when(!self.log_follow, |button| button.primary())
                         .when(self.log_follow, |button| button.ghost())
-                        .label(if self.log_follow { "Pause follow" } else { "Resume follow" })
-                        .tooltip("Pause automatic scrolling; logs continue to arrive")
+                        .label(crate::i18n::text(if self.log_follow { "Pause follow" } else { "Resume follow" }))
+                        .tooltip(crate::i18n::text("Pause automatic scrolling; logs continue to arrive"))
                         .on_click(cx.listener(|view, _, _, cx| {
                             view.set_log_follow(!view.log_follow);
                             cx.notify();
                         })))
-                    .child(Button::new("latest-log-line").xsmall().ghost().label("Latest")
+                    .child(Button::new("latest-log-line").xsmall().ghost().label(crate::i18n::text("Latest"))
                         .on_click(cx.listener(|view, _, _, cx| {
                             view.set_log_follow(true);
                             cx.notify();
                         })))
                     .child(Button::new("wrap-log-lines").xsmall()
                         .when(self.log_wrap, |button| button.primary())
-                        .when(!self.log_wrap, |button| button.ghost()).label("Wrap")
+                        .when(!self.log_wrap, |button| button.ghost()).label(crate::i18n::text("Wrap"))
                         .on_click(cx.listener(|view, _, _, cx| view.toggle_log_wrap(cx))))
                     .child(
                         Button::new("previous")
                             .xsmall()
                             .when(self.log_options.previous, |button| button.primary())
                             .when(!self.log_options.previous, |button| button.ghost())
-                            .label("Previous")
+                            .label(crate::i18n::text("Previous"))
                             .on_click(cx.listener(|view, _, window, cx| {
                                 let options = LogOptions {
                                     previous: !view.log_options.previous,
@@ -1070,7 +1103,7 @@ impl PodToolsView {
                             .xsmall()
                             .when(self.log_options.timestamps, |button| button.primary())
                             .when(!self.log_options.timestamps, |button| button.ghost())
-                            .label("Timestamps")
+                            .label(crate::i18n::text("Timestamps"))
                             .on_click(cx.listener(|view, _, window, cx| {
                                 let options = LogOptions {
                                     timestamps: !view.log_options.timestamps,
@@ -1083,13 +1116,13 @@ impl PodToolsView {
                         Button::new("download-logs")
                             .xsmall()
                             .ghost()
-                            .label("Export all…")
+                            .label(crate::i18n::text("Export all…"))
                             .disabled(self.download_active() || self.log_options.container.is_none())
-                            .tooltip("Export this container's complete available logs for the time range; ignores local filters. Choose a folder and filename")
+                            .tooltip(crate::i18n::text("Export this container's complete available logs for the time range; ignores local filters. Choose a folder and filename"))
                             .on_click(cx.listener(|view, _, window, cx| view.download_logs(window, cx))),
                     )
                     .when(matches!(self.download, Download::Running(_)), |this| {
-                        this.child(Button::new("cancel-log-download").xsmall().ghost().label("Cancel")
+                        this.child(Button::new("cancel-log-download").xsmall().ghost().label(crate::i18n::text("Cancel"))
                             .on_click(cx.listener(|view, _, _, cx| {
                                 if let Some(abort) = &view.download_abort {
                                     abort.abort();
@@ -1102,8 +1135,8 @@ impl PodToolsView {
                         Button::new("copy-logs")
                             .xsmall()
                             .ghost()
-                            .label("Copy")
-                            .tooltip("Copy matching retained raw log lines; selected display fields do not remove original data")
+                            .label(crate::i18n::text("Copy"))
+                            .tooltip(crate::i18n::text("Copy matching retained raw log lines; selected display fields do not remove original data"))
                             .on_click(cx.listener(|view, _, _, cx| {
                                 cx.write_to_clipboard(ClipboardItem::new_string(
                                     view.log_display.borrow().text(),
@@ -1114,10 +1147,10 @@ impl PodToolsView {
                         match (dropped, &self.log_status) {
                             // Saying so matters: what is shown starts
                             // mid-stream, and nothing else would say that.
-                            (0, LogStatus::Ended) => format!("{count}/{total} lines · ended"),
-                            (0, _) => format!("{count}/{total} lines"),
+                            (0, LogStatus::Ended) => crate::i18n::message("messages.count_total_lines_ended", &[("count", (count).to_string()), ("total", (total).to_string())]).to_string(),
+                            (0, _) => crate::i18n::message("messages.count_total_lines", &[("count", (count).to_string()), ("total", (total).to_string())]).to_string(),
                             (dropped, _) => {
-                                format!("{count}/{total} lines · {dropped} older dropped")
+                                crate::i18n::message("messages.count_total_lines_dropped_older_dropped", &[("count", (count).to_string()), ("total", (total).to_string()), ("dropped", (dropped).to_string())]).to_string()
                             }
                         },
                     )),
@@ -1267,7 +1300,11 @@ impl PodToolsView {
                         Button::new("run")
                             .primary()
                             .xsmall()
-                            .label(if running { "Running…" } else { "Run" })
+                            .label(crate::i18n::text(if running {
+                                "Running…"
+                            } else {
+                                "Run"
+                            }))
                             .disabled(running)
                             .on_click(
                                 cx.listener(|view, _, window, cx| view.run_command(window, cx)),
@@ -1324,7 +1361,7 @@ impl PodToolsView {
             })
             .child(crate::copyable_text::copyable_text(
                 "pod-tools-notice",
-                message,
+                crate::i18n::text(&message),
             ))
             .children(permissions)
             .into_any_element()
@@ -1352,6 +1389,48 @@ impl Render for PodToolsView {
 mod rendering_tests {
     use super::*;
     use gpui_kit::test::TestWindowExt as _;
+
+    #[::core::prelude::v1::test]
+    fn language_switch_updates_log_controls_without_changing_container_or_log_options() {
+        use crate::{
+            feature_test_support as support,
+            i18n::{self, Language},
+        };
+        let directory = tempfile::tempdir().unwrap();
+        let cx = &mut support::context();
+        support::workspace(cx, directory.path());
+        let object = serde_json::json!({"apiVersion":"v1","kind":"Pod","metadata":{"name":"Save","namespace":"default","uid":"language-pod"},"spec":{"containers":[{"name":"app"}]}});
+        let (_fixture, session) = support::fixture(cx, "language-logs", vec![object.clone()]);
+        let object = Arc::new(serde_json::from_value(object).unwrap());
+        let (handle, view) = cx.update(|cx| {
+            gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
+                window.set_view_retention(false);
+                cx.new(|cx| PodToolsView::new(session, object, None, PodToolTab::Logs, window, cx))
+            })
+            .unwrap()
+        });
+        for (language, pause, previous) in [
+            (Language::English, "Pause follow", "Previous"),
+            (Language::SimplifiedChinese, "暂停跟随", "上一个容器"),
+            (Language::English, "Pause follow", "Previous"),
+        ] {
+            cx.update(|cx| i18n::apply(language, cx));
+            for _ in 0..3 {
+                cx.run_until_parked();
+                cx.update_window(handle, |_, window, cx| window.render_frame(cx))
+                    .unwrap();
+            }
+            cx.update_window(handle, |_, window, cx| {
+                assert_eq!(window.find("pause-log-follow").label(), Some(pause));
+                assert_eq!(window.find("previous").label(), Some(previous));
+                let view = view.read(cx);
+                assert_eq!(view.target.name, "Save");
+                assert_eq!(view.log_options.container.as_deref(), Some("app"));
+                assert!(!view.log_options.previous);
+            })
+            .unwrap();
+        }
+    }
 
     struct Pane {
         logs: LogBuffer,

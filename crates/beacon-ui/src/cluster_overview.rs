@@ -158,8 +158,13 @@ impl OverviewView {
                                 view.data = Some(data);
                             }
                             Err(error) => {
-                                view.error =
-                                    Some(format!("Could not refresh cluster overview: {error}"))
+                                view.error = Some(
+                                    crate::i18n::message(
+                                        "messages.could_not_refresh_cluster_overview_error",
+                                        &[("error", (error).to_string())],
+                                    )
+                                    .to_string(),
+                                )
                             }
                         }
                         cx.notify();
@@ -330,7 +335,7 @@ impl OverviewView {
                                 })
                                 .size_3(),
                             )
-                            .child(label),
+                            .child(crate::i18n::text(label)),
                     )
                     .child(
                         h_flex()
@@ -436,7 +441,7 @@ impl OverviewView {
                                     .justify_between()
                                     .text_xs()
                                     .text_color(cx.theme().muted_foreground)
-                                    .child(label)
+                                    .child(crate::i18n::text(label))
                                     .child(Icon::new(icon).size_4()),
                             )
                             .child(div().text_xl().font_medium().child(value))
@@ -444,7 +449,7 @@ impl OverviewView {
                                 div()
                                     .text_xs()
                                     .text_color(cx.theme().muted_foreground)
-                                    .child(hint),
+                                    .child(crate::i18n::text(hint)),
                             )
                             .on_click(cx.listener(move |view, _, _, cx| {
                                 view.navigate(group, kind, None, cx)
@@ -490,7 +495,13 @@ impl OverviewView {
                         div()
                             .id(("overview-node", index))
                             .role(Role::Button)
-                            .aria_label(format!("Node details: {name}"))
+                            .aria_label(
+                                crate::i18n::message(
+                                    "messages.node_details_name",
+                                    &[("name", (name).to_string())],
+                                )
+                                .to_string(),
+                            )
                             .test_support()
                             .cursor_pointer()
                             .hover(|s| s.bg(cx.theme().muted.opacity(0.4)))
@@ -515,13 +526,16 @@ impl OverviewView {
             .data
             .as_ref()
             .and_then(|d| d.summary.nodes)
-            .map(|v| format!("View all ({})", v.1))
+            .map(|v| {
+                crate::i18n::message("messages.view_all", &[("value0", (v.1).to_string())])
+                    .to_string()
+            })
             .unwrap_or_else(|| "View all".into());
         presentation::panel(
             h_flex()
                 .justify_between()
                 .items_center()
-                .child("Nodes")
+                .child(crate::i18n::text("Nodes"))
                 .child(
                     Button::new("overview-all-nodes")
                         .xsmall()

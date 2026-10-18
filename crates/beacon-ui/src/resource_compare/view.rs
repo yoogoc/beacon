@@ -95,7 +95,11 @@ impl CompareView {
                         if self.changes.is_empty() {
                             "No differences".into()
                         } else {
-                            format!("{} changed fields", self.changes.len())
+                            crate::i18n::message(
+                                "messages.changed_fields",
+                                &[("value0", (self.changes.len()).to_string())],
+                            )
+                            .to_string()
                         }
                     )),
             )

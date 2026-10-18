@@ -47,5 +47,701 @@
   "resources.scale": {
     "en": "Scale this %{kind}",
     "zh-CN": "调整此 %{kind} 的副本数"
+  },
+  "resources.generation": {
+    "en": "Generation",
+    "zh-CN": "代次"
+  },
+  "resources.resource_version": {
+    "en": "Resource version",
+    "zh-CN": "资源版本"
+  },
+  "resources.deletion_timestamp": {
+    "en": "Deletion timestamp",
+    "zh-CN": "删除时间"
+  },
+  "resources.finalizers": {
+    "en": "Finalizers",
+    "zh-CN": "终结器"
+  },
+  "resources.additional_fields": {
+    "en": "Additional fields",
+    "zh-CN": "其他字段"
+  },
+  "resources.tls_certificate": {
+    "en": "TLS Certificate",
+    "zh-CN": "TLS 证书"
+  },
+  "resources.expiry_checks_time_only_issuer_trust_and_hostname_are_not_verified": {
+    "en": "Expiry checks time only; issuer trust and hostname are not verified.",
+    "zh-CN": "仅检查有效期，不验证签发者信任链和主机名。"
+  },
+  "resources.leaf_certificate": {
+    "en": "Leaf certificate",
+    "zh-CN": "终端证书"
+  },
+  "resources.common_name": {
+    "en": "Common name",
+    "zh-CN": "通用名称"
+  },
+  "resources.subject": {
+    "en": "Subject",
+    "zh-CN": "主题"
+  },
+  "resources.issuer": {
+    "en": "Issuer",
+    "zh-CN": "签发者"
+  },
+  "resources.serial": {
+    "en": "Serial",
+    "zh-CN": "序列号"
+  },
+  "resources.validity": {
+    "en": "Validity",
+    "zh-CN": "有效期"
+  },
+  "resources.not_before": {
+    "en": "Not before",
+    "zh-CN": "生效时间"
+  },
+  "resources.not_after": {
+    "en": "Not after",
+    "zh-CN": "到期时间"
+  },
+  "resources.algorithms": {
+    "en": "Algorithms",
+    "zh-CN": "加密算法"
+  },
+  "resources.signature": {
+    "en": "Signature",
+    "zh-CN": "签名算法"
+  },
+  "resources.public_key": {
+    "en": "Public key",
+    "zh-CN": "公钥"
+  },
+  "resources.key_size": {
+    "en": "Key size",
+    "zh-CN": "密钥长度"
+  },
+  "resources.public_key_fingerprint": {
+    "en": "Public key & fingerprint",
+    "zh-CN": "公钥与指纹"
+  },
+  "resources.key_details": {
+    "en": "Key details",
+    "zh-CN": "密钥详情"
+  },
+  "resources.cert_sha_256": {
+    "en": "Cert SHA-256",
+    "zh-CN": "证书 SHA-256"
+  },
+  "resources.not_yet_valid": {
+    "en": "Not yet valid",
+    "zh-CN": "尚未生效"
+  },
+  "resources.expired": {
+    "en": "Expired",
+    "zh-CN": "已过期"
+  },
+  "resources.scheduling_disabled": {
+    "en": "Scheduling disabled",
+    "zh-CN": "已禁止调度"
+  },
+  "resources.service_account_token": {
+    "en": "Service account token",
+    "zh-CN": "服务账户令牌"
+  },
+  "resources.max_surge": {
+    "en": "Max surge",
+    "zh-CN": "最大超额副本数"
+  },
+  "resources.max_unavailable": {
+    "en": "Max unavailable",
+    "zh-CN": "最大不可用副本数"
+  },
+  "resources.node_port": {
+    "en": "Node port",
+    "zh-CN": "节点端口"
+  },
+  "resources.path": {
+    "en": "Path",
+    "zh-CN": "路径"
+  },
+  "resources.marked_invalid_by_cluster": {
+    "en": "Marked invalid by cluster",
+    "zh-CN": "集群标记为无效"
+  },
+  "resources.present": {
+    "en": "Present",
+    "zh-CN": "已存在"
+  },
+  "resources.not_populated": {
+    "en": "Not populated",
+    "zh-CN": "尚未填充"
+  },
+  "resources.key": {
+    "en": "Key",
+    "zh-CN": "键"
+  },
+  "resources.binary": {
+    "en": "Binary",
+    "zh-CN": "二进制"
+  },
+  "resources.text": {
+    "en": "Text",
+    "zh-CN": "文本"
+  },
+  "resources.hidden": {
+    "en": "Hidden",
+    "zh-CN": "已隐藏"
+  },
+  "resources.allocatable": {
+    "en": "Allocatable",
+    "zh-CN": "可分配量"
+  },
+  "resources.instance_type": {
+    "en": "Instance type",
+    "zh-CN": "实例类型"
+  },
+  "resources.ephemeral_storage": {
+    "en": "Ephemeral storage",
+    "zh-CN": "临时存储"
+  },
+  "resources.spec": {
+    "en": "Spec",
+    "zh-CN": "规格"
+  },
+  "resources.pod_total": {
+    "en": "Pod total",
+    "zh-CN": "Pod 合计"
+  },
+  "resources.ephemeral_containers": {
+    "en": "Ephemeral containers",
+    "zh-CN": "临时容器"
+  },
+  "resources.no_templates": {
+    "en": "No templates",
+    "zh-CN": "暂无模板"
+  },
+  "resources.waiting_for_workflow_history": {
+    "en": "Waiting for workflow history…",
+    "zh-CN": "正在读取工作流历史…"
+  },
+  "resources.no_data_keys": {
+    "en": "No data keys",
+    "zh-CN": "暂无数据键"
+  },
+  "resources.no_matching_keys": {
+    "en": "No matching keys",
+    "zh-CN": "没有匹配的键"
+  },
+  "resources.this_resource_has_no_data": {
+    "en": "This resource has no data.",
+    "zh-CN": "此资源没有数据。"
+  },
+  "resources.search_or_select_a_key_to_view_its_value": {
+    "en": "Search or select a key to view its value.",
+    "zh-CN": "搜索或选择一个键以查看内容。"
+  },
+  "resources.pending_deletion": {
+    "en": "Pending deletion",
+    "zh-CN": "待删除"
+  },
+  "resources.copy_token": {
+    "en": "Copy token",
+    "zh-CN": "复制令牌"
+  },
+  "resources.copy_value": {
+    "en": "Copy value",
+    "zh-CN": "复制内容"
+  },
+  "resources.reading_the_data": {
+    "en": "Reading the data…",
+    "zh-CN": "正在读取数据…"
+  },
+  "resources.ca_certificate_bundle": {
+    "en": "CA certificate bundle",
+    "zh-CN": "CA 证书链"
+  },
+  "resources.token_namespace": {
+    "en": "Token namespace",
+    "zh-CN": "令牌命名空间"
+  },
+  "resources.decoded_jwt_header": {
+    "en": "Decoded JWT header",
+    "zh-CN": "解码后的 JWT 头部"
+  },
+  "resources.decoded_jwt_claims": {
+    "en": "Decoded JWT claims",
+    "zh-CN": "解码后的 JWT 声明"
+  },
+  "resources.runtime_details": {
+    "en": "Runtime details",
+    "zh-CN": "运行时详情"
+  },
+  "resources.collapse_container": {
+    "en": "Collapse container",
+    "zh-CN": "折叠容器"
+  },
+  "resources.expand_container": {
+    "en": "Expand container",
+    "zh-CN": "展开容器"
+  },
+  "resources.choose_save_method": {
+    "en": "Choose save method",
+    "zh-CN": "选择保存方式"
+  },
+  "resources.reviewing": {
+    "en": "Reviewing…",
+    "zh-CN": "正在准备审阅…"
+  },
+  "resources.review_and_save_changed_fields_with_resource_version_checks": {
+    "en": "Review and save changed fields with resource version checks",
+    "zh-CN": "审阅并保存修改字段，同时校验资源版本"
+  },
+  "resources.review_and_apply_with_server_side_field_ownership_checks": {
+    "en": "Review and apply with server-side field ownership checks",
+    "zh-CN": "审阅并应用，同时检查服务端字段归属"
+  },
+  "resources.server_side_apply": {
+    "en": "Server-Side Apply",
+    "zh-CN": "服务端应用"
+  },
+  "resources.confirm_force_apply": {
+    "en": "Confirm force apply",
+    "zh-CN": "确认强制应用"
+  },
+  "resources.fetching_the_object": {
+    "en": "Fetching the object…",
+    "zh-CN": "正在获取资源…"
+  },
+  "resources.patch_checks_the_resource_version_before_saving": {
+    "en": "Patch · Checks the resource version before saving.",
+    "zh-CN": "Patch · 保存前校验资源版本。"
+  },
+  "resources.looking_for_events": {
+    "en": "Looking for events…",
+    "zh-CN": "正在读取事件…"
+  },
+  "resources.no_events_kubernetes_keeps_them_for_about_an_hour": {
+    "en": "No events. Kubernetes keeps them for about an hour.",
+    "zh-CN": "暂无事件。Kubernetes 通常只保留约一小时的事件。"
+  },
+  "resources.reload_the_resource_before_saving_yaml": {
+    "en": "Reload the resource before saving YAML.",
+    "zh-CN": "保存 YAML 前请重新加载资源。"
+  },
+  "resources.you_no_longer_have_permission_to_apply_this_resource": {
+    "en": "You no longer have permission to apply this resource.",
+    "zh-CN": "你已没有应用此资源的权限。"
+  },
+  "resources.the_pod_resource_is_not_available_in_this_cluster": {
+    "en": "The Pod resource is not available in this cluster.",
+    "zh-CN": "此集群不支持 Pod 资源。"
+  },
+  "resources.show_less": {
+    "en": "Show less",
+    "zh-CN": "收起"
+  },
+  "resources.edit_one_resource_manifest_existing_names_are_refused": {
+    "en": "Edit one resource manifest. Existing names are refused.",
+    "zh-CN": "编辑单个资源清单。无法创建同名的已有资源。"
+  },
+  "resources.validating_with_the_api_server": {
+    "en": "Validating with the API server…",
+    "zh-CN": "正在通过 API 服务器验证…"
+  },
+  "resources.creating_resource": {
+    "en": "Creating resource…",
+    "zh-CN": "正在创建资源…"
+  },
+  "resources.server_validation_passed_no_resource_was_saved": {
+    "en": "Server validation passed. No resource was saved.",
+    "zh-CN": "服务端验证通过，尚未保存资源。"
+  },
+  "resources.set_the_resource_name_and_namespace_in_yaml": {
+    "en": "Set the resource name and namespace in YAML",
+    "zh-CN": "在 YAML 中设置资源名称和命名空间"
+  },
+  "resources.creating": {
+    "en": "Creating…",
+    "zh-CN": "正在创建…"
+  },
+  "resources.loading_resources": {
+    "en": "Loading resources",
+    "zh-CN": "正在加载资源"
+  },
+  "resources.selected_resource_actions": {
+    "en": "Selected resource actions",
+    "zh-CN": "所选资源操作"
+  },
+  "resources.resource_toolbar": {
+    "en": "Resource toolbar",
+    "zh-CN": "资源工具栏"
+  },
+  "resources.matches": {
+    "en": "Matches",
+    "zh-CN": "匹配项"
+  },
+  "resources.reading_releases": {
+    "en": "Reading releases…",
+    "zh-CN": "正在读取发布记录…"
+  },
+  "resources.no_helm_releases_in_this_scope": {
+    "en": "No Helm releases in this scope.",
+    "zh-CN": "此范围内没有 Helm 发布。"
+  },
+  "resources.filter_resources_by_labels": {
+    "en": "Filter resources by labels",
+    "zh-CN": "按标签筛选资源"
+  },
+  "resources.no_labels_in_this_scope_you_can_still_enter_a_selector": {
+    "en": "No labels in this scope. You can still enter a selector.",
+    "zh-CN": "此范围内暂无标签，仍可输入选择器。"
+  },
+  "resources.no_matching_labels": {
+    "en": "No matching labels.",
+    "zh-CN": "没有匹配的标签。"
+  },
+  "resources.objects": {
+    "en": "Objects",
+    "zh-CN": "资源"
+  },
+  "resources.helm_releases": {
+    "en": "Helm Releases",
+    "zh-CN": "Helm 发布"
+  },
+  "resources.missing_reference": {
+    "en": "Missing reference",
+    "zh-CN": "引用缺失"
+  },
+  "resources.optional_reference_absent": {
+    "en": "Optional reference absent",
+    "zh-CN": "可选引用不存在"
+  },
+  "resources.optional_key_is_absent": {
+    "en": "Optional key is absent",
+    "zh-CN": "可选键不存在"
+  },
+  "resources.key_is_missing": {
+    "en": "Key is missing",
+    "zh-CN": "缺少键"
+  },
+  "resources.workloads_and_pods_that_reference_this_configuration_values_are_not_shown": {
+    "en": "Workloads and Pods that reference this configuration. Values are not shown.",
+    "zh-CN": "引用此配置的工作负载和 Pod，不显示配置值。"
+  },
+  "resources.configuration_referenced_by_this_resource_missing_resources_and_keys_are_shown_below": {
+    "en": "Configuration referenced by this resource; missing resources and keys are shown below.",
+    "zh-CN": "此资源引用的配置，缺失的资源和键在下方列出。"
+  },
+  "resources.checking_references": {
+    "en": "Checking references…",
+    "zh-CN": "正在检查引用…"
+  },
+  "resources.loading_usage": {
+    "en": "Loading usage…",
+    "zh-CN": "正在加载引用情况…"
+  },
+  "resources.usage_could_not_be_fully_checked_review_the_errors_above": {
+    "en": "Usage could not be fully checked. Review the errors above.",
+    "zh-CN": "未能完成全部引用检查，请查看上方错误。"
+  },
+  "resources.no_configuration_references_found": {
+    "en": "No configuration references found.",
+    "zh-CN": "未发现配置引用。"
+  },
+  "resources.no_references_match_the_search": {
+    "en": "No references match the search.",
+    "zh-CN": "没有匹配的引用。"
+  },
+  "resources.no_pods_are_scheduled_to_this_node": {
+    "en": "No Pods are scheduled to this node.",
+    "zh-CN": "此节点未调度任何 Pod。"
+  },
+  "resources.no_pods_match_the_search": {
+    "en": "No Pods match the search.",
+    "zh-CN": "没有匹配的 Pod。"
+  },
+  "resources.usage": {
+    "en": "Usage",
+    "zh-CN": "使用量"
+  },
+  "resources.declared_limits": {
+    "en": "Declared limits",
+    "zh-CN": "声明的限制量"
+  },
+  "resources.metrics_disabled": {
+    "en": "Metrics disabled",
+    "zh-CN": "指标已禁用"
+  },
+  "resources.partial_access": {
+    "en": "Partial access",
+    "zh-CN": "部分权限受限"
+  },
+  "resources.needs_attention": {
+    "en": "Needs attention",
+    "zh-CN": "需要关注"
+  },
+  "resources.healthy": {
+    "en": "Healthy",
+    "zh-CN": "健康"
+  },
+  "resources.reading_cluster_data": {
+    "en": "Reading cluster data…",
+    "zh-CN": "正在读取集群数据…"
+  },
+  "resources.ready_active_pods": {
+    "en": "Ready · active Pods",
+    "zh-CN": "就绪 / 活跃 Pod"
+  },
+  "resources.warnings": {
+    "en": "Warnings",
+    "zh-CN": "警告"
+  },
+  "resources.distinct_events_last_1h": {
+    "en": "Distinct events · last 1h",
+    "zh-CN": "最近一小时的不同事件"
+  },
+  "resources.deployments_statefulsets_and_daemonsets": {
+    "en": "Deployments, StatefulSets and DaemonSets",
+    "zh-CN": "Deployment、StatefulSet 和 DaemonSet"
+  },
+  "resources.no_nodes_found": {
+    "en": "No nodes found",
+    "zh-CN": "未发现节点"
+  },
+  "resources.reading_nodes": {
+    "en": "Reading nodes…",
+    "zh-CN": "正在读取节点…"
+  },
+  "resources.view_all": {
+    "en": "View all",
+    "zh-CN": "查看全部"
+  },
+  "resources.no_warning_events_in_the_last_hour": {
+    "en": "No warning events in the last hour.",
+    "zh-CN": "最近一小时没有警告事件。"
+  },
+  "resources.reading_warning_events": {
+    "en": "Reading warning events…",
+    "zh-CN": "正在读取警告事件…"
+  },
+  "resources.usage_is_unavailable_until_cpu_and_memory_metrics_cover_every_node": {
+    "en": "Usage is unavailable until CPU and memory metrics cover every node.",
+    "zh-CN": "CPU 和内存指标覆盖所有节点后才可显示使用量。"
+  },
+  "resources.declared_limits_exceed_allocatable_capacity_limits_are_ceilings_not_actual_usage_containers_without_limits_are_not_included": {
+    "en": "Declared limits exceed allocatable capacity. Limits are ceilings, not actual usage; containers without limits are not included.",
+    "zh-CN": "声明的限制量超过可分配容量。限制量是上限，并非实际用量；未设置限制的容器不计入。"
+  },
+  "resources.requests_and_declared_limits_are_for_scheduled_active_pods_including_init_containers_and_pod_overhead_containers_without_limits_are_not_included": {
+    "en": "Requests and declared limits are for scheduled active Pods, including init containers and Pod overhead. Containers without limits are not included.",
+    "zh-CN": "请求量和声明的限制量统计已调度的活跃 Pod，包含初始化容器及 Pod 开销；未设置限制的容器不计入限制量。"
+  },
+  "resources.collecting_usage_samples": {
+    "en": "Collecting usage samples…",
+    "zh-CN": "正在采集使用量样本…"
+  },
+  "resources.node_allocatable_capacity_is_unavailable": {
+    "en": "Node allocatable capacity is unavailable.",
+    "zh-CN": "节点可分配容量不可用。"
+  },
+  "resources.no_usage_samples_available_from_the_configured_metrics_source": {
+    "en": "No usage samples available from the configured metrics source.",
+    "zh-CN": "配置的指标来源暂无使用量样本。"
+  },
+  "resources.of_current_allocatable_capacity": {
+    "en": "% of current allocatable capacity",
+    "zh-CN": "占当前可分配容量的百分比"
+  },
+  "resources.historical_samples_from_prometheus": {
+    "en": "Historical samples from Prometheus.",
+    "zh-CN": "来自 Prometheus 的历史样本。"
+  },
+  "resources.samples_are_collected_while_overview_is_visible_earlier_history_is_unavailable": {
+    "en": "Samples are collected while Overview is visible; earlier history is unavailable.",
+    "zh-CN": "仅在打开概览时采样，不提供更早的历史数据。"
+  },
+  "resources.restart_observed": {
+    "en": "Restart observed",
+    "zh-CN": "检测到重启"
+  },
+  "resources.no_usage_samples_available_for_this_scope": {
+    "en": "No usage samples available for this scope.",
+    "zh-CN": "此范围内暂无使用量样本。"
+  },
+  "resources.show_all_events": {
+    "en": "Show all events",
+    "zh-CN": "显示全部事件"
+  },
+  "resources.historical": {
+    "en": "Historical",
+    "zh-CN": "历史"
+  },
+  "resources.session": {
+    "en": "Session",
+    "zh-CN": "当前会话"
+  },
+  "resources.resume_sampling": {
+    "en": "Resume sampling",
+    "zh-CN": "恢复采样"
+  },
+  "resources.pause_sampling": {
+    "en": "Pause sampling",
+    "zh-CN": "暂停采样"
+  },
+  "resources.prometheus_historical_samples_for_the_current_resource_lifetime_gaps_indicate_missing_data": {
+    "en": "Prometheus historical samples for the current resource lifetime. Gaps indicate missing data.",
+    "zh-CN": "Prometheus 中此资源生命周期内的历史样本，空缺表示数据缺失。"
+  },
+  "resources.samples_collected_every_15s_while_this_tab_is_visible_earlier_history_is_unavailable_gaps_remain_when_paused_or_inactive": {
+    "en": "Samples collected every 15s while this tab is visible. Earlier history is unavailable; gaps remain when paused or inactive.",
+    "zh-CN": "此标签页可见时每 15 秒采样一次。不提供更早的历史数据，暂停或切到后台时会留下空缺。"
+  },
+  "resources.reading_metrics": {
+    "en": "Reading metrics…",
+    "zh-CN": "正在读取指标…"
+  },
+  "resources.no_metrics_snapshot_available": {
+    "en": "No metrics snapshot available.",
+    "zh-CN": "暂无指标快照。"
+  },
+  "resources.graph_unavailable": {
+    "en": "Graph unavailable",
+    "zh-CN": "拓扑不可用"
+  },
+  "resources.preparing_graph": {
+    "en": "Preparing graph…",
+    "zh-CN": "正在准备拓扑…"
+  },
+  "resources.reading_node_status": {
+    "en": "Reading node status…",
+    "zh-CN": "正在读取节点状态…"
+  },
+  "resources.this_node_has_no_containers": {
+    "en": "This node has no containers.",
+    "zh-CN": "此节点没有容器。"
+  },
+  "resources.container_configuration_is_not_available_yet": {
+    "en": "Container configuration is not available yet.",
+    "zh-CN": "容器配置暂不可用。"
+  },
+  "resources.showing_the_resolved_template_pod_configuration_is_unavailable": {
+    "en": "Showing the resolved template; Pod configuration is unavailable.",
+    "zh-CN": "正在显示解析后的模板，Pod 配置不可用。"
+  },
+  "resources.no_inputs": {
+    "en": "No inputs",
+    "zh-CN": "暂无输入"
+  },
+  "resources.outputs_will_appear_after_this_node_completes": {
+    "en": "Outputs will appear after this node completes.",
+    "zh-CN": "节点完成后显示输出。"
+  },
+  "resources.no_outputs": {
+    "en": "No outputs",
+    "zh-CN": "暂无输出"
+  },
+  "resources.this_node_is_no_longer_present_in_the_workflow_status": {
+    "en": "This node is no longer present in the workflow status.",
+    "zh-CN": "工作流状态中已不存在此节点。"
+  },
+  "resources.loading_pod_configuration": {
+    "en": "Loading Pod configuration…",
+    "zh-CN": "正在加载 Pod 配置…"
+  },
+  "resources.expired_exp_claim": {
+    "en": "Expired (exp claim)",
+    "zh-CN": "已过期（exp 声明）"
+  },
+  "resources.not_yet_active_nbf_claim": {
+    "en": "Not yet active (nbf claim)",
+    "zh-CN": "尚未生效（nbf 声明）"
+  },
+  "resources.no_expiry_claim": {
+    "en": "No expiry claim",
+    "zh-CN": "未声明到期时间"
+  },
+  "resources.token_is_too_large_to_inspect_use_raw_value": {
+    "en": "Token is too large to inspect. Use Raw value.",
+    "zh-CN": "令牌过大，无法解析，请使用「原始值」查看。"
+  },
+  "resources.expected_a_jwt_with_three_non_empty_segments_use_raw_value_to_inspect_this_token": {
+    "en": "Expected a JWT with three non-empty segments. Use Raw value to inspect this token.",
+    "zh-CN": "JWT 应包含三个非空段，请使用「原始值」查看此令牌。"
+  },
+  "resources.audience": {
+    "en": "Audience",
+    "zh-CN": "受众"
+  },
+  "resources.token_id": {
+    "en": "Token ID",
+    "zh-CN": "令牌 ID"
+  },
+  "resources.bound_pod": {
+    "en": "Bound Pod",
+    "zh-CN": "绑定的 Pod"
+  },
+  "resources.bound_pod_uid": {
+    "en": "Bound Pod UID",
+    "zh-CN": "绑定的 Pod UID"
+  },
+  "resources.bound_node": {
+    "en": "Bound Node",
+    "zh-CN": "绑定的节点"
+  },
+  "resources.bound_node_uid": {
+    "en": "Bound Node UID",
+    "zh-CN": "绑定的节点 UID"
+  },
+  "resources.algorithm_header": {
+    "en": "Algorithm (header)",
+    "zh-CN": "算法（头部）"
+  },
+  "resources.key_id_header": {
+    "en": "Key ID (header)",
+    "zh-CN": "密钥 ID（头部）"
+  },
+  "resources.issued_at": {
+    "en": "Issued at",
+    "zh-CN": "签发时间"
+  },
+  "resources.expires_at": {
+    "en": "Expires at",
+    "zh-CN": "到期时间"
+  },
+  "resources.scaled_to_zero": {
+    "en": "Scaled to zero",
+    "zh-CN": "副本数为零"
+  },
+  "resources.access_mode": {
+    "en": "Access mode",
+    "zh-CN": "访问模式"
+  },
+  "resources.this_tls_secret_has_no_tls_crt_entry": {
+    "en": "This TLS Secret has no tls.crt entry",
+    "zh-CN": "此 TLS Secret 缺少 tls.crt"
+  },
+  "resources.marked_for_deletion": {
+    "en": ", marked for deletion",
+    "zh-CN": "，已标记为删除"
+  },
+  "resources.patch_recommended": {
+    "en": "Patch (recommended)",
+    "zh-CN": "Patch（推荐）"
+  },
+  "resources.save_ssa": {
+    "en": "Save (SSA)",
+    "zh-CN": "保存（SSA）"
+  },
+  "resources.unnamed_task": {
+    "en": "Unnamed task",
+    "zh-CN": "未命名任务"
+  },
+  "resources.unnamed_step": {
+    "en": "Unnamed step",
+    "zh-CN": "未命名步骤"
   }
 }

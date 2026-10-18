@@ -50,11 +50,20 @@ impl DetailView {
                             .test_support()
                             .role(Role::Button)
                             .focusable()
-                            .aria_label(format!(
-                                "Open {}{}",
-                                key.entry.key,
-                                if deleted { ", marked for deletion" } else { "" }
-                            ))
+                            .aria_label(
+                                crate::i18n::message(
+                                    "messages.open",
+                                    &[
+                                        ("value0", (key.entry.key).to_string()),
+                                        (
+                                            "value1",
+                                            (if deleted { ", marked for deletion" } else { "" })
+                                                .to_string(),
+                                        ),
+                                    ],
+                                )
+                                .to_string(),
+                            )
                             .w_full()
                             .h(px(46.))
                             .min_w_0()
@@ -180,11 +189,11 @@ impl DetailView {
                         .p_3()
                         .text_sm()
                         .text_color(cx.theme().muted_foreground)
-                        .child(if keys.is_empty() {
+                        .child(crate::i18n::text(if keys.is_empty() {
                             "No data keys"
                         } else {
                             "No matching keys"
-                        })
+                        }))
                         .into_any_element()
                 } else {
                     rows.into_any_element()
@@ -213,11 +222,11 @@ impl DetailView {
                     div()
                         .text_sm()
                         .text_color(cx.theme().muted_foreground)
-                        .child(if keys.is_empty() {
+                        .child(crate::i18n::text(if keys.is_empty() {
                             "This resource has no data."
                         } else {
                             "Search or select a key to view its value."
-                        }),
+                        })),
                 )
                 .into_any_element();
         };
@@ -441,7 +450,7 @@ impl DetailView {
                                         .on_click(cx.listener(|view, _, _, cx| { view.data_browser.details = true; cx.notify(); })))
                                     .child(Button::new("account-value-raw").small().ghost().selected(!self.data_browser.details).label(crate::i18n::text("Raw value"))
                                         .on_click(cx.listener(|view, _, _, cx| { view.data_browser.details = false; cx.notify(); }))))
-                                    .child(Button::new("account-copy-value").small().ghost().label(if role == Some(crate::service_account_secret::Key::Token) { "Copy token" } else { "Copy value" })
+                                    .child(Button::new("account-copy-value").small().ghost().label(crate::i18n::text(if role == Some(crate::service_account_secret::Key::Token) { "Copy token" } else { "Copy value" }))
                                         .on_click(cx.listener(move |view, _, _, cx| view.copy_data_value(index, cx))))
                             })
                             .when(key.editor.is_some() && !deleted && !covered && !details, |row| {

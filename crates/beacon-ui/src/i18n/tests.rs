@@ -1,6 +1,38 @@
 use super::*;
 
 #[::core::prelude::v1::test]
+fn localized_choices_keep_canonical_values_and_raw_names_when_switching_language() {
+    use gpui_kit::component::select::SelectItem as _;
+    let original = LOCALE.get();
+    let choice = Choice::label("Last hour");
+    let raw = Choice::raw("Save");
+    LOCALE.set("zh-CN");
+    assert_eq!(choice.title().as_ref(), "最近一小时");
+    assert_eq!(choice.value(), "Last hour");
+    assert!(choice.matches("一小时"));
+    assert!(choice.matches("Last hour"));
+    assert_eq!(raw.title().as_ref(), "Save");
+    assert_eq!(
+        Choice::label("Button › Primary").title().as_ref(),
+        "按钮 › 主要"
+    );
+    assert_eq!(
+        message(
+            "messages.ready_ratio",
+            &[("value0", "1".into()), ("value1", "2".into())]
+        )
+        .as_ref(),
+        "1/2 就绪"
+    );
+    assert_eq!(text("Generation").as_ref(), "代次");
+    assert_eq!(text("CA certificate bundle").as_ref(), "CA 证书链");
+    LOCALE.set("en");
+    assert_eq!(choice.title().as_ref(), "Last hour");
+    assert_eq!(choice.value(), "Last hour");
+    LOCALE.set(original);
+}
+
+#[::core::prelude::v1::test]
 fn system_language_normalizes_supported_locales_and_falls_back_to_english() {
     for (system, expected) in [
         (None, "en"),

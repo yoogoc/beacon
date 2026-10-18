@@ -87,7 +87,11 @@ impl Timing {
         match self {
             Self::Expired => "Expired (exp claim)".into(),
             Self::NotYetActive => "Not yet active (nbf claim)".into(),
-            Self::ExpiresIn(seconds) => format!("Expires in {}", format_duration(*seconds)),
+            Self::ExpiresIn(seconds) => crate::i18n::message(
+                "messages.expires_in",
+                &[("value0", (format_duration(*seconds)).to_string())],
+            )
+            .to_string(),
             Self::NoExpiryClaim => "No expiry claim".into(),
         }
     }

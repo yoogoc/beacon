@@ -445,7 +445,7 @@ impl Render for GlobalSearch {
                     .child(div().flex_1()).child(Button::new("global-refresh").small().ghost().label(crate::i18n::text("Refresh")).disabled(self.loading).on_click(cx.listener(|view,_,window,cx|view.load(window,cx))))
                     .when(self.loading,|row|row.child(Button::new("global-cancel").small().ghost().label(crate::i18n::text("Cancel")).on_click(cx.listener(|view,_,_,cx|{view._load=None;view.loading=false;cx.notify();})))) )
                 .child(Input::new(&self.search).small())
-                .child(div().text_xs().text_color(cx.theme().muted_foreground).child(if self.loading {"Loading metadata from connected clusters…".into()}else{format!("{} matches · {} connected clusters · {} kinds could not be read",self.visible.len(),connected.len(),self.errors.len())})))
+                .child(div().text_xs().text_color(cx.theme().muted_foreground).child(if self.loading {"Loading metadata from connected clusters…".into()}else{crate::i18n::message("messages.matches_connected_clusters_kinds_could_not_be_read", &[("value0", (self.visible.len()).to_string()), ("value1", (connected.len()).to_string()), ("value2", (self.errors.len()).to_string())]).to_string()})))
             .when(self.page==Page::Favorites,|view|view.children(self.favorite_clusters(cx)).children(unavailable.iter().enumerate().map(|(index,favorite)| {
                 let remove=favorite.clone();
                 h_flex().px_4().py_1().gap_2().text_xs().text_color(cx.theme().muted_foreground)
@@ -454,7 +454,7 @@ impl Render for GlobalSearch {
             })))
             .when_some(self.save_error.clone(),|view,error|view.child(copyable_text("favorite-save-error",error)))
             .when(!self.errors.is_empty(),|view|view.child(div().px_4().text_xs().text_color(cx.theme().warning).child(copyable_text("global-search-errors",self.errors.join("\n")))))
-            .child(div().flex_1().min_size_0().when(self.visible.is_empty(),|view|view.child(div().id("global-empty").test_support().p_4().text_sm().text_color(cx.theme().muted_foreground).child(if self.loading {"Searching…"}else if connected.is_empty(){"Connect a cluster to search its resources. Favorites are saved locally."}else{"No resources match. Try a name, kind, namespace or label."})))
+            .child(div().flex_1().min_size_0().when(self.visible.is_empty(),|view|view.child(div().id("global-empty").test_support().p_4().text_sm().text_color(cx.theme().muted_foreground).child(crate::i18n::text(if self.loading {"Searching…"}else if connected.is_empty(){"Connect a cluster to search its resources. Favorites are saved locally."}else{"No resources match. Try a name, kind, namespace or label."}))))
                 .when(!self.visible.is_empty(),|view|view.child(list(self.list.clone(),cx.processor(|view,row,_,cx|view.render_row(row,cx))).size_full())))
     }
 }

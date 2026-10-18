@@ -122,7 +122,13 @@ impl ConfigurationUsageView {
             source.store = ResourceStore::new();
             if !source.kind.supports("list") {
                 source.listed = true;
-                source.error = Some(format!("{} cannot be listed.", source.kind.resource.kind));
+                source.error = Some(
+                    crate::i18n::message(
+                        "messages.cannot_be_listed",
+                        &[("value0", (source.kind.resource.kind).to_string())],
+                    )
+                    .to_string(),
+                );
                 continue;
             }
             let key = WatchKey::all(source.kind.resource.clone())
@@ -265,11 +271,11 @@ impl ConfigurationUsageView {
                                 } else {
                                     cx.theme().warning
                                 })
-                                .child(if required_missing {
+                                .child(crate::i18n::text(if required_missing {
                                     "Missing reference"
                                 } else {
                                     "Optional reference absent"
-                                }),
+                                })),
                         )
                     })
                     .when(row.unchecked, |row| {
@@ -284,10 +290,14 @@ impl ConfigurationUsageView {
             .when(row.absent, |view| {
                 view.child(copyable_text(
                     ("configuration-missing", index),
-                    format!(
-                        "{} {} was not found in this namespace.",
-                        row.label, row.target.name
-                    ),
+                    crate::i18n::message(
+                        "messages.was_not_found_in_this_namespace",
+                        &[
+                            ("value0", (row.label).to_string()),
+                            ("value1", (row.target.name).to_string()),
+                        ],
+                    )
+                    .to_string(),
                 ))
             })
             .children(
@@ -331,11 +341,11 @@ impl ConfigurationUsageView {
                             )
                             .when(missing, |view| {
                                 view.child(div().text_xs().text_color(cx.theme().warning).child(
-                                    if reference.optional {
+                                    crate::i18n::text(if reference.optional {
                                         "Optional key is absent"
                                     } else {
                                         "Key is missing"
-                                    },
+                                    }),
                                 ))
                             })
                     }),
@@ -454,12 +464,12 @@ impl Render for ConfigurationUsageView {
             .is_some();
         v_flex().size_full().min_size_0().bg(cx.theme().background).text_color(cx.theme().foreground)
             .child(v_flex().p_3().gap_2().flex_shrink_0().border_b_1().border_color(cx.theme().border)
-                .child(div().text_xs().text_color(cx.theme().muted_foreground).child(if by {"Workloads and Pods that reference this configuration. Values are not shown."} else {"Configuration referenced by this resource; missing resources and keys are shown below."}))
+                .child(div().text_xs().text_color(cx.theme().muted_foreground).child(crate::i18n::text(if by {"Workloads and Pods that reference this configuration. Values are not shown."} else {"Configuration referenced by this resource; missing resources and keys are shown below."})))
                 .child(h_flex().gap_2().items_center().child(div().flex_1().min_w_0().child(Input::new(&self.search).small()))
                     .child(Button::new("refresh-configuration-usage").ghost().small().label(crate::i18n::text("Refresh")).disabled(loading).on_click(cx.listener(|view,_,window,cx|view.load(window,cx))))))
             .children(self.sources.iter().enumerate().filter_map(|(index,source)| source.error.as_ref().map(|error|div().id(("configuration-usage-error-row",index)).test_support().px_3().py_2().text_xs().text_color(cx.theme().warning).child(copyable_text(("configuration-usage-error",index),error.clone())))))
             .child(div().px_3().py_2().text_xs().text_color(cx.theme().muted_foreground).child(if loading {"Checking references…".into()}else{format!("{} resources · {} references",self.rows.len(),self.rows.iter().map(|row|row.references.len()).sum::<usize>())}))
-            .child(div().flex_1().min_size_0().when(self.rows.is_empty(),|view| view.child(div().id("configuration-usage-empty").test_support().p_3().text_sm().text_color(cx.theme().muted_foreground).child(if loading {"Loading usage…"} else if self.sources.iter().any(|source|source.error.is_some()) {"Usage could not be fully checked. Review the errors above."} else if self.search.read(cx).value().is_empty() {"No configuration references found."}else{"No references match the search."})))
+            .child(div().flex_1().min_size_0().when(self.rows.is_empty(),|view| view.child(div().id("configuration-usage-empty").test_support().p_3().text_sm().text_color(cx.theme().muted_foreground).child(crate::i18n::text(if loading {"Loading usage…"} else if self.sources.iter().any(|source|source.error.is_some()) {"Usage could not be fully checked. Review the errors above."} else if self.search.read(cx).value().is_empty() {"No configuration references found."}else{"No references match the search."}))))
                 .when(!self.rows.is_empty(),|view|view.child(list(self.list.clone(),cx.processor(|view,index,_,cx|view.render_row(index,cx))).size_full())))
     }
 }

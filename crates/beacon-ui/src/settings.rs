@@ -95,13 +95,21 @@ impl CustomTheme {
         }
         for (role, color) in &self.colors {
             if color_roles().binary_search(role).is_err() {
-                return Err(format!("Unknown theme color: {role}"));
+                return Err(crate::i18n::message(
+                    "messages.unknown_theme_color_role",
+                    &[("role", (role).to_string())],
+                )
+                .to_string());
             }
             if !color.starts_with('#')
                 || !matches!(color.len(), 4 | 7 | 9)
                 || !color[1..].bytes().all(|c| c.is_ascii_hexdigit())
             {
-                return Err(format!("{role}: use a hex color such as #3B82F6."));
+                return Err(crate::i18n::message(
+                    "messages.role_use_a_hex_color_such_as_3b82f6",
+                    &[("role", (role).to_string())],
+                )
+                .to_string());
             }
         }
         Ok(())

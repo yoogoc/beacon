@@ -84,7 +84,7 @@ fn document(revision: &Revision, kind: Document, reveal: bool) -> Result<String,
 }
 fn revision(history: &History, number: i64) -> Result<&Revision, String> {
     let record = history.revisions.iter().find(|record| record.number == number)
-        .ok_or_else(|| format!("Revision {number} is not available. Helm may have pruned its history; refresh to read the current revisions."))?;
+        .ok_or_else(|| crate::i18n::message("messages.revision_number_is_not_available_helm_may_have_pruned_its_history_refresh_to_read_the_current_revisions", &[("number", (number).to_string())]).to_string())?;
     record.revision.as_ref().ok_or_else(|| {
         record
             .error

@@ -592,7 +592,7 @@ impl BeaconApp {
                 if view.main_window {
                     view.request_quit(window, cx);
                 } else if view.tabs.iter().any(|tab| matches!(&tab.state,TabState::Files(files) if files.read(cx).pending(cx).is_some())) {
-                    let answer = window.prompt(PromptLevel::Warning,"Close workspace?",Some("Unsaved file edits will be discarded and active file operations will stop."),&[PromptButton::cancel("Cancel"),PromptButton::ok("Close")],cx);
+                    let answer = window.prompt(PromptLevel::Warning,crate::i18n::text("Close workspace?").as_ref(),Some(crate::i18n::text("Unsaved file edits will be discarded and active file operations will stop.").as_ref()),&[PromptButton::cancel(crate::i18n::text("Cancel").as_ref()),PromptButton::ok(crate::i18n::text("Close").as_ref())],cx);
                     cx.spawn_in(window,async move |_,cx| { if matches!(answer.await,Ok(1)) { let _ = cx.update(|window,_| window.remove_window()); } }).detach();
                 } else {
                     window.defer(cx, |window, _| window.remove_window());
@@ -1171,7 +1171,7 @@ impl BeaconApp {
             && files.read(cx).pending(cx).is_some()
         {
             let id = tab.id;
-            let answer = window.prompt(PromptLevel::Warning, "Close Files?", Some("Unsaved edits will be discarded and the active file operation will be cancelled."), &[PromptButton::cancel("Cancel"), PromptButton::ok("Close")], cx);
+            let answer = window.prompt(PromptLevel::Warning, crate::i18n::text("Close Files?").as_ref(), Some(crate::i18n::text("Unsaved edits will be discarded and the active file operation will be cancelled.").as_ref()), &[PromptButton::cancel(crate::i18n::text("Cancel").as_ref()), PromptButton::ok(crate::i18n::text("Close").as_ref())], cx);
             cx.spawn_in(window, async move |this, cx| {
                 if matches!(answer.await, Ok(1)) {
                     let _ = this.update_in(cx, |app, window, cx| {
@@ -1902,7 +1902,6 @@ impl BeaconApp {
         // TitleBar marks its content as a native window drag area. Each
         // control must occlude that hitbox so Windows delivers client clicks
         // to the button instead of treating them as caption interactions.
-        let is_dark = cx.theme().is_dark();
         let title_bar = TitleBar::new().on_close_window(cx.listener(|view, _, window, cx| {
             if view.main_window {
                 view.request_quit(window, cx);
@@ -1931,11 +1930,11 @@ impl BeaconApp {
                                 } else {
                                     IconName::PanelLeftClose
                                 })
-                                .tooltip(if self.sidebar_collapsed {
+                                .tooltip(crate::i18n::text(if self.sidebar_collapsed {
                                     "Expand sidebar"
                                 } else {
                                     "Collapse sidebar"
-                                })
+                                }))
                                 .on_click(cx.listener(|app, _, _, cx| {
                                     app.sidebar_collapsed = !app.sidebar_collapsed;
                                     cx.notify();
@@ -1945,14 +1944,6 @@ impl BeaconApp {
                         .when(!cfg!(target_os = "macos"), |bar| {
                             bar.child(application_menu())
                         }),
-                )
-                .child(
-                    Button::new("toggle-theme")
-                        .occlude()
-                        .ghost()
-                        .small()
-                        .label(crate::i18n::text(if is_dark { "Light" } else { "Dark" }))
-                        .on_click(|_, window, cx| toggle_mode(window, cx)),
                 ),
         )
     }
@@ -1985,7 +1976,11 @@ impl BeaconApp {
                 id.context_name(),
                 entry.cluster
             ),
-            None => format!("Context: {}", id.context_name()),
+            None => crate::i18n::message(
+                "messages.context",
+                &[("value0", (id.context_name()).to_string())],
+            )
+            .to_string(),
         }
     }
 
@@ -2206,11 +2201,11 @@ impl BeaconApp {
                         let permissions_target = menu_target.clone();
                         let permissions_connections = menu_view.clone();
                         menu.item(
-                            PopupMenuItem::new(if favorite_cluster {
+                            PopupMenuItem::new(crate::i18n::text(if favorite_cluster {
                                 "Remove favorite"
                             } else {
                                 "Add to favorites"
-                            })
+                            }))
                             .on_click(move |_, _, cx| {
                                 if let Err(error) =
                                     crate::global_search::toggle_cluster(&favorite_id, cx)
@@ -2473,13 +2468,13 @@ impl BeaconApp {
                                 .rounded_md()
                                 .bg(cx.theme().background)
                                 .text_sm()
-                                .child(match target.split {
+                                .child(crate::i18n::text(match target.split {
                                     Some(Direction::Left) => "Move to left split",
                                     Some(Direction::Right) => "Move to right split",
                                     Some(Direction::Up) => "Move to upper split",
                                     Some(Direction::Down) => "Move to lower split",
                                     None => "Merge into tab group",
-                                }),
+                                })),
                         ),
                 )
             })
@@ -2899,7 +2894,7 @@ impl BeaconApp {
                         },
                         &[("count", count.to_string())],
                     ))
-                    .tooltip(tooltip),
+                    .tooltip(crate::i18n::text(tooltip)),
             )
             .content(move |_, _, cx| {
                 let Some(app) = view.upgrade() else {
@@ -3012,7 +3007,11 @@ impl BeaconApp {
                 })
         });
         crate::activity::panel(
-            format!("Clusters ({})", sessions.len()),
+            crate::i18n::message(
+                "messages.clusters",
+                &[("value0", (sessions.len()).to_string())],
+            )
+            .to_string(),
             "Connected sessions · click a cluster to open its tab",
             cx,
         )
@@ -3078,11 +3077,14 @@ impl BeaconApp {
                 description.push_str(&format!("\nAPI server: {}", session.server()));
                 (
                     Tone::Healthy,
-                    format!(
-                        "{} · Kubernetes {} · Files",
-                        name.unwrap_or_default(),
-                        session.version()
-                    ),
+                    crate::i18n::message(
+                        "messages.kubernetes_files",
+                        &[
+                            ("value0", (name.unwrap_or_default()).to_string()),
+                            ("value1", (session.version()).to_string()),
+                        ],
+                    )
+                    .to_string(),
                     session.active_watches(),
                 )
             }

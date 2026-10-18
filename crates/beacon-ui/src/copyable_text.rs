@@ -40,7 +40,7 @@ pub(crate) fn highlighted_text(
 
 pub(crate) fn copy_item(label: &'static str, text: impl Into<SharedString>) -> PopupMenuItem {
     let text = text.into();
-    PopupMenuItem::new(label).on_click(move |_, _, cx| {
+    PopupMenuItem::new(crate::i18n::text(label)).on_click(move |_, _, cx| {
         cx.write_to_clipboard(ClipboardItem::new_string(text.to_string()));
     })
 }

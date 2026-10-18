@@ -241,9 +241,7 @@ impl ArgoNodeView {
                             let holder = serde_json::json!({"templateName":template});
                             view.template = argo::resolved_template(&object.data, &holder);
                             if view.template.is_none() {
-                                view.template_error = Some(format!(
-                                    "Template {template} was not found in the referenced resource."
-                                ));
+                                view.template_error = Some(crate::i18n::message("messages.template_template_was_not_found_in_the_referenced_resource", &[("template", (template).to_string())]).to_string());
                             }
                         }
                         Ok(Err(error)) => view.template_error = Some(error.user_message()),
@@ -390,7 +388,11 @@ impl ArgoNodeView {
                 _ => "1",
             };
             resources.fields.push((
-                format!("{name} resource duration"),
+                crate::i18n::message(
+                    "messages.name_resource_duration",
+                    &[("name", (name).to_string())],
+                )
+                .to_string(),
                 Cell::text(format!(
                     "{} seconds × ({unit} {name})",
                     text(duration).unwrap_or_default()
@@ -823,7 +825,7 @@ impl ArgoNodeView {
         div()
             .text_sm()
             .text_color(cx.theme().muted_foreground)
-            .child(copyable_text("node-notice", message.to_string()))
+            .child(copyable_text("node-notice", crate::i18n::text(message)))
             .into_any_element()
     }
     fn heading(&self, title: &str, cx: &App) -> AnyElement {
@@ -840,7 +842,7 @@ impl ArgoNodeView {
                 div()
                     .text_sm()
                     .font_weight(FontWeight::MEDIUM)
-                    .child(title.to_string()),
+                    .child(crate::i18n::text(title)),
             )
             .into_any_element()
     }
@@ -927,7 +929,7 @@ impl ArgoNodeView {
                                 div()
                                     .text_xs()
                                     .text_color(cx.theme().muted_foreground)
-                                    .child(label.clone()),
+                                    .child(crate::i18n::text(label)),
                             )
                             .child(self.value(cell, cx))
                     })),
@@ -979,7 +981,7 @@ impl ArgoNodeView {
                             .py_1p5()
                             .text_xs()
                             .text_color(cx.theme().muted_foreground)
-                            .child(*h)
+                            .child(crate::i18n::text(*h))
                     })),
             )
             .children(table.rows.iter().enumerate().map(|(row, cells)| {
@@ -1125,7 +1127,7 @@ impl Render for ArgoNodeView {
                     .text_xs()
                     .bg(cx.theme().tone_surface(tone))
                     .text_color(cx.theme().tone(tone))
-                    .child(SelectableText::new("node-phase", phase.to_string())),
+                    .child(SelectableText::new("node-phase", crate::i18n::text(phase))),
             );
         let mut body = v_flex().w_full().min_w_0().gap_3();
         if self.node.data.is_null() {
@@ -1237,10 +1239,9 @@ impl Render for ArgoNodeView {
                 TabBar::new("node-tabs")
                     .small()
                     .selected_index(TABS.iter().position(|tab| *tab == self.tab).unwrap_or(0))
-                    .children(
-                        TABS.iter()
-                            .map(|tab| Tab::new().label(tab.label(self.node.runtime))),
-                    )
+                    .children(TABS.iter().map(|tab| {
+                        Tab::new().label(crate::i18n::text(tab.label(self.node.runtime)))
+                    }))
                     .on_click(cx.listener(|view, index: &usize, _, cx| {
                         if let Some(tab) = TABS.get(*index) {
                             view.tab = *tab;

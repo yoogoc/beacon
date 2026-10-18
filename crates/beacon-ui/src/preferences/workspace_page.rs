@@ -33,7 +33,7 @@ impl PreferencesView {
             Button::new(id)
                 .outline()
                 .selected(selected)
-                .accessibility_label(label)
+                .accessibility_label(crate::i18n::text(label))
                 .w(card_width)
                 .min_w_0()
                 .h_auto()

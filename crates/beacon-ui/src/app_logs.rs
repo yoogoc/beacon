@@ -372,7 +372,7 @@ impl Render for AppLogs {
                         )))
                         .small()
                         .ghost()
-                        .label(filter.label())
+                        .label(crate::i18n::text(filter.label()))
                         .when(self.filter == filter, |button| button.primary())
                         .on_click(cx.listener(move |view, _, _, cx| {
                             view.filter = filter;

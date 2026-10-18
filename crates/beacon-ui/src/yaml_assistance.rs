@@ -226,7 +226,11 @@ impl Render for YamlAssistance {
             ),
             Status::Unavailable(error) => (
                 "Schema unavailable".into(),
-                format!("Server validation remains available.\n{error}"),
+                crate::i18n::message(
+                    "messages.server_validation_remains_available_error",
+                    &[("error", (error).to_string())],
+                )
+                .to_string(),
                 IconName::Info,
                 cx.theme().muted_foreground,
             ),
@@ -241,17 +245,27 @@ impl Render for YamlAssistance {
                 } else if self.problems.is_empty() {
                     "Local checks passed".into()
                 } else {
-                    format!("{} local warnings", self.problems.len())
+                    crate::i18n::message(
+                        "messages.local_warnings",
+                        &[("value0", (self.problems.len()).to_string())],
+                    )
+                    .to_string()
                 };
                 let description = format!(
                     "{} · {} · {}",
                     schema.source,
                     schema.version,
                     if self.validation_enabled {
-                        format!("{summary} · Advisory only; the API server validates saves.")
+                        crate::i18n::message(
+                            "messages.summary_advisory_only_the_api_server_validates_saves",
+                            &[("summary", crate::i18n::text(&summary).to_string())],
+                        )
+                        .to_string()
                     } else {
-                        "Local validation is off. Field completion and help remain available."
-                            .into()
+                        crate::i18n::text(
+                            "Local validation is off. Field completion and help remain available.",
+                        )
+                        .to_string()
                     }
                 );
                 let color =
@@ -310,7 +324,12 @@ impl Render for YamlAssistance {
                                 Tooltip::new(tooltip.clone()).build(window, cx)
                             })
                             .child(Icon::new(icon).size(px(13.)).flex_shrink_0())
-                            .child(div().min_w_0().text_ellipsis().child(summary)),
+                            .child(
+                                div()
+                                    .min_w_0()
+                                    .text_ellipsis()
+                                    .child(crate::i18n::text(summary)),
+                            ),
                     )
                     .child(
                         Button::new("yaml-wrap-lines")
@@ -318,9 +337,9 @@ impl Render for YamlAssistance {
                             .ghost()
                             .selected(self.wrap)
                             .label(crate::i18n::text("Wrap lines"))
-                            .tooltip(
+                            .tooltip(crate::i18n::text(
                                 "Wrap long lines to fit the editor. When off, scroll horizontally.",
-                            )
+                            ))
                             .on_click(
                                 cx.listener(|view, _, window, cx| view.toggle_wrap(window, cx)),
                             ),
@@ -361,11 +380,11 @@ impl Render for YamlAssistance {
                                         }),
                                 )
                                 .item(
-                                    PopupMenuItem::new(if ready {
+                                    PopupMenuItem::new(crate::i18n::text(if ready {
                                         "Reload schema"
                                     } else {
                                         "Retry schema"
-                                    })
+                                    }))
                                     .on_click(
                                         move |_, window, cx| {
                                             let _ = reload
@@ -432,7 +451,16 @@ impl Render for YamlAssistance {
                                             Button::new(("yaml-schema-error", index))
                                                 .xsmall()
                                                 .ghost()
-                                                .label(format!("Line {}", position.line + 1))
+                                                .label(
+                                                    crate::i18n::message(
+                                                        "messages.line",
+                                                        &[(
+                                                            "value0",
+                                                            (position.line + 1).to_string(),
+                                                        )],
+                                                    )
+                                                    .to_string(),
+                                                )
                                                 .on_click(move |_, window, cx| {
                                                     editor.update(cx, |editor, cx| {
                                                         editor.unfold_at(position, cx);
@@ -473,7 +501,11 @@ impl Render for YamlAssistance {
                                     .label(if self.expanded {
                                         "Show fewer messages".into()
                                     } else {
-                                        format!("Show all {} messages", self.problems.len())
+                                        crate::i18n::message(
+                                            "messages.show_all_messages",
+                                            &[("value0", (self.problems.len()).to_string())],
+                                        )
+                                        .to_string()
                                     })
                                     .on_click(cx.listener(|view, _, _, cx| {
                                         view.expanded = !view.expanded;

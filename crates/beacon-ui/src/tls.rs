@@ -46,7 +46,11 @@ impl CertificateInfo {
             "Expired".into()
         } else {
             let days = (self.not_after_unix - now + 86_399) / 86_400;
-            format!("Not expired · {days} days remaining")
+            crate::i18n::message(
+                "messages.not_expired_days_days_remaining",
+                &[("days", (days).to_string())],
+            )
+            .to_string()
         }
     }
 }

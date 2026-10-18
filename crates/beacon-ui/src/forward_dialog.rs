@@ -182,7 +182,7 @@ impl ForwardDialog {
                         if !presets.contains(&preset) {presets.push(preset);}
                         if let Err(error)=crate::settings::save_forwards(presets,cx) {
                             view.session.close_forward(forward.id);
-                            view.error=Some(format!("Could not save the preset: {error}. The listener was stopped; retry without saving or fix the config folder."));cx.notify();return;
+                            view.error=Some(crate::i18n::message("messages.could_not_save_the_preset_error_the_listener_was_stopped_retry_without_saving_or_fix_the_config_folder", &[("error", (error).to_string())]).to_string());cx.notify();return;
                         }
                     }
                     cx.emit(Event::Started);
@@ -196,20 +196,20 @@ impl ForwardDialog {
 impl Render for ForwardDialog {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         v_flex().id("forward-dialog").test_support().w(px(560.)).max_w_full().max_h_full().overflow_y_scroll().p_5().gap_4().rounded_lg().border_1().border_color(cx.theme().border).bg(cx.theme().background).text_color(cx.theme().foreground)
-            .child(div().text_lg().child("Port forward"))
+            .child(div().text_lg().child(crate::i18n::text("Port forward")))
             .child(copyable_text("forward-target",format!("{} · {}/{}",self.target.kind.label(),self.target.namespace,self.target.name)))
             .child(h_flex().gap_4()
-                .child(v_flex().flex_1().gap_1().child(div().text_sm().child("Local port")).child(Input::new(&self.local).disabled(self.busy)).child(div().text_xs().text_color(cx.theme().muted_foreground).child("127.0.0.1 · 0 chooses a free port")))
-                .child(v_flex().flex_1().gap_1().child(div().text_sm().child(if self.target.kind==beacon_kube::forward::TargetKind::Service {"Service port (TCP)"} else {"Container port (TCP)"})).child(Input::new(&self.remote).disabled(self.busy))))
-            .child(Button::new("forward-resolve").small().outline().label(if self.checking {"Finding Pod…"} else {"Check target"}).disabled(self.busy||self.checking).on_click(cx.listener(|view,_,window,cx|view.resolve(window,cx))))
-            .when_some(self.resolved.as_ref(),|view,route|view.child(div().text_sm().child(copyable_text("forward-resolved",format!("Backend: {}:{}",route.pod,route.port)))))
-            .child(div().text_xs().text_color(cx.theme().muted_foreground).child("Service and Deployment forwards keep the local port and select a ready Pod after replacement. Existing TCP connections need to reconnect."))
-            .child(crate::selection::checkbox("forward-save").label("Save this forward for later").checked(self.save).disabled(self.busy).on_click(cx.listener(|view,value,_,cx|{view.save = *value;cx.notify();})))
-            .child(div().text_xs().text_color(cx.theme().muted_foreground).child("Saved forwards only start when you choose Restore in Port Forwards."))
+                .child(v_flex().flex_1().gap_1().child(div().text_sm().child(crate::i18n::text("Local port"))).child(Input::new(&self.local).disabled(self.busy)).child(div().text_xs().text_color(cx.theme().muted_foreground).child(crate::i18n::text("127.0.0.1 · 0 chooses a free port"))))
+                .child(v_flex().flex_1().gap_1().child(div().text_sm().child(crate::i18n::text(if self.target.kind==beacon_kube::forward::TargetKind::Service {"Service port (TCP)"} else {"Container port (TCP)"}))).child(Input::new(&self.remote).disabled(self.busy))))
+            .child(Button::new("forward-resolve").small().outline().label(crate::i18n::text(if self.checking {"Finding Pod…"} else {"Check target"})).disabled(self.busy||self.checking).on_click(cx.listener(|view,_,window,cx|view.resolve(window,cx))))
+            .when_some(self.resolved.as_ref(),|view,route|view.child(div().text_sm().child(copyable_text("forward-resolved",crate::i18n::message("messages.backend", &[("value0", (route.pod).to_string()), ("value1", (route.port).to_string())]).to_string()))))
+            .child(div().text_xs().text_color(cx.theme().muted_foreground).child(crate::i18n::text("Service and Deployment forwards keep the local port and select a ready Pod after replacement. Existing TCP connections need to reconnect.")))
+            .child(crate::selection::checkbox("forward-save").label(crate::i18n::text("Save this forward for later")).checked(self.save).disabled(self.busy).on_click(cx.listener(|view,value,_,cx|{view.save = *value;cx.notify();})))
+            .child(div().text_xs().text_color(cx.theme().muted_foreground).child(crate::i18n::text("Saved forwards only start when you choose Restore in Port Forwards.")))
             .when_some(self.error.as_ref(),|view,error|view.child(div().id("forward-error").test_support().text_sm().text_color(cx.theme().danger).child(copyable_text("forward-error-text",error.clone()))).children(crate::permissions::error_link("forward-permissions",self.session.clone(),error,beacon_kube::rbac::Query {verb:"get".into(),resource:"pods".into(),subresource:"portforward".into(),namespace:Some(self.target.namespace.clone()),..Default::default()})))
             .child(h_flex().justify_end().gap_2()
-                .child(Button::new("forward-cancel").small().ghost().label("Cancel").disabled(self.busy).on_click(cx.listener(|_,_,_,cx|cx.emit(Event::Closed))))
-                .child(Button::new("forward-start").small().primary().label(if self.busy {"Starting…"} else {"Start forwarding"}).disabled(self.busy||self.resolved.is_none()||self.checking).on_click(cx.listener(|view,_,window,cx|view.start(window,cx)))))
+                .child(Button::new("forward-cancel").small().ghost().label(crate::i18n::text("Cancel")).disabled(self.busy).on_click(cx.listener(|_,_,_,cx|cx.emit(Event::Closed))))
+                .child(Button::new("forward-start").small().primary().label(crate::i18n::text(if self.busy {"Starting…"} else {"Start forwarding"})).disabled(self.busy||self.resolved.is_none()||self.checking).on_click(cx.listener(|view,_,window,cx|view.start(window,cx)))))
     }
 }
 

@@ -123,13 +123,18 @@ impl CreateView {
             .and_then(Value::as_str)
             .map(str::to_string)
             .unwrap_or_else(|| {
-                format!(
-                    "{} (generated name)",
-                    manifest
-                        .pointer("/metadata/generateName")
-                        .and_then(Value::as_str)
-                        .unwrap_or_default()
+                crate::i18n::message(
+                    "messages.generated_name",
+                    &[(
+                        "value0",
+                        (manifest
+                            .pointer("/metadata/generateName")
+                            .and_then(Value::as_str)
+                            .unwrap_or_default())
+                        .to_string(),
+                    )],
                 )
+                .to_string()
             });
         let target = manifest
             .pointer("/metadata/namespace")
@@ -275,20 +280,29 @@ impl Render for CreateView {
                     .border_b_1()
                     .border_color(cx.theme().border)
                     .child(
-                        div()
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .child(format!("Create {}", self.kind.resource.kind)),
+                        div().font_weight(FontWeight::SEMIBOLD).child(
+                            crate::i18n::message(
+                                "messages.create",
+                                &[("value0", (self.kind.resource.kind).to_string())],
+                            )
+                            .to_string(),
+                        ),
                     )
                     .child(
                         div()
                             .text_xs()
                             .text_color(cx.theme().muted_foreground)
-                            .child(format!(
-                                "Cluster: {} · {} · {}",
-                                self.session.id().display_name(),
-                                scope,
-                                self.kind.resource.api_version
-                            )),
+                            .child(
+                                crate::i18n::message(
+                                    "messages.cluster",
+                                    &[
+                                        ("value0", (self.session.id().display_name()).to_string()),
+                                        ("value1", (scope).to_string()),
+                                        ("value2", (self.kind.resource.api_version).to_string()),
+                                    ],
+                                )
+                                .to_string(),
+                            ),
                     ),
             )
             .child(self.assistance.clone())
@@ -377,14 +391,14 @@ impl Render for CreateView {
                                 Button::new("confirm-create-resource")
                                     .small()
                                     .primary()
-                                    .label(
+                                    .label(crate::i18n::text(
                                         if matches!(self.status, Status::Running { dry_run: false })
                                         {
                                             "Creating…"
                                         } else {
                                             "Create"
                                         },
-                                    )
+                                    ))
                                     .disabled(running)
                                     .on_click(cx.listener(|view, _, window, cx| {
                                         view.submit(false, window, cx)
@@ -396,8 +410,13 @@ impl Render for CreateView {
 }
 
 fn parse(yaml: &str, kind: &Kind) -> Result<Value, String> {
-    let manifest: Value =
-        serde_saphyr::from_str(yaml).map_err(|error| format!("This is not valid YAML: {error}"))?;
+    let manifest: Value = serde_saphyr::from_str(yaml).map_err(|error| {
+        crate::i18n::message(
+            "messages.this_is_not_valid_yaml_error",
+            &[("error", (error).to_string())],
+        )
+        .to_string()
+    })?;
     let object = ops::prepare_create(kind, manifest).map_err(|error| error.to_string())?;
     serde_json::to_value(object).map_err(|error| error.to_string())
 }

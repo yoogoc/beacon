@@ -141,20 +141,29 @@ impl RolloutView {
             let _ = this.update_in(cx, |view, window, cx| {
                 match result {
                     Ok(Ok((plan, preview))) => {
-                        let context = format!(
-                            "{} · {}/{} · Roll back to revision {}",
-                            view.session.id().display_name(),
-                            plan.target.namespace.as_deref().unwrap_or(""),
-                            plan.target.name,
-                            plan.revision
-                        );
+                        let context = crate::i18n::message(
+                            "messages.roll_back_to_revision_context",
+                            &[
+                                ("value0", (view.session.id().display_name()).to_string()),
+                                (
+                                    "value1",
+                                    (plan.target.namespace.as_deref().unwrap_or("")).to_string(),
+                                ),
+                                ("value2", (plan.target.name).to_string()),
+                                ("value3", (plan.revision).to_string()),
+                            ],
+                        )
+                        .to_string();
                         let review =
                             crate::yaml_review::open(preview, context, false, false, window, cx);
                         review.update(cx, |review, _| {
-                            review.confirmation_label(&format!(
-                                "Roll back to revision {}",
-                                plan.revision
-                            ));
+                            review.confirmation_label(
+                                crate::i18n::message(
+                                    "messages.roll_back_to_revision",
+                                    &[("value0", (plan.revision).to_string())],
+                                )
+                                .as_ref(),
+                            );
                             if !view.may_patch {
                                 review.read_only();
                             }
@@ -299,9 +308,9 @@ impl Render for RolloutView {
                 view.child(crate::i18n::text("Loading revisions…"))
             })
             .when(!self.loading && self.revisions.is_empty(), |view| {
-                view.child(
+                view.child(crate::i18n::text(
                     "No retained revisions. Older history may have been pruned by the controller.",
-                )
+                ))
             })
             .children(self.revisions.iter().map(|revision| {
                 let selected = revision.clone();
@@ -328,11 +337,11 @@ impl Render for RolloutView {
                                 Button::new(("review-revision", revision.number as usize))
                                     .small()
                                     .ghost()
-                                    .label(if self.may_patch {
+                                    .label(crate::i18n::text(if self.may_patch {
                                         "Compare / roll back…"
                                     } else {
                                         "Compare revision…"
-                                    })
+                                    }))
                                     .disabled(self.busy || revision.current)
                                     .on_click(cx.listener(move |view, _, window, cx| {
                                         view.review(selected.clone(), window, cx)

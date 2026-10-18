@@ -18,18 +18,20 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use std::{cell::Cell, collections::BTreeMap, rc::Rc, sync::Arc, time::Duration};
 
-type Choices = SearchableVec<SelectGroup<String>>;
+type Choices = SearchableVec<SelectGroup<crate::i18n::Choice>>;
 const TOTAL: &str = "Pod total";
 fn choices(containers: &[resource_metrics::Container]) -> Choices {
-    let mut groups = vec![SelectGroup::new("Scope").items(vec![TOTAL.to_owned()])];
+    let mut groups = vec![
+        SelectGroup::new(crate::i18n::text("Scope")).items(vec![crate::i18n::Choice::label(TOTAL)]),
+    ];
     for group in ["Containers", "Init containers", "Ephemeral containers"] {
         let names = containers
             .iter()
             .filter(|c| c.group == group)
-            .map(|c| c.name.clone())
+            .map(|c| crate::i18n::Choice::raw(c.name.clone()))
             .collect::<Vec<_>>();
         if !names.is_empty() {
-            groups.push(SelectGroup::new(group).items(names));
+            groups.push(SelectGroup::new(crate::i18n::text(group)).items(names));
         }
     }
     SearchableVec::new(groups)
@@ -186,9 +188,13 @@ impl ResourceMetricsView {
                         match result {
                             Ok(Ok(data)) => view.receive(data, window, cx),
                             Ok(Err(error)) => view.failed(error),
-                            Err(error) => {
-                                view.failed(format!("Could not refresh metrics: {error}"))
-                            }
+                            Err(error) => view.failed(
+                                crate::i18n::message(
+                                    "messages.could_not_refresh_metrics_error",
+                                    &[("error", (error).to_string())],
+                                )
+                                .to_string(),
+                            ),
                         }
                         cx.notify();
                     })
@@ -246,11 +252,18 @@ impl ResourceMetricsView {
                     id: format!("restart/{container}/{count}"),
                     at: data.observed_at,
                     reason: "Restart observed".into(),
-                    message: format!(
-                        "{} · +{} restart(s); observed at refresh, exact restart time unavailable.",
-                        container.split('/').skip(1).collect::<Vec<_>>().join(" / "),
-                        count - previous
-                    ),
+                    message: crate::i18n::message(
+                        "messages.restart_s_observed_at_refresh_exact_restart_time_unavailable",
+                        &[
+                            (
+                                "value0",
+                                (container.split('/').skip(1).collect::<Vec<_>>().join(" / "))
+                                    .to_string(),
+                            ),
+                            ("value1", (count - previous).to_string()),
+                        ],
+                    )
+                    .to_string(),
                 };
                 self.markers.insert(marker.id.clone(), marker);
             }
@@ -481,12 +494,18 @@ impl ResourceMetricsView {
             })
             .unwrap_or_else(|| {
                 if points.iter().any(|p| value(*p, memory).is_some()) {
-                    format!(
-                        "Latest sample · {}",
-                        self.data
-                            .as_ref()
-                            .map_or("—".into(), |d| time(d.sample.at, true))
+                    crate::i18n::message(
+                        "messages.latest_sample",
+                        &[(
+                            "value0",
+                            (self
+                                .data
+                                .as_ref()
+                                .map_or("—".into(), |d| time(d.sample.at, true)))
+                            .to_string(),
+                        )],
                     )
+                    .to_string()
                 } else {
                     "No usage samples available for this scope.".into()
                 }
@@ -605,11 +624,11 @@ impl ResourceMetricsView {
         v_flex().gap_2()
             .child(h_flex().justify_between()
                 .child(div().text_sm().font_medium().child(crate::i18n::text("Restarts & events")))
-                .child(div().text_xs().text_color(cx.theme().muted_foreground).child(format!("{restarts} total restarts · {count} markers in range"))))
+                .child(div().text_xs().text_color(cx.theme().muted_foreground).child(crate::i18n::message("messages.restarts_total_restarts_count_markers_in_range", &[("restarts", (restarts).to_string()), ("count", (count).to_string())]).to_string())))
             .child(div().text_xs().text_color(cx.theme().muted_foreground).child(crate::i18n::text("Red chart ticks mark OOM, termination and warning events. Available Kubernetes events only; no historical event archive.")))
             .children(rows)
             .when(count == 0, |v| v.child(div().text_xs().py_2().text_color(cx.theme().muted_foreground).child(crate::i18n::text("No restart or warning markers in the selected range."))))
-            .when(count > 6, |v| v.child(Button::new("resource-metrics-more-events").small().ghost().label(if self.expanded_events { "Show less" } else { "Show all events" })
+            .when(count > 6, |v| v.child(Button::new("resource-metrics-more-events").small().ghost().label(crate::i18n::text(if self.expanded_events { "Show less" } else { "Show all events" }))
                 .on_click(cx.listener(|view, _, _, cx| {
                     view.expanded_events = !view.expanded_events;
                     cx.notify();
@@ -663,11 +682,14 @@ impl Render for ResourceMetricsView {
             points.len()
         );
         let available = points.first().zip(points.last()).map(|(first, last)| {
-            format!(
-                "Available {} — {}",
-                time(first.at, true),
-                time(last.at, true)
+            crate::i18n::message(
+                "messages.available",
+                &[
+                    ("value0", (time(first.at, true)).to_string()),
+                    ("value1", (time(last.at, true)).to_string()),
+                ],
             )
+            .to_string()
         });
         let controls = h_flex()
             .gap_1()
@@ -678,7 +700,7 @@ impl Render for ResourceMetricsView {
                         Button::new(format!("resource-metrics-range-{}", range.label()))
                             .xsmall()
                             .ghost()
-                            .label(range.label())
+                            .label(crate::i18n::text(range.label()))
                             .selected(self.range == range)
                             .on_click(cx.listener(move |view, _, window, cx| {
                                 view.range = range;
@@ -696,11 +718,11 @@ impl Render for ResourceMetricsView {
                     } else {
                         IconName::Pause
                     })
-                    .tooltip(if self.paused {
+                    .tooltip(crate::i18n::text(if self.paused {
                         "Resume sampling"
                     } else {
                         "Pause sampling"
-                    })
+                    }))
                     .on_click(cx.listener(|view, _, window, cx| {
                         view.paused = !view.paused;
                         view.refresh(window, cx);
@@ -725,7 +747,7 @@ impl Render for ResourceMetricsView {
                     .small()
                     .ghost()
                     .icon(IconName::Activity)
-                    .label(self.source())
+                    .label(crate::i18n::text(self.source()))
                     .tooltip(crate::i18n::text(
                         "Configure metrics source in cluster settings",
                     ))
@@ -738,7 +760,7 @@ impl Render for ResourceMetricsView {
                             .id("resource-metrics-scope")
                             .accessibility_label(crate::i18n::text("Metrics scope"))
                             .small()
-                            .title_prefix("Scope: "),
+                            .title_prefix(crate::i18n::text("Scope: ")),
                     ),
                 )
             })
@@ -747,11 +769,11 @@ impl Render for ResourceMetricsView {
             .child(header)
             .child(div().id("resource-metrics-coverage").test_support().text_xs().text_color(cx.theme().muted_foreground).child(coverage))
             .when_some(available, |v, available| v.child(div().text_xs().text_color(cx.theme().muted_foreground).child(available)))
-            .child(div().text_xs().text_color(cx.theme().muted_foreground).child(if self.prometheus() {
+            .child(div().text_xs().text_color(cx.theme().muted_foreground).child(crate::i18n::text(if self.prometheus() {
                 "Prometheus historical samples for the current resource lifetime. Gaps indicate missing data."
             } else {
                 "Samples collected every 15s while this tab is visible. Earlier history is unavailable; gaps remain when paused or inactive."
-            }))
+            })))
             .when_some(self.error.as_ref(), |v, error| v.child(div().id("resource-metrics-error").test_support().text_sm().text_color(cx.theme().danger)
                 .child(crate::copyable_text::copyable_text("metrics-failure-copy", error.clone()))))
             .children(self.data.as_ref().into_iter().flat_map(|data| data.errors.iter()).enumerate().map(|(index, error)| {
@@ -759,7 +781,7 @@ impl Render for ResourceMetricsView {
                     .child(crate::copyable_text::copyable_text(("metrics-partial-copy", index), error.clone()))
             }))
             .when(self.data.is_none(), |v| v.child(div().text_sm().py_4().text_color(cx.theme().muted_foreground)
-                .child(if self.loading { "Reading metrics…" } else { "No metrics snapshot available." })))
+                .child(crate::i18n::text(if self.loading { "Reading metrics…" } else { "No metrics snapshot available." }))))
             .child(self.chart(false, cx)).child(self.chart(true, cx))
             .child(div().text_xs().text_color(cx.theme().muted_foreground)
                 .child(crate::i18n::text("Reference lines use current resource settings. Declared limits sum configured budgets; containers without limits remain unbounded. Pod totals include effective init/sidecar requests.")))

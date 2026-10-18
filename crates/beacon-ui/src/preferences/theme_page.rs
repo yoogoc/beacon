@@ -4,7 +4,7 @@ use gpui_kit::base::ElementExt as _;
 use gpui_kit::component::color_picker::{ColorPicker, ColorPickerEvent, ColorPickerState};
 use gpui_kit::component::select::{SearchableVec, Select, SelectEvent, SelectState};
 
-type Choices = SearchableVec<String>;
+type Choices = SearchableVec<crate::i18n::Choice>;
 type Picker = Entity<SelectState<Choices>>;
 const SYSTEM_FONT: &str = "System font";
 
@@ -55,7 +55,7 @@ fn color_control(picker: &Entity<ColorPickerState>, label: &str, cx: &App) -> An
                 .map(color_hex)
                 .unwrap_or_else(|| "Use base color".into()),
         )
-        .accessibility_label(label.to_string())
+        .accessibility_label(crate::i18n::text(label))
         .into_any_element()
 }
 
@@ -221,8 +221,24 @@ fn choices(
     cx: &mut Context<PreferencesView>,
 ) -> Picker {
     cx.new(|cx| {
-        let mut picker =
-            SelectState::new(SearchableVec::new(items), None, window, cx).searchable(true);
+        let mut picker = SelectState::new(
+            SearchableVec::new(
+                items
+                    .into_iter()
+                    .map(|item| {
+                        if item == SYSTEM_FONT || item.contains(" › ") {
+                            crate::i18n::Choice::label(item)
+                        } else {
+                            crate::i18n::Choice::raw(item)
+                        }
+                    })
+                    .collect::<Vec<_>>(),
+            ),
+            None,
+            window,
+            cx,
+        )
+        .searchable(true);
         picker.set_selected_value(&selected.to_string(), window, cx);
         picker
     })
@@ -446,7 +462,22 @@ impl PreferencesView {
                 items.push(selected.clone());
             }
             picker.update(cx, |picker, cx| {
-                picker.set_items(SearchableVec::new(items), window, cx);
+                picker.set_items(
+                    SearchableVec::new(
+                        items
+                            .into_iter()
+                            .map(|item| {
+                                if item == SYSTEM_FONT || item.contains(" › ") {
+                                    crate::i18n::Choice::label(item)
+                                } else {
+                                    crate::i18n::Choice::raw(item)
+                                }
+                            })
+                            .collect::<Vec<_>>(),
+                    ),
+                    window,
+                    cx,
+                );
                 picker.set_selected_value(&selected, window, cx);
             });
         }
@@ -490,9 +521,17 @@ impl PreferencesView {
         if t.controls.dirty {
             let answer = window.prompt(
                 PromptLevel::Warning,
-                "Discard unsaved theme changes?",
-                Some("Save the current theme first if you want to keep your edits."),
-                &["Cancel", "Discard changes"],
+                crate::i18n::text("Discard unsaved theme changes?").as_ref(),
+                Some(
+                    crate::i18n::text(
+                        "Save the current theme first if you want to keep your edits.",
+                    )
+                    .as_ref(),
+                ),
+                &[
+                    crate::i18n::text("Cancel").as_ref(),
+                    crate::i18n::text("Discard changes").as_ref(),
+                ],
                 cx,
             );
             cx.spawn_in(window, async move |this, cx| {
@@ -688,9 +727,9 @@ impl PreferencesView {
                                     .px_1()
                                     .bg(theme.tokens.sidebar_accent)
                                     .text_color(theme.sidebar_accent_foreground)
-                                    .child("Pods"),
+                                    .child(crate::i18n::text("Pods")),
                             )
-                            .child("Nodes")
+                            .child(crate::i18n::text("Nodes"))
                             .child(crate::i18n::text("Events")),
                     )
                     .child(
@@ -704,7 +743,11 @@ impl PreferencesView {
                                     .items_center()
                                     .justify_between()
                                     .gap_2()
-                                    .child(div().font_weight(FontWeight::MEDIUM).child("Pods"))
+                                    .child(
+                                        div()
+                                            .font_weight(FontWeight::MEDIUM)
+                                            .child(crate::i18n::text("Pods")),
+                                    )
                                     .child(
                                         div()
                                             .px_2()
@@ -774,7 +817,7 @@ impl PreferencesView {
                                     div()
                                         .text_xs()
                                         .text_color(cx.theme().muted_foreground)
-                                        .child(role.description),
+                                        .child(crate::i18n::text(role.description)),
                                 ),
                             )
                             .child(
@@ -787,10 +830,13 @@ impl PreferencesView {
                                             .small()
                                             .ghost()
                                             .icon(IconName::RotateCcw)
-                                            .accessibility_label(format!(
-                                                "Reset {} to base color",
-                                                role.label
-                                            ))
+                                            .accessibility_label(
+                                                crate::i18n::message(
+                                                    "messages.reset_to_base_color",
+                                                    &[("value0", (role.label).to_string())],
+                                                )
+                                                .to_string(),
+                                            )
                                             .tooltip(crate::i18n::text("Use base color"))
                                             .disabled(!overridden)
                                             .on_click(cx.listener(move |view, _, window, cx| {
@@ -802,11 +848,11 @@ impl PreferencesView {
                                 div()
                                     .text_xs()
                                     .text_color(cx.theme().muted_foreground)
-                                    .child(if overridden {
+                                    .child(crate::i18n::text(if overridden {
                                         "Custom color"
                                     } else {
                                         "Inherited from base"
-                                    }),
+                                    })),
                             )
                     }),
             )
@@ -873,12 +919,12 @@ impl PreferencesView {
                 .child(hint("Choose an installed font. Sizes are in pixels (10–30).", cx))
                 .children([("Interface font", &t.size, &t.controls.fonts[0]), ("Monospace font", &t.mono_size, &t.controls.fonts[1])].into_iter().map(|(label, size, picker)| {
                     h_flex().items_end().gap_3()
-                        .child(v_flex().flex_1().min_w_0().gap_2().child(heading(label)).child(Select::new(picker).w_full().search_placeholder("Search installed fonts").accessibility_label(label)))
+                        .child(v_flex().flex_1().min_w_0().gap_2().child(heading(label)).child(Select::new(picker).w_full().search_placeholder(crate::i18n::text("Search installed fonts")).accessibility_label(label)))
                         .child(div().w(px(85.)).child(field("Size · px", size)))
                 })).into_any_element(),
             Panel::Advanced => v_flex().gap_3()
                 .child(hint("All color options. Search by component, such as button or sidebar.", cx))
-                .child(Select::new(&t.controls.roles).w_full().search_placeholder("Search color options").accessibility_label(crate::i18n::text("Advanced color option")))
+                .child(Select::new(&t.controls.roles).w_full().search_placeholder(crate::i18n::text("Search color options")).accessibility_label(crate::i18n::text("Advanced color option")))
                 .child(h_flex().gap_2().items_center()
                     .child(color_control(&t.controls.advanced_color, "Advanced color", cx))
                     .child(Button::new("reset-advanced-color").outline().label(crate::i18n::text("Use base color")).on_click(cx.listener(|view, _, window, cx| {
@@ -957,13 +1003,13 @@ impl PreferencesView {
                                 div()
                                     .text_xs()
                                     .text_color(cx.theme().muted_foreground)
-                                    .child(if t.controls.saved_name.is_none() {
+                                    .child(crate::i18n::text(if t.controls.saved_name.is_none() {
                                         "New theme · Not saved yet"
                                     } else if t.controls.dirty {
                                         "Saved theme · Unsaved edits"
                                     } else {
                                         "Saved locally on this device"
-                                    }),
+                                    })),
                             ),
                     )
                     .child(
@@ -1196,7 +1242,7 @@ mod tests {
         })
         .unwrap();
         assert!(cx.has_pending_prompt());
-        cx.simulate_prompt_answer("Cancel");
+        cx.simulate_prompt_answer(crate::i18n::text("Cancel").as_ref());
         cx.run_until_parked();
         cx.update_window(window, |_, window, cx| {
             let Page::Application(t) = &view.read(cx).page else {
@@ -1209,7 +1255,7 @@ mod tests {
             });
         })
         .unwrap();
-        cx.simulate_prompt_answer("Discard changes");
+        cx.simulate_prompt_answer(crate::i18n::text("Discard changes").as_ref());
         cx.run_until_parked();
         cx.update(|cx| {
             let Page::Application(t) = &view.read(cx).page else {

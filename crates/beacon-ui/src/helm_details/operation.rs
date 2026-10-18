@@ -144,14 +144,10 @@ impl OperationView {
         cx: &mut Context<Self>,
     ) -> Self {
         let name = cx.new(|cx| {
-            InputState::new(window, cx)
-                .default_value(identity.name.clone())
-                .placeholder("Release name")
+            crate::i18n::input("Release name", window, cx).default_value(identity.name.clone())
         });
         let namespace = cx.new(|cx| {
-            InputState::new(window, cx)
-                .default_value(identity.namespace.clone())
-                .placeholder("Namespace")
+            crate::i18n::input("Namespace", window, cx).default_value(identity.namespace.clone())
         });
         let spec = match &change {
             Change::Install(spec) | Change::Upgrade(spec) => Some(spec.clone()),
@@ -171,12 +167,11 @@ impl OperationView {
                     spec.as_ref()
                         .map_or("".into(), |spec| spec.repository.clone()),
                 )
-                .placeholder("Optional repository URL")
+                .placeholder(crate::i18n::text("Optional repository URL"))
         });
         let version = cx.new(|cx| {
-            InputState::new(window, cx)
+            crate::i18n::input("Exact chart version", window, cx)
                 .default_value(spec.as_ref().map_or("".into(), |spec| spec.version.clone()))
-                .placeholder("Exact chart version")
         });
         let versions = cx.new(|cx| {
             SelectState::new(SearchableVec::new(vec![]), None, window, cx).searchable(true)
@@ -495,7 +490,7 @@ impl Render for OperationView {
                     div()
                         .text_xs()
                         .text_color(cx.theme().muted_foreground)
-                        .child(label.to_string()),
+                        .child(crate::i18n::text(label)),
                 )
                 .child(Input::new(input).small().disabled(!editing))
         };
@@ -503,10 +498,13 @@ impl Render for OperationView {
             .gap_2()
             .flex_shrink_0()
             .child(
-                div()
-                    .text_lg()
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .child(format!("{} Helm release", self.change.label())),
+                div().text_lg().font_weight(FontWeight::SEMIBOLD).child(
+                    crate::i18n::message(
+                        "messages.helm_release",
+                        &[("value0", (self.change.label()).to_string())],
+                    )
+                    .to_string(),
+                ),
             )
             .child(
                 div()
@@ -547,32 +545,37 @@ impl Render for OperationView {
             if chart {
                 body=body.child(h_flex().gap_3().child(field("Chart",&self.chart)).child(field("Repository URL (optional)",&self.repository)))
                     .child(h_flex().gap_2().items_end().child(field("Exact version",&self.version))
-                        .child(Select::new(&self.versions).small().w(px(260.)).placeholder("Choose a chart version").search_placeholder("Search chart versions").accessibility_label("Chart version").disabled(!editing))
+                        .child(Select::new(&self.versions).small().w(px(260.)).placeholder(crate::i18n::text("Choose a chart version")).search_placeholder(crate::i18n::text("Search chart versions")).accessibility_label(crate::i18n::text("Chart version")).disabled(!editing))
                         .child(Button::new("helm-find-versions").small().outline().label(crate::i18n::text(if self.searching {"Loading…"} else {"Find versions"})).disabled(!editing||self.searching).on_click(cx.listener(|view,_,window,cx|view.search(window,cx)))))
-                    .child(h_flex().gap_2().items_center().child(div().flex_1().text_sm().child("Values overrides"))
-                        .child(Button::new("helm-edit-reveal").small().ghost().label(if self.values_visible {"Hide values"} else {"Reveal to edit"}).disabled(!editing).on_click(cx.listener(|view,_,window,cx|view.toggle_values(window,cx)))))
-                    .child(if self.values_visible {div().id("helm-operation-values").test_support().flex_1().min_size_0().overflow_hidden().border_1().border_color(cx.theme().border).child(Editor::new(&self.values).h_full().readonly(!editing)).into_any_element()} else {div().flex_1().text_sm().text_color(cx.theme().muted_foreground).child("Stored values are hidden. The current values will be reused unless you reveal and edit them.").into_any_element()});
+                    .child(h_flex().gap_2().items_center().child(div().flex_1().text_sm().child(crate::i18n::text("Values overrides")))
+                        .child(Button::new("helm-edit-reveal").small().ghost().label(crate::i18n::text(if self.values_visible {"Hide values"} else {"Reveal to edit"})).disabled(!editing).on_click(cx.listener(|view,_,window,cx|view.toggle_values(window,cx)))))
+                    .child(if self.values_visible {div().id("helm-operation-values").test_support().flex_1().min_size_0().overflow_hidden().border_1().border_color(cx.theme().border).child(Editor::new(&self.values).h_full().readonly(!editing)).into_any_element()} else {div().flex_1().text_sm().text_color(cx.theme().muted_foreground).child(crate::i18n::text("Stored values are hidden. The current values will be reused unless you reveal and edit them.")).into_any_element()});
             } else {
-                body=body.child(div().flex_1().text_sm().child(match self.change {Change::Rollback(number)=>format!("Review a rollback to stored revision {number}. This creates a new revision; existing history is preserved."),_=>"Review removal of this release's resources. Revision history, CRDs and resources marked keep are retained.".into()}));
+                body=body.child(div().flex_1().text_sm().child(match self.change {Change::Rollback(number)=>crate::i18n::message("messages.review_a_rollback_to_stored_revision_number_this_creates_a_new_revision_existing_history_is_preserved", &[("number", (number).to_string())]).to_string(),_=>"Review removal of this release's resources. Revision history, CRDs and resources marked keep are retained.".into()}));
             }
         } else if self.stage == Stage::Review {
             body=body.child(h_flex().gap_2().items_center()
-                .children([(Document::Values,"Values"),(Document::Manifest,"Manifest")].into_iter().map(|(document,label)|Button::new(format!("helm-review-{label}")).small().outline().selected(self.document==document).label(label).on_click(cx.listener(move |view,_,window,cx|{view.document=document;view.build_diff(window,cx); }))))
+                .children([(Document::Values,"Values"),(Document::Manifest,"Manifest")].into_iter().map(|(document,label)|Button::new(format!("helm-review-{label}")).small().outline().selected(self.document==document).label(crate::i18n::text(label)).on_click(cx.listener(move |view,_,window,cx|{view.document=document;view.build_diff(window,cx); }))))
                 .child(div().flex_1())
-                .child(Button::new("helm-review-reveal").small().ghost().label(if self.reveal {"Hide values"} else {"Reveal values"}).on_click(cx.listener(|view,_,window,cx|{view.reveal = !view.reveal;view.build_diff(window,cx);}))))
-                .child(div().text_xs().text_color(cx.theme().muted_foreground).child("The chart archive and values are fixed for this review. Helm re-renders templates when applying. Secrets remain concealed until revealed."))
+                .child(Button::new("helm-review-reveal").small().ghost().label(crate::i18n::text(if self.reveal {"Hide values"} else {"Reveal values"})).on_click(cx.listener(|view,_,window,cx|{view.reveal = !view.reveal;view.build_diff(window,cx);}))))
+                .child(div().text_xs().text_color(cx.theme().muted_foreground).child(crate::i18n::text("The chart archive and values are fixed for this review. Helm re-renders templates when applying. Secrets remain concealed until revealed.")))
                 .when_some(self.diff.clone(),|body,diff|body.child(div().id("helm-operation-diff").test_support().flex_1().min_size_0().overflow_hidden().border_1().border_color(cx.theme().border).child(Diff::new(&diff).header_visible(false))))
-                .when(self.diff.is_none(),|body|body.child(div().flex_1().child("Preparing comparison…")));
+                .when(self.diff.is_none(),|body|body.child(div().flex_1().child(crate::i18n::text("Preparing comparison…"))));
         } else {
             body = body.child(
                 div()
                     .flex_1()
                     .text_sm()
                     .child(if self.stage == Stage::Running {
-                        format!(
-                            "Running for {} seconds",
-                            self.started.map_or(0, |time| time.elapsed().as_secs())
+                        crate::i18n::message(
+                            "messages.running_for_seconds",
+                            &[(
+                                "value0",
+                                (self.started.map_or(0, |time| time.elapsed().as_secs()))
+                                    .to_string(),
+                            )],
                         )
+                        .to_string()
                     } else {
                         "Operation finished. Release details and history have been refreshed."
                             .into()
@@ -598,7 +601,7 @@ impl Render for OperationView {
                             Button::new("helm-cancel-prepare")
                                 .small()
                                 .outline()
-                                .label("Cancel")
+                                .label(crate::i18n::text("Cancel"))
                                 .on_click(cx.listener(|view, _, _, cx| {
                                     view._task = None;
                                     view.stage = Stage::Draft;
@@ -612,7 +615,7 @@ impl Render for OperationView {
                             Button::new("helm-prepare-operation")
                                 .small()
                                 .primary()
-                                .label("Prepare & review")
+                                .label(crate::i18n::text("Prepare & review"))
                                 .on_click(
                                     cx.listener(|view, _, window, cx| view.prepare(window, cx)),
                                 ),
@@ -623,7 +626,7 @@ impl Render for OperationView {
                             Button::new("helm-review-back")
                                 .small()
                                 .outline()
-                                .label("Back to configuration")
+                                .label(crate::i18n::text("Back to configuration"))
                                 .on_click(cx.listener(|view, _, _, cx| {
                                     view._task = None;
                                     view.plan = None;
@@ -636,7 +639,13 @@ impl Render for OperationView {
                             Button::new("helm-confirm-operation")
                                 .small()
                                 .primary()
-                                .label(format!("Confirm {}", self.change.label()))
+                                .label(
+                                    crate::i18n::message(
+                                        "messages.confirm",
+                                        &[("value0", (self.change.label()).to_string())],
+                                    )
+                                    .to_string(),
+                                )
                                 .disabled(self.diff.is_none())
                                 .on_click(
                                     cx.listener(|view, _, window, cx| view.execute(window, cx)),
@@ -648,7 +657,7 @@ impl Render for OperationView {
                             Button::new("helm-operation-close")
                                 .small()
                                 .outline()
-                                .label("Close")
+                                .label(crate::i18n::text("Close"))
                                 .on_click(
                                     cx.listener(|view, _, window, cx| view.close(window, cx)),
                                 ),

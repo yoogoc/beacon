@@ -21,7 +21,7 @@ pub(super) fn empty(message: impl Into<SharedString>, cx: &App) -> AnyElement {
         .py_8()
         .text_sm()
         .text_color(cx.theme().muted_foreground)
-        .child(message.into())
+        .child(crate::i18n::text(message.into()))
         .into_any_element()
 }
 pub(super) fn error(id: &'static str, message: &str, cx: &App) -> AnyElement {
@@ -77,7 +77,11 @@ pub(super) fn node_row(
                             } else {
                                 Tone::Warning
                             }))
-                            .child(if ready { "● Ready" } else { "● NotReady" }),
+                            .child(crate::i18n::text(if ready {
+                                "● Ready"
+                            } else {
+                                "● NotReady"
+                            })),
                     )
                 }),
         )
@@ -147,7 +151,13 @@ pub(super) fn event_row(
     h_flex()
         .id(("overview-warning", index))
         .role(Role::Button)
-        .aria_label(format!("Warning event: {}", event.reason))
+        .aria_label(
+            crate::i18n::message(
+                "messages.warning_event",
+                &[("value0", (event.reason).to_string())],
+            )
+            .to_string(),
+        )
         .gap_3()
         .w_full()
         .py_3()
@@ -220,7 +230,11 @@ fn bar(
             h_flex()
                 .justify_between()
                 .text_xs()
-                .child(div().text_color(cx.theme().muted_foreground).child(label))
+                .child(
+                    div()
+                        .text_color(cx.theme().muted_foreground)
+                        .child(crate::i18n::text(label)),
+                )
                 .child(
                     div()
                         .text_color(if percent.is_some_and(|p| p > 100.) {
@@ -281,7 +295,7 @@ fn capacity_card(
                 .text_sm()
                 .font_medium()
                 .child(Icon::new(icon).size_4())
-                .child(title),
+                .child(crate::i18n::text(title)),
         )
         .child(
             v_flex()
@@ -332,10 +346,16 @@ fn capacity_card(
                 .gap_1()
                 .text_xs()
                 .text_color(cx.theme().muted_foreground)
-                .child(format!(
-                    "Capacity {}",
-                    value(amount(summary.capacity), memory)
-                ))
+                .child(
+                    crate::i18n::message(
+                        "messages.capacity",
+                        &[(
+                            "value0",
+                            (value(amount(summary.capacity), memory)).to_string(),
+                        )],
+                    )
+                    .to_string(),
+                )
                 .child(Icon::new(IconName::Info).size_3())
                 .tooltip(move |window, cx| Tooltip::new(tooltip).build(window, cx)),
         )
@@ -373,7 +393,7 @@ impl OverviewView {
                     .text_sm()
                     .font_medium()
                     .child(Icon::new(IconName::Box).size_4())
-                    .child("Pods"),
+                    .child(crate::i18n::text("Pods")),
             )
             .child(
                 v_flex()
@@ -437,7 +457,11 @@ impl OverviewView {
                     h_flex()
                         .justify_between()
                         .text_xs()
-                        .child(div().text_color(cx.theme().muted_foreground).child(label))
+                        .child(
+                            div()
+                                .text_color(cx.theme().muted_foreground)
+                                .child(crate::i18n::text(label)),
+                        )
                         .child(count.map(|v| v.to_string()).unwrap_or_else(|| "—".into()))
                 }),
             )
@@ -445,13 +469,20 @@ impl OverviewView {
                 div()
                     .text_xs()
                     .text_color(cx.theme().muted_foreground)
-                    .child(format!(
-                        "Capacity {} Pods",
-                        summary
-                            .capacity
-                            .map(|v| format!("{:.0}", v.pods))
-                            .unwrap_or_else(|| "—".into())
-                    )),
+                    .child(
+                        crate::i18n::message(
+                            "messages.capacity_pods",
+                            &[(
+                                "value0",
+                                (summary
+                                    .capacity
+                                    .map(|v| format!("{:.0}", v.pods))
+                                    .unwrap_or_else(|| "—".into()))
+                                .to_string(),
+                            )],
+                        )
+                        .to_string(),
+                    ),
             );
         let mut content = v_flex()
             .gap_2()
@@ -514,9 +545,9 @@ impl OverviewView {
                     div()
                         .text_xs()
                         .text_color(cx.theme().muted_foreground)
-                        .child(
+                        .child(crate::i18n::text(
                             "Usage is unavailable until CPU and memory metrics cover every node.",
-                        ),
+                        )),
                 );
             }
         }
@@ -537,7 +568,7 @@ impl OverviewView {
                             Button::new(format!("overview-range-{}", range.label()))
                                 .xsmall()
                                 .ghost()
-                                .label(range.label())
+                                .label(crate::i18n::text(range.label()))
                                 .selected(self.range == range)
                                 .on_click(cx.listener(move |view, _, window, cx| {
                                     view.range = range;
@@ -714,12 +745,12 @@ impl OverviewView {
                 )
             })
             .unwrap_or_else(|| "% of current allocatable capacity".into());
-        let body=v_flex().gap_2().child(h_flex().gap_3().text_xs().children([("CPU",colors[0]),("Memory",colors[1])].into_iter().map(|(label,color)|h_flex().gap_1().items_center().child(div().size(px(6.)).rounded_full().bg(color)).child(label))))
+        let body=v_flex().gap_2().child(h_flex().gap_3().text_xs().children([("CPU",colors[0]),("Memory",colors[1])].into_iter().map(|(label,color)|h_flex().gap_1().items_center().child(div().size(px(6.)).rounded_full().bg(color)).child(crate::i18n::text(label)))))
             .child(div().text_xs().text_color(cx.theme().muted_foreground).child(description))
             .child(h_flex().gap_2().child(v_flex().w(px(38.)).h(px(170.)).justify_between().text_xs().text_color(cx.theme().muted_foreground).child(format!("{max:.0}%")).child(format!("{:.0}%",max/2.)).child("0%"))
                 .child(div().flex_1().min_w_0().child(chart)))
             .child(h_flex().ml(px(46.)).justify_between().text_xs().text_color(cx.theme().muted_foreground).child(time(start)).child(time(end)))
-            .child(div().text_xs().text_color(cx.theme().muted_foreground).child(if self.prometheus(){"Historical samples from Prometheus."}else{"Samples are collected while Overview is visible; earlier history is unavailable."}));
+            .child(div().text_xs().text_color(cx.theme().muted_foreground).child(crate::i18n::text(if self.prometheus(){"Historical samples from Prometheus."}else{"Samples are collected while Overview is visible; earlier history is unavailable."})));
         panel(header, body, cx)
     }
 }

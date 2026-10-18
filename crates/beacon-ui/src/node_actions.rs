@@ -71,11 +71,8 @@ impl NodeActions {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let timeout = cx.new(|cx| {
-            InputState::new(window, cx)
-                .default_value("300")
-                .placeholder("Timeout seconds")
-        });
+        let timeout =
+            cx.new(|cx| crate::i18n::input("Timeout seconds", window, cx).default_value("300"));
         let grace = cx.new(|cx| crate::i18n::input("Pod default", window, cx));
         let inputs = vec![
             cx.subscribe(&timeout, |_, _, _: &InputEvent, cx| cx.notify()),
@@ -340,9 +337,11 @@ impl NodeActions {
                             budget.target.name,
                             budget
                                 .disruptions
-                                .map_or("unknown allowance".into(), |count| format!(
-                                    "{count} disruptions allowed"
-                                )),
+                                .map_or("unknown allowance".into(), |count| crate::i18n::message(
+                                    "messages.count_disruptions_allowed",
+                                    &[("count", (count).to_string())]
+                                )
+                                .to_string()),
                             if budget.blocked {
                                 " · currently blocked"
                             } else {
@@ -434,13 +433,13 @@ impl NodeActions {
                 .min_h_0()
                 .gap_2()
                 .child(
-                    div()
-                        .text_sm()
-                        .font_weight(FontWeight::MEDIUM)
-                        .child(format!(
-                            "{} Pods on this Node · DaemonSet and mirror Pods are kept",
-                            plan.pods.len()
-                        )),
+                    div().text_sm().font_weight(FontWeight::MEDIUM).child(
+                        crate::i18n::message(
+                            "messages.pods_on_this_node_daemonset_and_mirror_pods_are_kept",
+                            &[("value0", (plan.pods.len()).to_string())],
+                        )
+                        .to_string(),
+                    ),
                 )
                 .child(
                     div()
@@ -540,7 +539,7 @@ impl Render for NodeActions {
                 div()
                     .text_sm()
                     .text_color(cx.theme().muted_foreground)
-                    .child(description),
+                    .child(crate::i18n::text(description)),
             )
             .children(self.loading.then(|| {
                 div()
@@ -684,11 +683,11 @@ impl Render for NodeActions {
                     .id("node-maintenance-running")
                     .test_support()
                     .text_sm()
-                    .child(if drain {
+                    .child(crate::i18n::text(if drain {
                         "Drain is in progress. Each Pod result is shown above."
                     } else {
                         "Updating Node scheduling…"
-                    })
+                    }))
             }))
             .children((self.done && !drain).then(|| {
                 div()
@@ -696,11 +695,11 @@ impl Render for NodeActions {
                     .test_support()
                     .text_sm()
                     .text_color(cx.theme().success)
-                    .child(if self.cordoned {
+                    .child(crate::i18n::text(if self.cordoned {
                         "Node cordoned. Existing Pods keep running."
                     } else {
                         "Node uncordoned. Scheduling is enabled."
-                    })
+                    }))
             }))
             .children((self.busy && self.cancellation.cancelled()).then(|| {
                 div().text_sm().child(crate::i18n::text(
@@ -745,7 +744,7 @@ impl Render for NodeActions {
                         Button::new("node-maintenance-confirm")
                             .primary()
                             .small()
-                            .label(if drain {
+                            .label(crate::i18n::text(if drain {
                                 "Cordon and drain"
                             } else if self.operation
                                 == (Operation::NodeCordon {
@@ -755,7 +754,7 @@ impl Render for NodeActions {
                                 "Cordon"
                             } else {
                                 "Uncordon"
-                            })
+                            }))
                             .disabled(!ready)
                             .on_click(cx.listener(|view, _, window, cx| view.confirm(window, cx)))
                     })),

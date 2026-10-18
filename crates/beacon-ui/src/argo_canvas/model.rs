@@ -156,7 +156,11 @@ impl Scene {
                         "Parallel tasks".into()
                     };
                     if subset.is_some() {
-                        node.label = format!("Group {}", index + 1);
+                        node.label = crate::i18n::message(
+                            "messages.group",
+                            &[("value0", (index + 1).to_string())],
+                        )
+                        .to_string();
                     }
                     node.data["phase"] = phase(source, group).into();
                 }

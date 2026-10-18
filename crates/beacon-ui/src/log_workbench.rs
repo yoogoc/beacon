@@ -27,7 +27,7 @@ pub(crate) struct LogWorkbench {
     search: Entity<InputState>,
     field_filter: Entity<InputState>,
     field_search: Entity<InputState>,
-    range: Entity<SelectState<SearchableVec<String>>>,
+    range: Entity<SelectState<SearchableVec<crate::i18n::Choice>>>,
     since: Entity<InputState>,
     until: Entity<InputState>,
     filter: Filter,
@@ -66,7 +66,7 @@ impl LogWorkbench {
                             "Last 24 hours",
                             "Custom range",
                         ]
-                        .map(str::to_owned)
+                        .map(crate::i18n::Choice::label)
                         .to_vec(),
                     ),
                     Some(gpui_kit::component::IndexPath::default()),
@@ -108,7 +108,7 @@ impl LogWorkbench {
                 cx.subscribe_in(
                     &range,
                     window,
-                    |view: &mut Self, _, event: &SelectEvent<SearchableVec<String>>, _, cx| {
+                    |view: &mut Self, _, event: &SelectEvent<SearchableVec<crate::i18n::Choice>>, _, cx| {
                         if let SelectEvent::Confirm(Some(value)) = event {
                             view.custom_time = value == "Custom range";
                             view.time_open = view.custom_time;
@@ -125,7 +125,7 @@ impl LogWorkbench {
                                     Timestamp::from_second(Timestamp::now().as_second() - seconds)
                                         .unwrap()
                                 });
-                                view.applied_range = since.map(|time| format!("Since {time} · server timestamps · available container logs"));
+                                view.applied_range = since.map(|time| crate::i18n::message("messages.since_time_server_timestamps_available_container_logs", &[("time", (time).to_string())]).to_string());
                                 cx.emit(Changed::Range(since, None));
                             }
                             cx.notify();
@@ -202,15 +202,28 @@ impl LogWorkbench {
             }
             Ok((since, until)) => {
                 self.error = None;
-                self.applied_range = Some(format!(
-                    "{} → {} · server timestamps · available container logs",
-                    since
-                        .map(|time| time.to_string())
-                        .unwrap_or_else(|| "Container start".into()),
-                    until
-                        .map(|time| time.to_string())
-                        .unwrap_or_else(|| "Live".into())
-                ));
+                self.applied_range = Some(
+                    crate::i18n::message(
+                        "messages.server_timestamps_available_container_logs",
+                        &[
+                            (
+                                "value0",
+                                (since
+                                    .map(|time| time.to_string())
+                                    .unwrap_or_else(|| "Container start".into()))
+                                .to_string(),
+                            ),
+                            (
+                                "value1",
+                                (until
+                                    .map(|time| time.to_string())
+                                    .unwrap_or_else(|| "Live".into()))
+                                .to_string(),
+                            ),
+                        ],
+                    )
+                    .to_string(),
+                );
                 cx.emit(Changed::Range(since, until));
                 self.time_open = false;
             }
@@ -229,9 +242,13 @@ impl LogWorkbench {
             .unwrap_or_else(std::env::temp_dir);
         let prompt = cx.prompt_for_new_path(&directory, Some("beacon-filtered-logs.log"));
         self.exporting = true;
-        self.message = Some(format!(
-            "Choose where to export {count} matching retained lines…"
-        ));
+        self.message = Some(
+            crate::i18n::message(
+                "messages.choose_where_to_export_count_matching_retained_lines",
+                &[("count", (count).to_string())],
+            )
+            .to_string(),
+        );
         self._export = Some(cx.spawn(async move |view, cx| {
             let result = match prompt.await {
                 Ok(Ok(Some(path))) => {
@@ -250,15 +267,23 @@ impl LogWorkbench {
                             temporary
                                 .persist(&path)
                                 .map_err(|error| error.to_string())?;
-                            Ok(format!(
-                                "Exported {count} matching retained lines to {}",
-                                path.display()
-                            ))
+                            Ok(crate::i18n::message(
+                                "messages.exported_count_matching_retained_lines_to",
+                                &[
+                                    ("count", (count).to_string()),
+                                    ("value0", (path.display()).to_string()),
+                                ],
+                            )
+                            .to_string())
                         })
                         .await
                 }
                 Ok(Ok(None)) => Ok("Export cancelled.".into()),
-                other => Err(format!("Could not choose an export file: {other:?}")),
+                other => Err(crate::i18n::message(
+                    "messages.could_not_choose_an_export_file_other",
+                    &[("other", format!("{:?}", other))],
+                )
+                .to_string()),
             };
             let _ = view.update(cx, |view, cx| {
                 view.exporting = false;
@@ -288,11 +313,11 @@ impl Render for LogWorkbench {
                 .child(Button::new("log-regex").xsmall().ghost().selected(self.filter.regex).label(".*").tooltip(crate::i18n::text("Regular expression search (case insensitive)")).on_click(cx.listener(|view, _, _, cx| { view.filter.regex = !view.filter.regex; cx.emit(Changed::Filter); cx.notify(); })))
                 .children(Level::ALL.map(|level| { let label = level.label(); Button::new(format!("log-level-{label}")).xsmall().ghost().selected(self.filter.levels.contains(label)).label(label).on_click(cx.listener(move |view, _, _, cx| { if !view.filter.levels.remove(label) { view.filter.levels.insert(label.into()); } cx.emit(Changed::Filter); cx.notify(); })) }))
                 .child(div().h(px(16.)).border_l_1().border_color(cx.theme().border).mx_1())
-                .child(Button::new("log-fields").xsmall().ghost().selected(self.fields_open).label(format!("Fields{}", if self.filter.predicates.is_empty() { String::new() } else { format!(" {}", self.filter.predicates.len()) })).tooltip(crate::i18n::text("Filter exact field values and choose displayed fields")).on_click(cx.listener(|view, _, _, cx| { view.fields_open = !view.fields_open; cx.notify(); })))
+                .child(Button::new("log-fields").xsmall().ghost().selected(self.fields_open).label(crate::i18n::message("messages.fields", &[("value0", (if self.filter.predicates.is_empty() { String::new() } else { format!(" {}", self.filter.predicates.len()) }).to_string())]).to_string()).tooltip(crate::i18n::text("Filter exact field values and choose displayed fields")).on_click(cx.listener(|view, _, _, cx| { view.fields_open = !view.fields_open; cx.notify(); })))
                 .child(Button::new("log-compact").xsmall().ghost().selected(self.filter.compact).label(crate::i18n::text("Compact")).on_click(cx.listener(|view, _, _, cx| { view.filter.compact = !view.filter.compact; cx.emit(Changed::Filter); cx.notify(); })))
-                .child(div().w(px(170.)).flex_shrink_0().child(Select::new(&self.range).id("log-time-range").accessibility_label(crate::i18n::text("Log time range")).search_placeholder("Search time ranges").xsmall().w_full()))
+                .child(div().w(px(170.)).flex_shrink_0().child(Select::new(&self.range).id("log-time-range").accessibility_label(crate::i18n::text("Log time range")).search_placeholder(crate::i18n::text("Search time ranges")).xsmall().w_full()))
                 .when(self.custom_time, |bar| bar.child(Button::new("log-edit-range").xsmall().ghost().label(crate::i18n::text("Edit range")).on_click(cx.listener(|view, _, _, cx| { view.time_open = !view.time_open; cx.notify(); }))))
-                .child(Button::new("log-bookmarks").xsmall().ghost().selected(self.filter.bookmarks).label(format!("Bookmarks {bookmark_count}")).tooltip(crate::i18n::text("Saved lines survive buffer eviction and container reloads in this panel")).on_click(cx.listener(|view, _, _, cx| { view.filter.bookmarks = !view.filter.bookmarks; cx.emit(Changed::Filter); cx.notify(); })))
+                .child(Button::new("log-bookmarks").xsmall().ghost().selected(self.filter.bookmarks).label(crate::i18n::message("messages.bookmarks_bookmark_count", &[("bookmark_count", (bookmark_count).to_string())]).to_string()).tooltip(crate::i18n::text("Saved lines survive buffer eviction and container reloads in this panel")).on_click(cx.listener(|view, _, _, cx| { view.filter.bookmarks = !view.filter.bookmarks; cx.emit(Changed::Filter); cx.notify(); })))
                 .when(!self.filter.levels.is_empty() || !self.filter.predicates.is_empty() || self.filter.regex || self.filter.bookmarks, |bar| bar.child(Button::new("log-reset-filters").xsmall().ghost().label(crate::i18n::text("Reset filters")).on_click(cx.listener(|view, _, window, cx| { view.filter.levels.clear(); view.filter.predicates.clear(); view.filter.regex = false; view.filter.bookmarks = false; view.error = None; view.field_filter.update(cx, |input, cx| input.set_value("", window, cx)); view.search.update(cx, |input, cx| input.set_value("", window, cx)); cx.emit(Changed::Filter); cx.notify(); }))))
                 .child(div().flex_1())
                 .child(Button::new("log-export-filtered").xsmall().ghost().label(crate::i18n::text("Export filtered…")).disabled(self.exporting || error.is_some()).tooltip(crate::i18n::text("Export matching retained lines as raw text; includes current level, search, fields and bookmark filters")).on_click(cx.listener(|view, _, _, cx| view.export(cx)))))

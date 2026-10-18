@@ -203,8 +203,24 @@ impl JobActions {
                                 view.result = Some(object);
                                 view.error = None;
                             }
-                            Ok(Err(error)) => view.error = Some(format!("Job status: {error}")),
-                            Err(error) => view.error = Some(format!("Job status: {error}")),
+                            Ok(Err(error)) => {
+                                view.error = Some(
+                                    crate::i18n::message(
+                                        "messages.job_status_error",
+                                        &[("error", (error).to_string())],
+                                    )
+                                    .to_string(),
+                                )
+                            }
+                            Err(error) => {
+                                view.error = Some(
+                                    crate::i18n::message(
+                                        "messages.job_status_error",
+                                        &[("error", (error).to_string())],
+                                    )
+                                    .to_string(),
+                                )
+                            }
                         }
                         cx.notify();
                     })
@@ -292,14 +308,14 @@ impl Render for JobActions {
             _ => "Resume schedule",
         };
         v_flex().id("job-action-dialog").test_support().w(px(if has_job { 880. } else { 580. })).max_h(relative(0.9)).min_h_0().p_5().gap_3().rounded_lg().border_1().border_color(cx.theme().border).bg(cx.theme().background).shadow_lg()
-            .child(div().text_lg().font_weight(FontWeight::SEMIBOLD).child(title))
+            .child(div().text_lg().font_weight(FontWeight::SEMIBOLD).child(crate::i18n::text(title)))
             .child(copyable_text("job-action-source", format!("{} · {}/{}", self.session.id().display_name(), self.target.namespace.as_deref().unwrap_or("default"), self.target.name)))
             .child(div().text_sm().text_color(cx.theme().muted_foreground).child(self.description()))
             .children(self.loading.then(|| div().id("job-action-preparing").test_support().text_sm().child(crate::i18n::text("Checking permissions and validating the operation…"))))
             .children(self.plan.as_ref().and_then(|plan| plan.manifest.as_ref()).map(|manifest| {
                 let containers = manifest.pointer("/spec/template/spec/containers").and_then(serde_json::Value::as_array).map(|containers| containers.iter().filter_map(|container| container.get("image").and_then(serde_json::Value::as_str)).collect::<Vec<_>>().join(", ")).unwrap_or_default();
                 v_flex().id("job-action-preview").test_support().p_3().gap_2().border_1().border_color(cx.theme().border).rounded_md().bg(cx.theme().muted.opacity(0.3))
-                    .child(copyable_text("job-action-new-name", format!("New Job: {}<generated>", manifest.pointer("/metadata/generateName").and_then(serde_json::Value::as_str).unwrap_or(""))))
+                    .child(copyable_text("job-action-new-name", crate::i18n::message("messages.new_job_generated", &[("value0", (manifest.pointer("/metadata/generateName").and_then(serde_json::Value::as_str).unwrap_or("")).to_string())]).to_string()))
                     .child(copyable_text("job-action-images", format!("Images: {containers}")))
                     .child(div().text_xs().text_color(cx.theme().muted_foreground).child(crate::i18n::text("Server validation passed. Review the source's YAML for the full template.")))
             }))
@@ -310,7 +326,7 @@ impl Render for JobActions {
                     .child(copyable_text("job-action-result", ObjectRef::of(result).to_string()))
                     .child(div().id("job-action-status").test_support().text_sm().child(copyable_text("job-action-status-value", if has_job { jobs::status(result) } else if result.data.pointer("/spec/suspend").and_then(serde_json::Value::as_bool).unwrap_or(false) { "Schedule suspended. Existing Jobs continue.".into() } else { "Schedule resumed.".into() })))
                     .child(h_flex().gap_2()
-                        .child(Button::new("job-action-open").small().label(if has_job { "Open Job" } else { "Open CronJob" }).on_click(cx.listener(|view,_,_,cx| view.open_result(cx))))
+                        .child(Button::new("job-action-open").small().label(crate::i18n::text(if has_job { "Open Job" } else { "Open CronJob" })).on_click(cx.listener(|view,_,_,cx| view.open_result(cx))))
                         .children(has_job.then(|| Button::new("job-action-logs").small().label(crate::i18n::text("View logs")).on_click(cx.listener(|view,_,window,cx| view.open_logs(window,cx))))))
             }))
             .children(self.related.clone().map(|related| div().h(px(280.)).min_h_0().overflow_hidden().border_1().border_color(cx.theme().border).rounded_md().child(related)))

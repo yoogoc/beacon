@@ -12,7 +12,7 @@ fn field(id: &'static str, label: &str, value: String, cx: &App) -> AnyElement {
         .flex_1()
         .min_w_0()
         .gap_1()
-        .child(muted(label.to_string(), cx))
+        .child(muted(crate::i18n::text(label), cx))
         .child(div().text_sm().child(copyable_text(
             id,
             if value.is_empty() {
@@ -67,7 +67,7 @@ impl HelmDetails {
                             .bg(color.opacity(0.1))
                             .text_color(color)
                             .text_sm()
-                            .child(status.to_string()),
+                            .child(crate::i18n::text(status)),
                     )
                     .child(
                         Button::new("helm-refresh")
@@ -218,7 +218,7 @@ impl HelmDetails {
                             .small()
                             .ghost()
                             .selected(self.page == page)
-                            .label(page.label())
+                            .label(crate::i18n::text(page.label()))
                             .on_click(
                                 cx.listener(move |view, _, window, cx| {
                                     view.select(page, window, cx)
@@ -233,12 +233,12 @@ impl HelmDetails {
         h_flex().items_center().gap_2().flex_shrink_0().flex_wrap()
             .when(compare, |row| row
                 .child(muted("From", cx))
-                .child(Select::new(&self.from_picker).small().w(px(250.)).search_placeholder("Search revisions").accessibility_label(crate::i18n::text("Original Helm revision")))
+                .child(Select::new(&self.from_picker).small().w(px(250.)).search_placeholder(crate::i18n::text("Search revisions")).accessibility_label(crate::i18n::text("Original Helm revision")))
                 .child(muted("To", cx))
-                .child(Select::new(&self.to_picker).small().w(px(250.)).search_placeholder("Search revisions").accessibility_label(crate::i18n::text("Modified Helm revision"))))
-            .when(!compare, |row| row.child(Select::new(&self.revision_picker).small().w(px(340.)).search_placeholder("Search revisions").accessibility_label(crate::i18n::text("Helm revision"))))
+                .child(Select::new(&self.to_picker).small().w(px(250.)).search_placeholder(crate::i18n::text("Search revisions")).accessibility_label(crate::i18n::text("Modified Helm revision"))))
+            .when(!compare, |row| row.child(Select::new(&self.revision_picker).small().w(px(340.)).search_placeholder(crate::i18n::text("Search revisions")).accessibility_label(crate::i18n::text("Helm revision"))))
             .child(div().flex_1())
-            .child(Button::new("helm-reveal").small().outline().label(if self.reveal { "Hide values" } else { "Reveal values" })
+            .child(Button::new("helm-reveal").small().outline().label(crate::i18n::text(if self.reveal { "Hide values" } else { "Reveal values" }))
                 .tooltip(crate::i18n::text("Helm values can contain credentials. Secret data in manifests is also concealed until revealed."))
                 .on_click(cx.listener(|view, _, window, cx| { view.reveal = !view.reveal; view.prepare(window, cx); })))
             .child(Button::new("helm-wrap").small().ghost().selected(self.wrap).label(crate::i18n::text("Wrap"))
@@ -261,7 +261,7 @@ impl HelmDetails {
                         .small()
                         .outline()
                         .selected(self.document == document)
-                        .label(label)
+                        .label(crate::i18n::text(label))
                         .on_click(cx.listener(move |view, _, window, cx| {
                             view.document = document;
                             view.prepare(window, cx);
@@ -280,7 +280,7 @@ impl HelmDetails {
                         .small()
                         .ghost()
                         .selected(self.mode == mode)
-                        .label(label)
+                        .label(crate::i18n::text(label))
                         .on_click(cx.listener(move |view, _, _, cx| {
                             view.mode = mode;
                             if let Some(diff) = &view.diff {
@@ -350,9 +350,9 @@ impl Render for HelmDetails {
                 } else {
                     "Values and Secret data are concealed. Reveal values to read their contents; concealed differences remain detectable."
                 };
-                view.child(muted(hint, cx))
+                view.child(muted(crate::i18n::text(hint), cx))
                     .when(self.content_error.is_none() && self.page != Page::Compare, |view| view.child(div().id("helm-document").test_support().flex_1().min_size_0().overflow_hidden().rounded_md().border_1().border_color(cx.theme().border)
-                        .child(Editor::new(&self.editor).h_full().readonly(true).aria_label(if self.page == Page::Values { "Helm values" } else { "Helm rendered manifest" }))))
+                        .child(Editor::new(&self.editor).h_full().readonly(true).aria_label(crate::i18n::text(if self.page == Page::Values { "Helm values" } else { "Helm rendered manifest" })))))
                     .when_some(self.diff.clone(), |view, diff| view.child(div().id("helm-diff").test_support().flex_1().min_size_0().overflow_hidden().border_1().border_color(cx.theme().border).rounded_md()
                         .child(Diff::new(&diff).header_visible(false).soft_wrap(self.wrap))))
             });

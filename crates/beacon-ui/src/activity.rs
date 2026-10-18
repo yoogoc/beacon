@@ -49,7 +49,10 @@ pub(crate) fn watches(session: &ClusterSession, cx: &App) -> AnyElement {
         });
         let objects = watch.objects.map_or_else(
             || "Loading objects".to_string(),
-            |count| format!("{count} objects"),
+            |count| {
+                crate::i18n::message("display.count_objects", &[("count", (count).to_string())])
+                    .to_string()
+            },
         );
 
         v_flex()
@@ -82,20 +85,47 @@ pub(crate) fn watches(session: &ClusterSession, cx: &App) -> AnyElement {
                     .child(format!("{} · {scope}", key.resource.api_version)),
             )
             .child(
-                div()
-                    .text_xs()
-                    .child(format!("{objects} · {} subscribers", watch.subscribers)),
+                div().text_xs().child(
+                    crate::i18n::message(
+                        "display.objects_subscribers",
+                        &[
+                            ("objects", (objects).to_string()),
+                            ("value0", (watch.subscribers).to_string()),
+                        ],
+                    )
+                    .to_string(),
+                ),
             )
             .when_some(key.labels.as_ref(), |row, selector| {
-                row.child(div().text_xs().child(format!("Labels: {selector}")))
+                row.child(
+                    div().text_xs().child(
+                        crate::i18n::message(
+                            "display.labels_selector",
+                            &[("selector", (selector).to_string())],
+                        )
+                        .to_string(),
+                    ),
+                )
             })
             .when_some(key.fields.as_ref(), |row, selector| {
-                row.child(div().text_xs().child(format!("Fields: {selector}")))
+                row.child(
+                    div().text_xs().child(
+                        crate::i18n::message(
+                            "display.fields_selector",
+                            &[("selector", (selector).to_string())],
+                        )
+                        .to_string(),
+                    ),
+                )
             })
     });
 
     panel(
-        format!("Watches ({})", watches.len()),
+        crate::i18n::message(
+            "messages.watches",
+            &[("value0", (watches.len()).to_string())],
+        )
+        .to_string(),
         format!(
             "{} · Kubernetes {}",
             session.id().display_name(),

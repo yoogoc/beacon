@@ -365,13 +365,20 @@ impl HelmDetails {
                             .map(|record| Choice {
                                 number: record.number,
                                 label: match &record.revision {
-                                    Some(revision) => format!(
-                                        "Revision {} · {} · {}",
-                                        record.number,
-                                        revision.summary.status,
-                                        revision.summary.chart
-                                    ),
-                                    None => format!("Revision {} · Unreadable", record.number),
+                                    Some(revision) => crate::i18n::message(
+                                        "messages.revision",
+                                        &[
+                                            ("value0", (record.number).to_string()),
+                                            ("value1", (revision.summary.status).to_string()),
+                                            ("value2", (revision.summary.chart).to_string()),
+                                        ],
+                                    )
+                                    .to_string(),
+                                    None => crate::i18n::message(
+                                        "messages.revision_unreadable",
+                                        &[("value0", (record.number).to_string())],
+                                    )
+                                    .to_string(),
                                 },
                             })
                             .collect();

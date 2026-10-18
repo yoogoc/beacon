@@ -157,11 +157,25 @@ impl ClusterView {
                             .shadow_md()
                             .child(Icon::new(IconName::Plus).size(px(22.)))
                             .disabled(!allowed)
-                            .accessibility_label(format!("Create {}", kind.resource.kind))
+                            .accessibility_label(
+                                crate::i18n::message(
+                                    "messages.create",
+                                    &[("value0", (kind.resource.kind).to_string())],
+                                )
+                                .to_string(),
+                            )
                             .tooltip(if allowed {
-                                format!("Create {} from YAML", kind.resource.kind)
+                                crate::i18n::message(
+                                    "messages.create_from_yaml",
+                                    &[("value0", (kind.resource.kind).to_string())],
+                                )
+                                .to_string()
                             } else {
-                                format!("{} does not support creation", kind.resource.kind)
+                                crate::i18n::message(
+                                    "messages.does_not_support_creation",
+                                    &[("value0", (kind.resource.kind).to_string())],
+                                )
+                                .to_string()
                             })
                             .on_click(
                                 cx.listener(|view, _, window, cx| view.start_create(window, cx)),
@@ -314,7 +328,7 @@ impl ClusterView {
             h_flex()
                 .id("resource-selection-toolbar")
                 .role(Role::Toolbar)
-                .aria_label("Selected resource actions")
+                .aria_label(crate::i18n::text("Selected resource actions"))
                 .test_support()
                 .w_full()
                 .min_w_0()
@@ -494,7 +508,14 @@ impl ClusterView {
         let count = match self.mode {
             Mode::Overview => String::new(),
             Mode::Objects if shown == total => total.to_string(),
-            Mode::Objects => format!("{shown} of {total}"),
+            Mode::Objects => crate::i18n::message(
+                "messages.shown_of_total",
+                &[
+                    ("shown", (shown).to_string()),
+                    ("total", (total).to_string()),
+                ],
+            )
+            .to_string(),
             Mode::Releases => match &self.releases {
                 Releases::Ready(items) => items.len().to_string(),
                 _ => String::new(),
@@ -503,14 +524,22 @@ impl ClusterView {
         };
         let count_label = if loading {
             if self.mode == Mode::Objects && total > 0 {
-                format!("{total} resources loaded; loading more")
+                crate::i18n::message(
+                    "messages.total_resources_loaded_loading_more",
+                    &[("total", (total).to_string())],
+                )
+                .to_string()
             } else {
-                "Loading resources".to_owned()
+                crate::i18n::text("Loading resources").to_string()
             }
         } else if count == "1" {
-            "1 resource".to_owned()
+            crate::i18n::text("1 resource").to_string()
         } else {
-            format!("{count} resources")
+            crate::i18n::message(
+                "messages.count_resources",
+                &[("count", (count).to_string())],
+            )
+            .to_string()
         };
         let count_tooltip = count_label.clone();
         let layout = self.toolbar_layout.get();
@@ -524,7 +553,7 @@ impl ClusterView {
         h_flex()
             .id("resource-toolbar")
             .role(Role::Toolbar)
-            .aria_label("Resource toolbar")
+            .aria_label(crate::i18n::text("Resource toolbar"))
             .test_support()
             .relative()
             .w_full()
@@ -556,7 +585,7 @@ impl ClusterView {
                                 .truncate()
                                 .font_weight(FontWeight::MEDIUM)
                                 .text_sm()
-                                .child(self.mode.label()),
+                                .child(crate::i18n::text(self.mode.label())),
                         )
                     })
                     .children(self.kind.as_ref().filter(|kind| kind.namespaced).map(|_| {
@@ -595,7 +624,7 @@ impl ClusterView {
                                     div()
                                         .id("resource-count-loading")
                                         .role(Role::ProgressIndicator)
-                                        .aria_label("Loading resources")
+                                        .aria_label(crate::i18n::text("Loading resources"))
                                         .test_support()
                                         .child(
                                             Spinner::new()

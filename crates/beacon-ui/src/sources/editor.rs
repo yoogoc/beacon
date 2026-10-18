@@ -33,11 +33,11 @@ pub(super) fn open(source: Option<Source>, rename: bool, window: &mut Window, cx
     let editor = cx.new(|cx| SourceEditor::new(source, rename, window, cx));
     window.open_dialog(cx, move |dialog, _, _| {
         dialog
-            .title(if rename {
+            .title(crate::i18n::text(if rename {
                 "Rename source"
             } else {
                 "Add kubeconfig source"
-            })
+            }))
             .width(px(600.))
             .overlay_closable(false)
             .child(editor.clone())
@@ -67,11 +67,7 @@ fn input(
     window: &mut Window,
     cx: &mut App,
 ) -> Entity<InputState> {
-    cx.new(|cx| {
-        InputState::new(window, cx)
-            .placeholder(placeholder.to_owned())
-            .default_value(value)
-    })
+    cx.new(|cx| crate::i18n::input(placeholder.to_owned(), window, cx).default_value(value))
 }
 fn new_id() -> String {
     static NEXT: AtomicU64 = AtomicU64::new(0);
@@ -472,7 +468,7 @@ impl SourceEditor {
                 div()
                     .text_sm()
                     .font_weight(FontWeight::MEDIUM)
-                    .child(label.to_owned()),
+                    .child(crate::i18n::text(label)),
             )
             .child(Input::new(input).small())
             .into_any_element()
@@ -484,7 +480,7 @@ impl SourceEditor {
         }
         v_flex().gap_4()
             .child(h_flex().gap_2().children([(Kind::File,"File",IconName::FileKey),(Kind::Directory,"Folder",IconName::FolderOpen),(Kind::Paste,"Paste YAML",IconName::ClipboardPaste)].into_iter().map(|(kind,label,icon)| {
-                Button::new(SharedString::from(format!("source-type-{label}"))).small().outline().icon(icon).label(label).selected(self.kind == kind).disabled(self.busy || self.source.is_some() && self.kind != kind)
+                Button::new(SharedString::from(format!("source-type-{label}"))).small().outline().icon(icon).label(crate::i18n::text(label)).selected(self.kind == kind).disabled(self.busy || self.source.is_some() && self.kind != kind)
                     .on_click(cx.listener(move |view, _, _, cx| { view.kind = kind; view.extra_files.clear(); view.review = None; view.message = None; cx.notify(); }))
             })))
             .child(name)
@@ -501,7 +497,7 @@ impl SourceEditor {
                 .child(div().h(px(190.)).border_1().border_color(cx.theme().border).rounded(cx.theme().radius).child(Editor::new(&self.yaml).h_full())))
                 .child(Self::field("Base folder (only for relative file references)", &self.base))
                 .child(Button::new("browse-kubeconfig-base").small().ghost().icon(IconName::FolderOpen).label(crate::i18n::text("Choose base folder…")).on_click(cx.listener(|view, _, window, cx| view.choose(true, window, cx)))))
-            .child(div().text_xs().text_color(cx.theme().muted_foreground).child(match self.kind { Kind::File => "Choose one or more files. Each file becomes a separate source and the originals stay in place.", Kind::Directory => "Only matching kubeconfig files are loaded. Invalid files do not block the rest of the folder.", Kind::Paste => "Beacon keeps an owner-only copy locally. Credentials and exec helpers are not used during this preview." }))
+            .child(div().text_xs().text_color(cx.theme().muted_foreground).child(crate::i18n::text(match self.kind { Kind::File => "Choose one or more files. Each file becomes a separate source and the originals stay in place.", Kind::Directory => "Only matching kubeconfig files are loaded. Invalid files do not block the rest of the folder.", Kind::Paste => "Beacon keeps an owner-only copy locally. Credentials and exec helpers are not used during this preview." })))
             .into_any_element()
     }
     fn review_form(&self, cx: &mut Context<Self>) -> AnyElement {
@@ -555,13 +551,13 @@ impl Render for SourceEditor {
                 div()
                     .text_xs()
                     .text_color(cx.theme().muted_foreground)
-                    .child(if self.rename {
+                    .child(crate::i18n::text(if self.rename {
                         "Changes apply to the source label in all windows."
                     } else if reviewed {
                         "2 of 2 · Choose which contexts appear in Beacon"
                     } else {
                         "1 of 2 · Choose a source"
-                    }),
+                    })),
             )
             .child(if reviewed {
                 self.review_form(cx)

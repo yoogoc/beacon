@@ -877,7 +877,13 @@ impl PreferencesView {
                     )
                     .child(
                         Switch::new(("yaml-fold-field", index))
-                            .accessibility_label(format!("Collapse {}", field.path))
+                            .accessibility_label(
+                                crate::i18n::message(
+                                    "messages.collapse",
+                                    &[("value0", (field.path).to_string())],
+                                )
+                                .to_string(),
+                            )
                             .checked(field.collapsed)
                             .on_click(cx.listener(move |view, checked, _, cx| {
                                 if let Page::Cluster(c) = &mut view.page
@@ -894,7 +900,13 @@ impl PreferencesView {
                         Button::new(("remove-yaml-fold-field", index))
                             .ghost()
                             .icon(IconName::X)
-                            .tooltip(format!("Remove {}", field.path))
+                            .tooltip(
+                                crate::i18n::message(
+                                    "messages.remove",
+                                    &[("value0", (field.path).to_string())],
+                                )
+                                .to_string(),
+                            )
                             .on_click(cx.listener(move |view, _, _, cx| {
                                 if let Page::Cluster(c) = &mut view.page
                                     && index < c.yaml_folding.fields.len()
@@ -1005,11 +1017,14 @@ impl PreferencesView {
                 view.message = Some(match result {
                     Ok(Ok(metrics)) => (
                         false,
-                        format!(
-                            "Prometheus is reachable: {} resource samples for {}.",
-                            metrics.len(),
-                            id.display_name()
-                        ),
+                        crate::i18n::message(
+                            "messages.prometheus_is_reachable_resource_samples_for",
+                            &[
+                                ("value0", (metrics.len()).to_string()),
+                                ("value1", (id.display_name()).to_string()),
+                            ],
+                        )
+                        .to_string(),
                     ),
                     Ok(Err(error)) => (true, error),
                     Err(_) => (true, "Metrics test was interrupted.".into()),
@@ -1214,7 +1229,10 @@ impl PreferencesView {
             Button::new(label)
                 .outline()
                 .selected(selected)
-                .accessibility_label(format!("{label} theme"))
+                .accessibility_label(
+                    crate::i18n::message("messages.label_theme", &[("label", (label).to_string())])
+                        .to_string(),
+                )
                 .flex_1()
                 .min_w_0()
                 .h_auto()
@@ -1402,7 +1420,9 @@ impl PreferencesView {
                                             .gap_2()
                                             .items_center()
                                             .child(
-                                                div().font_weight(FontWeight::MEDIUM).child("Pods"),
+                                                div()
+                                                    .font_weight(FontWeight::MEDIUM)
+                                                    .child(crate::i18n::text("Pods")),
                                             )
                                             .child(
                                                 div()
@@ -1513,7 +1533,13 @@ impl PreferencesView {
                     cx.theme().border
                 })
                 .text_color(cx.theme().foreground)
-                .accessibility_label(format!("{label} cluster icon"))
+                .accessibility_label(
+                    crate::i18n::message(
+                        "messages.label_cluster_icon",
+                        &[("label", (label).to_string())],
+                    )
+                    .to_string(),
+                )
                 .child(
                     v_flex()
                         .items_center()
@@ -1604,7 +1630,7 @@ impl PreferencesView {
                         .child(field("Container memory query", &c.container_memory))
                         .child(hint("Queries return CPU in cores and memory in bytes. Pod results require namespace/pod labels; node results require a node label; container results require namespace/pod/container labels. Add cluster selectors when Prometheus contains multiple clusters.", cx))))
                 .child(inline_action(Button::new("test-metrics").outline().icon(IconName::Activity).disabled(self.testing)
-                    .label(if self.testing { "Testing…" } else { "Test metrics source" })
+                    .label(crate::i18n::text(if self.testing { "Testing…" } else { "Test metrics source" }))
                     .on_click(cx.listener(|view, _, window, cx| view.test_metrics(window, cx))))))
             .when(c.metrics == 0, |form| form.child(hint("Uses metrics.k8s.io. Clusters without metrics-server show no CPU or memory samples.", cx)))
             .into_any_element()
@@ -1698,7 +1724,7 @@ impl PreferencesView {
                             .rounded(cx.theme().radius)
                             .border_1()
                             .border_color(cx.theme().transparent)
-                            .accessibility_label(section.label())
+                            .accessibility_label(crate::i18n::text(section.label()))
                             .child(
                                 h_flex()
                                     .w_full()
@@ -1743,7 +1769,11 @@ impl PreferencesView {
                     .child(if cluster {
                         "Settings stored locally".to_owned()
                     } else {
-                        format!("Version {}", env!("CARGO_PKG_VERSION"))
+                        crate::i18n::message(
+                            "messages.version",
+                            &[("value0", (env!("CARGO_PKG_VERSION")).to_string())],
+                        )
+                        .to_string()
                     }),
             )
             .into_any_element()
@@ -1960,7 +1990,7 @@ impl Render for PreferencesView {
                                             bar.child(
                                                 Button::new("save-preferences")
                                                     .primary()
-                                                    .label(
+                                                    .label(crate::i18n::text(
                                                         if matches!(
                                                             self.section,
                                                             Section::Updates | Section::Sources
@@ -1969,7 +1999,7 @@ impl Render for PreferencesView {
                                                         } else {
                                                             "Save changes"
                                                         },
-                                                    )
+                                                    ))
                                                     .on_click(cx.listener(
                                                         |view, _, window, cx| {
                                                             view.save(false, window, cx)
@@ -2262,7 +2292,10 @@ mod update_tests {
         cx.update_window(window, |_, window, cx| {
             let copy = gpui_kit::base::test_support::snapshots(window)
                 .into_iter()
-                .find(|item| item.role() == Some(Role::MenuItem) && item.label() == Some("Copy"))
+                .find(|item| {
+                    item.role() == Some(Role::MenuItem)
+                        && item.label() == Some(crate::i18n::text("Copy").as_ref())
+                })
                 .unwrap();
             window.click(copy.path().last().unwrap().clone(), cx);
             assert_eq!(cx.read_from_clipboard().unwrap().text().unwrap(), failure);

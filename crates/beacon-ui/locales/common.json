@@ -2563,5 +2563,641 @@
   "common.files": {
     "en": "Files",
     "zh-CN": "文件"
+  },
+  "common.expand_sidebar": {
+    "en": "Expand sidebar",
+    "zh-CN": "展开侧栏"
+  },
+  "common.collapse_sidebar": {
+    "en": "Collapse sidebar",
+    "zh-CN": "收起侧栏"
+  },
+  "common.previous": {
+    "en": "Previous",
+    "zh-CN": "上一个容器"
+  },
+  "common.live": {
+    "en": "Live",
+    "zh-CN": "实时"
+  },
+  "common.summary": {
+    "en": "Summary",
+    "zh-CN": "摘要"
+  },
+  "common.related": {
+    "en": "Related",
+    "zh-CN": "关联资源"
+  },
+  "common.template": {
+    "en": "Template",
+    "zh-CN": "模板"
+  },
+  "common.templates": {
+    "en": "Templates",
+    "zh-CN": "模板"
+  },
+  "common.template_graph": {
+    "en": "Template graph",
+    "zh-CN": "模板拓扑"
+  },
+  "common.pod_template": {
+    "en": "Pod template",
+    "zh-CN": "Pod 模板"
+  },
+  "common.node_yaml": {
+    "en": "Node YAML",
+    "zh-CN": "节点 YAML"
+  },
+  "common.template_yaml": {
+    "en": "Template YAML",
+    "zh-CN": "模板 YAML"
+  },
+  "common.run_configuration": {
+    "en": "Run configuration",
+    "zh-CN": "运行配置"
+  },
+  "common.workflow_configuration": {
+    "en": "Workflow configuration",
+    "zh-CN": "工作流配置"
+  },
+  "common.template_configuration": {
+    "en": "Template configuration",
+    "zh-CN": "模板配置"
+  },
+  "common.container_configuration": {
+    "en": "Container configuration",
+    "zh-CN": "容器配置"
+  },
+  "common.container_status": {
+    "en": "Container status",
+    "zh-CN": "容器状态"
+  },
+  "common.parameters": {
+    "en": "Parameters",
+    "zh-CN": "参数"
+  },
+  "common.arguments": {
+    "en": "Arguments",
+    "zh-CN": "参数"
+  },
+  "common.command": {
+    "en": "Command",
+    "zh-CN": "命令"
+  },
+  "common.working_directory": {
+    "en": "Working directory",
+    "zh-CN": "工作目录"
+  },
+  "common.source": {
+    "en": "Source",
+    "zh-CN": "来源"
+  },
+  "common.inputs": {
+    "en": "Inputs",
+    "zh-CN": "输入"
+  },
+  "common.outputs": {
+    "en": "Outputs",
+    "zh-CN": "输出"
+  },
+  "common.result": {
+    "en": "Result",
+    "zh-CN": "结果"
+  },
+  "common.phase": {
+    "en": "Phase",
+    "zh-CN": "阶段"
+  },
+  "common.progress": {
+    "en": "Progress",
+    "zh-CN": "进度"
+  },
+  "common.node_name": {
+    "en": "Node name",
+    "zh-CN": "节点名称"
+  },
+  "common.node_id": {
+    "en": "Node ID",
+    "zh-CN": "节点 ID"
+  },
+  "common.node_type": {
+    "en": "Node type",
+    "zh-CN": "节点类型"
+  },
+  "common.template_scope": {
+    "en": "Template scope",
+    "zh-CN": "模板作用域"
+  },
+  "common.template_reference": {
+    "en": "Template reference",
+    "zh-CN": "模板引用"
+  },
+  "common.source_resource": {
+    "en": "Source resource",
+    "zh-CN": "来源资源"
+  },
+  "common.pod_name": {
+    "en": "Pod name",
+    "zh-CN": "Pod 名称"
+  },
+  "common.host_node": {
+    "en": "Host node",
+    "zh-CN": "宿主节点"
+  },
+  "common.estimated_duration_s": {
+    "en": "Estimated duration (s)",
+    "zh-CN": "预估时长（秒）"
+  },
+  "common.exit_code": {
+    "en": "Exit code",
+    "zh-CN": "退出码"
+  },
+  "common.memoization": {
+    "en": "Memoization",
+    "zh-CN": "结果缓存"
+  },
+  "common.not_configured": {
+    "en": "Not configured",
+    "zh-CN": "未配置"
+  },
+  "common.failed_hosts": {
+    "en": "Failed hosts",
+    "zh-CN": "失败的主机"
+  },
+  "common.unnamed": {
+    "en": "Unnamed",
+    "zh-CN": "未命名"
+  },
+  "common.restart_count": {
+    "en": "Restart count",
+    "zh-CN": "重启次数"
+  },
+  "common.image_id": {
+    "en": "Image ID",
+    "zh-CN": "镜像 ID"
+  },
+  "common.container_id": {
+    "en": "Container ID",
+    "zh-CN": "容器 ID"
+  },
+  "common.state": {
+    "en": "State",
+    "zh-CN": "状态"
+  },
+  "common.last_state": {
+    "en": "Last state",
+    "zh-CN": "上次状态"
+  },
+  "common.image_pull_policy": {
+    "en": "Image pull policy",
+    "zh-CN": "镜像拉取策略"
+  },
+  "common.security_context": {
+    "en": "Security context",
+    "zh-CN": "安全上下文"
+  },
+  "common.requests": {
+    "en": "Requests",
+    "zh-CN": "请求量"
+  },
+  "common.limits": {
+    "en": "Limits",
+    "zh-CN": "限制量"
+  },
+  "common.mount_path": {
+    "en": "Mount path",
+    "zh-CN": "挂载路径"
+  },
+  "common.subpath": {
+    "en": "Subpath",
+    "zh-CN": "子路径"
+  },
+  "common.parameter": {
+    "en": "Parameter",
+    "zh-CN": "参数"
+  },
+  "common.artifact": {
+    "en": "Artifact",
+    "zh-CN": "制品"
+  },
+  "common.artifacts": {
+    "en": "Artifacts",
+    "zh-CN": "制品"
+  },
+  "common.controller": {
+    "en": "Controller",
+    "zh-CN": "控制器"
+  },
+  "common.local_storage": {
+    "en": "Local storage",
+    "zh-CN": "本地存储"
+  },
+  "common.disruption_budgets": {
+    "en": "Disruption budgets",
+    "zh-CN": "中断预算"
+  },
+  "common.allowed": {
+    "en": "Allowed",
+    "zh-CN": "允许"
+  },
+  "common.not_allowed": {
+    "en": "Not allowed",
+    "zh-CN": "不允许"
+  },
+  "common.verbs": {
+    "en": "Verbs",
+    "zh-CN": "操作动词"
+  },
+  "common.api_groups": {
+    "en": "API groups",
+    "zh-CN": "API 组"
+  },
+  "common.names": {
+    "en": "Names",
+    "zh-CN": "名称"
+  },
+  "common.current_user": {
+    "en": "Current user",
+    "zh-CN": "当前用户"
+  },
+  "common.user": {
+    "en": "User",
+    "zh-CN": "用户"
+  },
+  "common.group": {
+    "en": "Group",
+    "zh-CN": "组"
+  },
+  "common.scope_b8417b26": {
+    "en": "Scope: ",
+    "zh-CN": "范围："
+  },
+  "common.cluster_scope": {
+    "en": "Cluster scope",
+    "zh-CN": "集群作用域"
+  },
+  "common.cluster_scoped": {
+    "en": "Cluster scoped",
+    "zh-CN": "集群级"
+  },
+  "common.namespaced": {
+    "en": "Namespaced",
+    "zh-CN": "命名空间级"
+  },
+  "common.all_hosts": {
+    "en": "All hosts",
+    "zh-CN": "所有主机"
+  },
+  "common.value": {
+    "en": "Value",
+    "zh-CN": "值"
+  },
+  "common.required_value": {
+    "en": "Required value",
+    "zh-CN": "必填值"
+  },
+  "common.when": {
+    "en": "When",
+    "zh-CN": "条件"
+  },
+  "common.depends": {
+    "en": "Depends",
+    "zh-CN": "依赖条件"
+  },
+  "common.with_items_parameter": {
+    "en": "With items / parameter",
+    "zh-CN": "遍历项 / 参数"
+  },
+  "common.execution_policy": {
+    "en": "Execution policy",
+    "zh-CN": "执行策略"
+  },
+  "common.suspended": {
+    "en": "Suspended",
+    "zh-CN": "已暂停"
+  },
+  "common.stopping": {
+    "en": "Stopping",
+    "zh-CN": "正在停止"
+  },
+  "common.active": {
+    "en": "Active",
+    "zh-CN": "活跃"
+  },
+  "common.skipped": {
+    "en": "Skipped",
+    "zh-CN": "已跳过"
+  },
+  "common.omitted": {
+    "en": "Omitted",
+    "zh-CN": "已略过"
+  },
+  "common.terminate": {
+    "en": "Terminate",
+    "zh-CN": "终止"
+  },
+  "common.sequential_steps": {
+    "en": "Sequential steps",
+    "zh-CN": "顺序步骤"
+  },
+  "common.parallel_tasks": {
+    "en": "Parallel tasks",
+    "zh-CN": "并行任务"
+  },
+  "common.script": {
+    "en": "Script",
+    "zh-CN": "脚本"
+  },
+  "common.steps": {
+    "en": "Steps",
+    "zh-CN": "步骤"
+  },
+  "common.plugin": {
+    "en": "Plugin",
+    "zh-CN": "插件"
+  },
+  "common.not_deleted": {
+    "en": "Not deleted",
+    "zh-CN": "未删除"
+  },
+  "common.deletion_result": {
+    "en": "Deletion result",
+    "zh-CN": "删除结果"
+  },
+  "common.controller_resource": {
+    "en": "Controller resource",
+    "zh-CN": "控制器资源"
+  },
+  "common.event_binding": {
+    "en": "Event binding",
+    "zh-CN": "事件绑定"
+  },
+  "common.task_result": {
+    "en": "Task result",
+    "zh-CN": "任务结果"
+  },
+  "common.controller_tasks": {
+    "en": "Controller tasks",
+    "zh-CN": "控制器任务"
+  },
+  "common.binding": {
+    "en": "Binding",
+    "zh-CN": "绑定"
+  },
+  "common.target_template": {
+    "en": "Target template",
+    "zh-CN": "目标模板"
+  },
+  "common.discriminator": {
+    "en": "Discriminator",
+    "zh-CN": "匹配条件"
+  },
+  "common.argument_mapping": {
+    "en": "Argument mapping",
+    "zh-CN": "参数映射"
+  },
+  "common.allow": {
+    "en": "Allow",
+    "zh-CN": "允许"
+  },
+  "common.schedule": {
+    "en": "Schedule",
+    "zh-CN": "调度计划"
+  },
+  "common.timezone": {
+    "en": "Timezone",
+    "zh-CN": "时区"
+  },
+  "common.controller_timezone": {
+    "en": "Controller timezone",
+    "zh-CN": "控制器时区"
+  },
+  "common.last_scheduled": {
+    "en": "Last scheduled",
+    "zh-CN": "上次调度"
+  },
+  "common.concurrency_policy": {
+    "en": "Concurrency policy",
+    "zh-CN": "并发策略"
+  },
+  "common.starting_deadline": {
+    "en": "Starting deadline",
+    "zh-CN": "启动期限"
+  },
+  "common.when_expression": {
+    "en": "When expression",
+    "zh-CN": "执行条件表达式"
+  },
+  "common.stop_expression": {
+    "en": "Stop expression",
+    "zh-CN": "停止条件表达式"
+  },
+  "common.active_workflows": {
+    "en": "Active workflows",
+    "zh-CN": "活跃工作流"
+  },
+  "common.successful_history_limit": {
+    "en": "Successful history limit",
+    "zh-CN": "成功记录保留数"
+  },
+  "common.failed_history_limit": {
+    "en": "Failed history limit",
+    "zh-CN": "失败记录保留数"
+  },
+  "common.retry_strategy": {
+    "en": "Retry strategy",
+    "zh-CN": "重试策略"
+  },
+  "common.parallelism": {
+    "en": "Parallelism",
+    "zh-CN": "并行度"
+  },
+  "common.unknown_curve": {
+    "en": "Unknown curve",
+    "zh-CN": "未知曲线"
+  },
+  "common.subject_alternative_name": {
+    "en": "Subject Alternative Name",
+    "zh-CN": "主题备用名称"
+  },
+  "common.key_usage": {
+    "en": "Key Usage",
+    "zh-CN": "密钥用法"
+  },
+  "common.any": {
+    "en": "Any",
+    "zh-CN": "任意"
+  },
+  "common.tls_server_authentication": {
+    "en": "TLS server authentication",
+    "zh-CN": "TLS 服务端认证"
+  },
+  "common.tls_client_authentication": {
+    "en": "TLS client authentication",
+    "zh-CN": "TLS 客户端认证"
+  },
+  "common.code_signing": {
+    "en": "Code signing",
+    "zh-CN": "代码签名"
+  },
+  "common.email_protection": {
+    "en": "Email protection",
+    "zh-CN": "电子邮件保护"
+  },
+  "common.time_stamping": {
+    "en": "Time stamping",
+    "zh-CN": "时间戳签名"
+  },
+  "common.ocsp_signing": {
+    "en": "OCSP signing",
+    "zh-CN": "OCSP 签名"
+  },
+  "common.extended_key_usage": {
+    "en": "Extended Key Usage",
+    "zh-CN": "扩展密钥用法"
+  },
+  "common.basic_constraints": {
+    "en": "Basic Constraints",
+    "zh-CN": "基本约束"
+  },
+  "common.subject_key_identifier": {
+    "en": "Subject Key Identifier",
+    "zh-CN": "主题密钥标识符"
+  },
+  "common.authority_key_identifier": {
+    "en": "Authority Key Identifier",
+    "zh-CN": "签发者密钥标识符"
+  },
+  "common.no_key_identifier": {
+    "en": "No key identifier",
+    "zh-CN": "没有密钥标识符"
+  },
+  "common.certificate_policies": {
+    "en": "Certificate Policies",
+    "zh-CN": "证书策略"
+  },
+  "common.issuer_alternative_name": {
+    "en": "Issuer Alternative Name",
+    "zh-CN": "签发者备用名称"
+  },
+  "common.authority_information_access": {
+    "en": "Authority Information Access",
+    "zh-CN": "签发者信息访问"
+  },
+  "common.crl_distribution_points": {
+    "en": "CRL Distribution Points",
+    "zh-CN": "CRL 分发点"
+  },
+  "common.elliptic_curve": {
+    "en": "Elliptic curve",
+    "zh-CN": "椭圆曲线"
+  },
+  "common.plain_text": {
+    "en": "Plain text",
+    "zh-CN": "纯文本"
+  },
+  "common.nodes": {
+    "en": "Nodes",
+    "zh-CN": "节点"
+  },
+  "common.pods": {
+    "en": "Pods",
+    "zh-CN": "Pod"
+  },
+  "common.ready_bf89d101": {
+    "en": "● Ready",
+    "zh-CN": "● 就绪"
+  },
+  "common.notready": {
+    "en": "● NotReady",
+    "zh-CN": "● 未就绪"
+  },
+  "common.server": {
+    "en": "Server",
+    "zh-CN": "服务器"
+  },
+  "common.cloud": {
+    "en": "Cloud",
+    "zh-CN": "云"
+  },
+  "common.shield": {
+    "en": "Shield",
+    "zh-CN": "盾牌"
+  },
+  "common.1_resource": {
+    "en": "1 resource",
+    "zh-CN": "1 个资源"
+  },
+  "common.background": {
+    "en": "Background",
+    "zh-CN": "背景"
+  },
+  "common.foreground": {
+    "en": "Foreground",
+    "zh-CN": "前景"
+  },
+  "common.primary": {
+    "en": "Primary",
+    "zh-CN": "主要"
+  },
+  "common.secondary": {
+    "en": "Secondary",
+    "zh-CN": "次要"
+  },
+  "common.hover": {
+    "en": "Hover",
+    "zh-CN": "悬停"
+  },
+  "common.button": {
+    "en": "Button",
+    "zh-CN": "按钮"
+  },
+  "common.tab": {
+    "en": "Tab",
+    "zh-CN": "标签页"
+  },
+  "common.scrollbar": {
+    "en": "Scrollbar",
+    "zh-CN": "滚动条"
+  },
+  "common.thumb": {
+    "en": "Thumb",
+    "zh-CN": "滑块"
+  },
+  "common.track": {
+    "en": "Track",
+    "zh-CN": "轨道"
+  },
+  "common.input": {
+    "en": "Input",
+    "zh-CN": "输入框"
+  },
+  "common.header": {
+    "en": "Header",
+    "zh-CN": "头部"
+  },
+  "common.footer": {
+    "en": "Footer",
+    "zh-CN": "底部"
+  },
+  "common.surface": {
+    "en": "Surface",
+    "zh-CN": "表面"
+  },
+  "common.selected": {
+    "en": "Selected",
+    "zh-CN": "选中"
+  },
+  "common.debug_pod": {
+    "en": "Debug Pod",
+    "zh-CN": "调试 Pod"
+  },
+  "common.rules": {
+    "en": "Rules",
+    "zh-CN": "规则"
+  },
+  "common.resource_backend": {
+    "en": "Resource backend",
+    "zh-CN": "资源后端"
   }
 }

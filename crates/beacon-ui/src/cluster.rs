@@ -1006,7 +1006,13 @@ impl ClusterView {
                 .detach();
             }
             Err(error) => {
-                self.outcome = Some(Outcome::Failed(format!("Could not open usage: {error}")));
+                self.outcome = Some(Outcome::Failed(
+                    crate::i18n::message(
+                        "messages.could_not_open_usage_error",
+                        &[("error", (error).to_string())],
+                    )
+                    .to_string(),
+                ));
                 cx.notify();
             }
         }
@@ -1018,7 +1024,13 @@ impl ClusterView {
         cx: &mut Context<Self>,
     ) {
         if let Err(error) = crate::global_search::toggle_resource(favorite, cx) {
-            self.outcome = Some(Outcome::Failed(format!("Could not save favorite: {error}")));
+            self.outcome = Some(Outcome::Failed(
+                crate::i18n::message(
+                    "messages.could_not_save_favorite_error",
+                    &[("error", (error).to_string())],
+                )
+                .to_string(),
+            ));
         }
         cx.notify();
     }
@@ -1198,15 +1210,9 @@ impl ClusterView {
                             });
                         }
                         view.outcome = Some(if *failed == 0 {
-                            Outcome::Done(format!(
-                                "Restart requested for {} Deployments",
-                                restarted.len()
-                            ))
+                            Outcome::Done(crate::i18n::message("messages.restart_requested_for_deployments", &[("value0", (restarted.len()).to_string())]).to_string())
                         } else {
-                            Outcome::Failed(format!(
-                                "Restart requested for {}; {failed} failed. See restart results.",
-                                restarted.len()
-                            ))
+                            Outcome::Failed(crate::i18n::message("messages.restart_requested_for_failed_failed_see_restart_results", &[("value0", (restarted.len()).to_string()), ("failed", (failed).to_string())]).to_string())
                         });
                     }
                 }
@@ -1461,9 +1467,13 @@ impl ClusterView {
             self.reveal(&target, window, cx);
         } else if listed {
             self.pending_reveal = None;
-            self.outcome = Some(Outcome::Failed(format!(
-                "Owner {target} is no longer available"
-            )));
+            self.outcome = Some(Outcome::Failed(
+                crate::i18n::message(
+                    "messages.owner_target_is_no_longer_available",
+                    &[("target", (target).to_string())],
+                )
+                .to_string(),
+            ));
             cx.notify();
         }
     }
@@ -2309,7 +2319,7 @@ impl ClusterView {
                             div()
                                 .w(px(110.))
                                 .text_color(cx.theme().tone(tone))
-                                .child(release.status.clone()),
+                                .child(crate::i18n::text(&release.status)),
                         )
                         .child(
                             div()
@@ -2387,7 +2397,7 @@ impl ClusterView {
                     .small()
                     .color(cx.theme().tone(Tone::Progressing)),
             )
-            .child(message.into())
+            .child(crate::i18n::text(message.into()))
             .into_any_element()
     }
 
@@ -2471,8 +2481,20 @@ impl ClusterView {
                             .dropdown_caret(true)
                             .max_w(px(180.))
                     })
-                    .accessibility_label(format!("Namespace: {}", self.scope_label()))
-                    .tooltip(format!("Namespace: {}", self.scope_label())),
+                    .accessibility_label(
+                        crate::i18n::message(
+                            "messages.namespace",
+                            &[("value0", (self.scope_label()).to_string())],
+                        )
+                        .to_string(),
+                    )
+                    .tooltip(
+                        crate::i18n::message(
+                            "messages.namespace",
+                            &[("value0", (self.scope_label()).to_string())],
+                        )
+                        .to_string(),
+                    ),
             )
             .content(move |_, _, cx| {
                 let everything = selected.is_empty();
@@ -2490,7 +2512,13 @@ impl ClusterView {
                     let toggled = name.clone();
                     let tick = checkbox(SharedString::from(format!("ns-tick-{name}")))
                         .checked(ticked)
-                        .accessibility_label(format!("Include namespace {name}"))
+                        .accessibility_label(
+                            crate::i18n::message(
+                                "messages.include_namespace_name",
+                                &[("name", (name).to_string())],
+                            )
+                            .to_string(),
+                        )
                         .tooltip(crate::i18n::text("Add or remove this namespace"))
                         .on_click(move |_, window, cx| {
                             let toggled = toggled.to_string();
@@ -2504,7 +2532,13 @@ impl ClusterView {
                     let label = div()
                         .id(SharedString::from(format!("ns-only-{name}")))
                         .role(Role::Button)
-                        .aria_label(format!("Only namespace {name}"))
+                        .aria_label(
+                            crate::i18n::message(
+                                "messages.only_namespace_name",
+                                &[("name", (name).to_string())],
+                            )
+                            .to_string(),
+                        )
                         .test_support()
                         .flex_1()
                         .min_w_0()
@@ -2610,9 +2644,13 @@ impl ClusterView {
                 }
             }
             Err(error) => {
-                self.label_error = Some(format!(
-                    "Invalid label selector: {error} The current filter is unchanged."
-                ))
+                self.label_error = Some(
+                    crate::i18n::message(
+                        "messages.invalid_label_selector_error_the_current_filter_is_unchanged",
+                        &[("error", (error).to_string())],
+                    )
+                    .to_string(),
+                )
             }
         }
         cx.notify();
@@ -2637,9 +2675,13 @@ impl ClusterView {
                 self.apply_label_filter(false, window, cx);
             }
             Err(error) => {
-                self.label_error = Some(format!(
-                    "Invalid label selector: {error} The current filter is unchanged."
-                ));
+                self.label_error = Some(
+                    crate::i18n::message(
+                        "messages.invalid_label_selector_error_the_current_filter_is_unchanged",
+                        &[("error", (error).to_string())],
+                    )
+                    .to_string(),
+                );
                 cx.notify();
             }
         }
@@ -2686,7 +2728,7 @@ impl ClusterView {
             .trigger(
                 toolbar::filter_button("label-filter-trigger", gpui_kit::assets::IconName::Tags,
                     if layout == toolbar::Layout::Minimal { if selector.is_empty() { "All".into() } else { selector.len().to_string() } }
-                    else if selector.is_empty() { "Labels: All".into() } else { format!("Labels: {}", selector.len()) },
+                    else if selector.is_empty() { "Labels: All".into() } else { crate::i18n::message("messages.labels", &[("value0", (selector.len()).to_string())]).to_string() },
                     !selector.is_empty(), cx)
                     .accessibility_label(if selected.is_empty() { "Labels: All".into() } else { format!("Labels: {selected}") })
                     .tooltip(if selected.is_empty() { "Filter resources by labels".into() } else { selected }),
@@ -2702,7 +2744,7 @@ impl ClusterView {
                 } else if matching.is_empty() {
                     Some("No matching labels.".to_string())
                 } else if matching.len() > 200 {
-                    Some(format!("Showing 200 of {} matching labels. Refine your search to find more.", matching.len()))
+                    Some(crate::i18n::message("messages.showing_200_of_matching_labels_refine_your_search_to_find_more", &[("value0", (matching.len()).to_string())]).to_string())
                 } else {
                     None
                 };
@@ -2906,10 +2948,13 @@ impl Render for ClusterView {
                 .gap_3()
                 .p_8()
                 .child(
-                    div()
-                        .text_sm()
-                        .font_weight(FontWeight::SEMIBOLD)
-                        .child(format!("Connected to {}", self.session.id().display_name())),
+                    div().text_sm().font_weight(FontWeight::SEMIBOLD).child(
+                        crate::i18n::message(
+                            "messages.connected_to",
+                            &[("value0", (self.session.id().display_name()).to_string())],
+                        )
+                        .to_string(),
+                    ),
                 )
                 .child(
                     div()

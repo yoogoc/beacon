@@ -194,10 +194,13 @@ impl RelatedView {
             self.stores[index] = ResourceStore::new();
             let Some(kind) = self.sources[index].kind.clone() else {
                 self.sources[index].listed = true;
-                self.sources[index].error = Some(format!(
-                    "{} is not available for listing in this cluster.",
-                    self.sources[index].name
-                ));
+                self.sources[index].error = Some(
+                    crate::i18n::message(
+                        "messages.is_not_available_for_listing_in_this_cluster",
+                        &[("value0", (self.sources[index].name).to_string())],
+                    )
+                    .to_string(),
+                );
                 continue;
             };
             self.sources[index].error = None;
@@ -309,11 +312,11 @@ fn render_related_group(
             .p_3()
             .text_sm()
             .text_color(cx.theme().muted_foreground)
-            .child(if table.total() > 0 {
+            .child(crate::i18n::text(if table.total() > 0 {
                 "No related resources match the search."
             } else {
                 "No related resources found."
-            })
+            }))
             .test_support()
             .into_any_element()
     } else {
@@ -370,7 +373,7 @@ impl Render for RelatedView {
                         div()
                             .text_xs()
                             .text_color(cx.theme().muted_foreground)
-                            .child(self.relationship.description()),
+                            .child(crate::i18n::text(self.relationship.description())),
                     )
                     .child(
                         h_flex()

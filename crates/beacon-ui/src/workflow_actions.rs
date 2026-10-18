@@ -55,9 +55,8 @@ impl WorkflowActions {
         cx: &mut Context<Self>,
     ) -> Self {
         let namespace = cx.new(|cx| {
-            InputState::new(window, cx)
+            crate::i18n::input("Target namespace", window, cx)
                 .default_value(target.namespace.as_deref().unwrap_or("default"))
-                .placeholder("Target namespace")
         });
         let subscriptions = vec![cx.subscribe(&namespace, |_, _, _: &InputEvent, cx| cx.notify())];
         let mut view = Self {
@@ -256,10 +255,13 @@ impl WorkflowActions {
                 && field.input.read(cx).value().is_empty()
                 && !field.allow_empty
         }) {
-            self.error = Some(format!(
-                "Provide a value for {} before reviewing.",
-                field.definition.name
-            ));
+            self.error = Some(
+                crate::i18n::message(
+                    "messages.provide_a_value_for_before_reviewing",
+                    &[("value0", (field.definition.name).to_string())],
+                )
+                .to_string(),
+            );
             cx.notify();
             return;
         }
@@ -382,24 +384,40 @@ impl Render for WorkflowActions {
             if plan.action.creates() {
                 content = content.child(copyable_text(
                     "workflow-created-target",
-                    format!(
-                        "New Workflow · {}/{}<generated>",
-                        plan.proposed["metadata"]["namespace"]
-                            .as_str()
-                            .unwrap_or(""),
-                        plan.proposed["metadata"]["generateName"]
-                            .as_str()
-                            .unwrap_or("")
-                    ),
+                    crate::i18n::message(
+                        "messages.new_workflow_generated",
+                        &[
+                            (
+                                "value0",
+                                (plan.proposed["metadata"]["namespace"]
+                                    .as_str()
+                                    .unwrap_or(""))
+                                .to_string(),
+                            ),
+                            (
+                                "value1",
+                                (plan.proposed["metadata"]["generateName"]
+                                    .as_str()
+                                    .unwrap_or(""))
+                                .to_string(),
+                            ),
+                        ],
+                    )
+                    .to_string(),
                 ));
                 content = content.child(copyable_text(
                     "workflow-reviewed-entrypoint",
-                    format!(
-                        "Entrypoint · {}",
-                        plan.proposed["spec"]["entrypoint"]
-                            .as_str()
-                            .unwrap_or("Template default")
-                    ),
+                    crate::i18n::message(
+                        "messages.entrypoint",
+                        &[(
+                            "value0",
+                            (plan.proposed["spec"]["entrypoint"]
+                                .as_str()
+                                .unwrap_or("Template default"))
+                            .to_string(),
+                        )],
+                    )
+                    .to_string(),
                 ));
             }
             for (index, field) in self.fields.iter().enumerate() {
@@ -431,10 +449,13 @@ impl Render for WorkflowActions {
             }
             if self.action == Action::Retry {
                 content = content.child(
-                    div()
-                        .text_sm()
-                        .font_weight(FontWeight::SEMIBOLD)
-                        .child(format!("Pods to delete ({})", plan.pods.len())),
+                    div().text_sm().font_weight(FontWeight::SEMIBOLD).child(
+                        crate::i18n::message(
+                            "messages.pods_to_delete",
+                            &[("value0", (plan.pods.len()).to_string())],
+                        )
+                        .to_string(),
+                    ),
                 );
                 if plan.pods.is_empty() {
                     content = content.child(
@@ -506,11 +527,11 @@ impl Render for WorkflowActions {
             }
             if !self.fields.is_empty() {
                 content = content.child(div().text_sm().font_weight(FontWeight::SEMIBOLD).child(
-                    if self.action == Action::Resume {
+                    crate::i18n::text(if self.action == Action::Resume {
                         "Suspend step outputs"
                     } else {
                         "Runtime parameters"
-                    },
+                    }),
                 ));
             }
             for (index, field) in self.fields.iter().enumerate() {
@@ -580,7 +601,16 @@ impl Render for WorkflowActions {
                         div()
                             .text_xs()
                             .text_color(cx.theme().muted_foreground)
-                            .child(format!("Allowed: {}", field.definition.choices.join(", "))),
+                            .child(
+                                crate::i18n::message(
+                                    "messages.allowed",
+                                    &[(
+                                        "value0",
+                                        (field.definition.choices.join(", ")).to_string(),
+                                    )],
+                                )
+                                .to_string(),
+                            ),
                     );
                 }
                 content = content.child(row);
@@ -622,7 +652,7 @@ impl Render for WorkflowActions {
                                 div()
                                     .text_lg()
                                     .font_weight(FontWeight::SEMIBOLD)
-                                    .child(self.action.label()),
+                                    .child(crate::i18n::text(self.action.label())),
                             )
                             .child(
                                 div()
@@ -648,7 +678,7 @@ impl Render for WorkflowActions {
                         div()
                             .text_sm()
                             .text_color(cx.theme().muted_foreground)
-                            .child(self.description()),
+                            .child(crate::i18n::text(self.description())),
                     ),
             )
             .child(
@@ -733,11 +763,11 @@ impl Render for WorkflowActions {
                         Button::new("workflow-confirm")
                             .primary()
                             .small()
-                            .label(if reviewed {
+                            .label(crate::i18n::text(if reviewed {
                                 self.action.label()
                             } else {
                                 "Review operation"
-                            })
+                            }))
                             .disabled(disabled || self.source.is_none())
                             .on_click(cx.listener(|view, _, window, cx| {
                                 if view.plan.is_some() {

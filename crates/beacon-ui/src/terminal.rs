@@ -662,7 +662,7 @@ impl TerminalView {
                 Button::new("start-shell")
                     .primary()
                     .small()
-                    .label(label)
+                    .label(crate::i18n::text(label))
                     .on_click(cx.listener(|view, _, window, cx| view.start(window, cx))),
             )
     }

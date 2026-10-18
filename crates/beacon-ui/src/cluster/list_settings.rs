@@ -464,7 +464,7 @@ impl ClusterView {
                             .when(active, |row| row.bg(cx.theme().muted.opacity(0.6)))
                             .child(Button::new(SharedString::from(format!("apply-filter-{name}")))
                                 .small().ghost().flex_1().min_w_0().h_auto().px_2().py_2()
-                                .accessibility_label(format!("Apply filter {name}"))
+                                .accessibility_label(crate::i18n::message("messages.apply_filter_name", &[("name", (name).to_string())]).to_string())
                                 .tooltip(summary.clone())
                                 .child(h_flex().w_full().min_w_0().items_center().gap_2()
                                     .child(Icon::new(Glyph::Bookmark).size(px(14.))
@@ -486,7 +486,7 @@ impl ClusterView {
                                 .xsmall().ghost().mr_1()
                                 .icon(Icon::new(Glyph::Trash).size(px(14.)))
                                 .text_color(cx.theme().muted_foreground)
-                                .accessibility_label(format!("Delete filter {name}"))
+                                .accessibility_label(crate::i18n::message("messages.delete_filter_name", &[("name", (name).to_string())]).to_string())
                                 .tooltip(crate::i18n::text("Delete saved filter"))
                                 .on_click(move |_, _, cx| {
                                     let _ = removing.update(cx, |view, cx| view.remove_filter_preset(&removed, cx));
@@ -568,10 +568,22 @@ fn filter_summary(preset: &FilterPreset, namespaced: bool) -> String {
     };
     let mut parts = vec![scope];
     if !preset.search.is_empty() {
-        parts.push(format!("Search: {}", preset.search));
+        parts.push(
+            crate::i18n::message(
+                "messages.search",
+                &[("value0", (preset.search).to_string())],
+            )
+            .to_string(),
+        );
     }
     if !preset.labels.is_empty() {
-        parts.push(format!("Labels: {}", preset.labels));
+        parts.push(
+            crate::i18n::message(
+                "messages.labels",
+                &[("value0", (preset.labels).to_string())],
+            )
+            .to_string(),
+        );
     }
     parts.extend(
         preset

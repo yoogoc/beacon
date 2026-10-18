@@ -13,7 +13,7 @@ fn action(id: &'static str, icon: IconName, label: &'static str) -> Button {
         .small()
         .ghost()
         .icon(Icon::new(icon).size(px(15.)))
-        .accessibility_label(label)
+        .accessibility_label(crate::i18n::text(label))
         .tooltip(crate::i18n::text(label))
 }
 
@@ -67,7 +67,7 @@ fn empty_state(icon: IconName, title: &str, hint: &str, cx: &App) -> AnyElement 
             div()
                 .max_w(px(300.))
                 .text_color(cx.theme().muted_foreground)
-                .child(hint.to_owned()),
+                .child(crate::i18n::text(hint)),
         )
         .into_any_element()
 }
@@ -551,12 +551,29 @@ impl FilesView {
                     .text_size(cx.theme().font_size * 0.75)
                     .text_color(cx.theme().table_foot_foreground)
                     .child(if count == total {
-                        format!("{total} items")
+                        crate::i18n::message(
+                            "display.total_items",
+                            &[("total", (total).to_string())],
+                        )
+                        .to_string()
                     } else {
-                        format!("{count} of {total} items")
+                        crate::i18n::message(
+                            "display.count_of_total_items",
+                            &[
+                                ("count", (count).to_string()),
+                                ("total", (total).to_string()),
+                            ],
+                        )
+                        .to_string()
                     })
                     .when(!self.selected.is_empty(), |bar| {
-                        bar.child(format!("· {} selected", self.selected.len()))
+                        bar.child(
+                            crate::i18n::message(
+                                "display.selected_inline",
+                                &[("value0", (self.selected.len()).to_string())],
+                            )
+                            .to_string(),
+                        )
                     })
                     .child(div().flex_1())
                     .when(self.listing.as_ref().is_some_and(|l| !l.writable), |bar| {
@@ -768,7 +785,12 @@ impl FilesView {
                     .bg(cx.theme().tokens.muted)
                     .text_color(cx.theme().muted_foreground)
                     .child(Icon::new(IconName::Info).size(px(14.)))
-                    .child(div().flex_1().min_w_0().child(copyable_text(id, message))),
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .child(copyable_text(id, crate::i18n::text(message))),
+                    ),
             );
         }
         if let Some(link) = &entry.link {
@@ -790,10 +812,14 @@ impl FilesView {
                     .flex_shrink_0()
                     .child(Icon::new(IconName::Link).size(px(14.)))
                     .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .child(copyable_text("symlink-target", format!("Target: {link}"))),
+                        div().flex_1().min_w_0().child(copyable_text(
+                            "symlink-target",
+                            crate::i18n::message(
+                                "display.target_link",
+                                &[("link", (link).to_string())],
+                            )
+                            .to_string(),
+                        )),
                     )
                     .child(
                         action(
@@ -952,8 +978,10 @@ impl Render for FilesView {
                             .child(
                                 Select::new(&self.picker)
                                     .small()
-                                    .search_placeholder("Search running containers")
-                                    .title_prefix("Container: ")
+                                    .search_placeholder(crate::i18n::text(
+                                        "Search running containers",
+                                    ))
+                                    .title_prefix(crate::i18n::text("Container: "))
                                     .disabled(self.containers.is_empty() || self.busy || dirty),
                             ),
                     ),
@@ -962,7 +990,7 @@ impl Render for FilesView {
                 h_flex()
                     .id("files-toolbar")
                     .role(Role::Toolbar)
-                    .aria_label("File operations")
+                    .aria_label(crate::i18n::text("File operations"))
                     .test_support()
                     .w_full()
                     .px_3()
@@ -1077,7 +1105,13 @@ impl Render for FilesView {
                                 .rounded(px(4.))
                                 .bg(cx.theme().tokens.muted)
                                 .text_color(cx.theme().muted_foreground)
-                                .child(format!("{} selected", self.selected.len())),
+                                .child(
+                                    crate::i18n::message(
+                                        "display.selected",
+                                        &[("value0", (self.selected.len()).to_string())],
+                                    )
+                                    .to_string(),
+                                ),
                         )
                     }),
             )

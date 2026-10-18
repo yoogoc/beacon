@@ -369,7 +369,7 @@ impl Permissions {
                 .unwrap_or_default();
             (identity, catalog.errors, grants)
         });
-        self._load=Some(cx.spawn_in(window,async move|view,cx| {let result=task.result().await;let _=view.update(cx,|view,cx|{view.loading=false;match result {Ok((identity,errors,grants))=>{view.errors=errors;match identity {Ok(identity)=>view.identity=Some(identity),Err(error)=>view.errors.push(format!("Identity could not be read: {error}. Can I can still query the current user."))}view.grants=grants;},Err(error)=>view.errors.push(error.to_string())}view.filter(cx);cx.notify();});}));
+        self._load=Some(cx.spawn_in(window,async move|view,cx| {let result=task.result().await;let _=view.update(cx,|view,cx|{view.loading=false;match result {Ok((identity,errors,grants))=>{view.errors=errors;match identity {Ok(identity)=>view.identity=Some(identity),Err(error)=>view.errors.push(crate::i18n::message("messages.identity_could_not_be_read_error_can_i_can_still_query_the_current_user", &[("error", (error).to_string())]).to_string())}view.grants=grants;},Err(error)=>view.errors.push(error.to_string())}view.filter(cx);cx.notify();});}));
         cx.notify();
     }
     fn check(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -417,9 +417,14 @@ impl Permissions {
                         }
                         (answer.allowed, text)
                     }
-                    Ok(Err(error)) => {
-                        (false, format!("Permission could not be evaluated: {error}"))
-                    }
+                    Ok(Err(error)) => (
+                        false,
+                        crate::i18n::message(
+                            "messages.permission_could_not_be_evaluated_error",
+                            &[("error", (error).to_string())],
+                        )
+                        .to_string(),
+                    ),
                     Err(error) => (false, error.to_string()),
                 });
                 cx.notify();
@@ -525,15 +530,22 @@ impl Permissions {
                     .text_color(cx.theme().muted_foreground)
                     .child(copyable_text(
                         ("permission-match", row),
-                        format!(
-                            "{} · applies in {}",
-                            grant.matched_subjects.join(", "),
-                            grant
-                                .binding
-                                .namespace
-                                .as_deref()
-                                .unwrap_or("all namespaces and cluster scope")
-                        ),
+                        crate::i18n::message(
+                            "messages.applies_in",
+                            &[
+                                ("value0", (grant.matched_subjects.join(", ")).to_string()),
+                                (
+                                    "value1",
+                                    (grant
+                                        .binding
+                                        .namespace
+                                        .as_deref()
+                                        .unwrap_or("all namespaces and cluster scope"))
+                                    .to_string(),
+                                ),
+                            ],
+                        )
+                        .to_string(),
                     )),
             )
             .when(grant.missing, |view| {
@@ -600,17 +612,17 @@ impl Render for Permissions {
         v_flex().size_full().min_size_0().bg(cx.theme().background).text_color(cx.theme().foreground).on_action(|_:&crate::app::CloseTab,window,_|window.remove_window())
             .child(TitleBar::new().child(crate::i18n::text("Permissions")))
             .child(v_flex().p_4().gap_2().border_b_1().border_color(cx.theme().border)
-                .child(h_flex().gap_1().children(modes.into_iter().enumerate().map(|(index,(mode,label))|Button::new(("permission-subject-mode",index)).ghost().small().label(label).selected(self.mode==mode).on_click(cx.listener(move|view,_,_,cx|{view.mode=mode;view.invalidate(cx);})))) )
+                .child(h_flex().gap_1().children(modes.into_iter().enumerate().map(|(index,(mode,label))|Button::new(("permission-subject-mode",index)).ghost().small().label(crate::i18n::text(label)).selected(self.mode==mode).on_click(cx.listener(move|view,_,_,cx|{view.mode=mode;view.invalidate(cx);})))) )
                 .when(self.mode!=Mode::Current,|view|view.child(h_flex().gap_2().child(div().flex_1().child(Input::new(&self.name).small())).when(self.mode==Mode::ServiceAccount,|row|row.child(div().flex_1().child(Input::new(&self.sa_namespace).small())))))
                 .when(self.mode==Mode::User,|view|view.child(Input::new(&self.groups).small()))
                 .child(h_flex().gap_2().items_center().child(div().flex_1().child(Input::new(&self.namespace).small())).child(Button::new("permission-inspect").small().outline().label(crate::i18n::text(if self.loading{"Loading…"}else{"Inspect bindings"})).disabled(self.loading).on_click(cx.listener(|view,_,window,cx|view.inspect(window,cx)))))
                 .child(h_flex().gap_2().child(div().w(px(140.)).child(Select::new(&self.verb).small())).child(div().flex_1().min_w_0().child(Select::new(&self.resource).small())))
-                .child(h_flex().gap_2().child(div().flex_1().child(Input::new(&self.subresource).small())).child(div().flex_1().child(Input::new(&self.object_name).small())).child(Button::new("permission-can-i").small().primary().label(if self.checking{"Checking…"}else{"Can I?"}).disabled(self.checking).on_click(cx.listener(|view,_,window,cx|view.check(window,cx)))))
+                .child(h_flex().gap_2().child(div().flex_1().child(Input::new(&self.subresource).small())).child(div().flex_1().child(Input::new(&self.object_name).small())).child(Button::new("permission-can-i").small().primary().label(crate::i18n::text(if self.checking{"Checking…"}else{"Can I?"})).disabled(self.checking).on_click(cx.listener(|view,_,window,cx|view.check(window,cx)))))
                 .child(div().text_xs().text_color(cx.theme().muted_foreground).child(crate::i18n::text("Can I uses the API server. Other subjects require SubjectAccessReview permission. User groups must be entered explicitly; Group queries test that group's grants."))))
             .when_some(self.answer.as_ref(),|view,(allowed,message)|view.child(div().id("permission-answer").test_support().px_4().py_2().text_sm().text_color(if *allowed{cx.theme().success}else{cx.theme().warning}).child(copyable_text("permission-answer-text",message.clone()))))
             .when(!self.errors.is_empty(),|view|view.child(v_flex().id("permission-errors").max_h(px(140.)).overflow_y_scroll().children(self.errors.iter().enumerate().map(|(index,error)|div().id(("permission-error",index)).test_support().px_4().py_1().text_xs().text_color(cx.theme().warning).child(copyable_text(("permission-error-text",index),error.clone()))))))
-            .child(v_flex().px_4().py_2().gap_1().child(div().text_xs().text_color(cx.theme().muted_foreground).child(if self.dirty{"Inspect bindings to refresh this subject and scope.".into()}else{format!("{} matching bindings · RBAC sources only; other authorizers may affect Can I",self.visible.len())})).child(Input::new(&self.search).small()))
-            .child(div().flex_1().min_size_0().when(self.visible.is_empty(),|view|view.child(div().id("permission-empty").test_support().p_4().text_sm().text_color(cx.theme().muted_foreground).child(if self.loading{"Loading RBAC sources…"}else if self.identity.is_none()||!self.errors.is_empty(){"Bindings could not be fully checked. Review the messages above."}else{"No matching bindings in this scope."})))
+            .child(v_flex().px_4().py_2().gap_1().child(div().text_xs().text_color(cx.theme().muted_foreground).child(if self.dirty{"Inspect bindings to refresh this subject and scope.".into()}else{crate::i18n::message("messages.matching_bindings_rbac_sources_only_other_authorizers_may_affect_can_i", &[("value0", (self.visible.len()).to_string())]).to_string()})).child(Input::new(&self.search).small()))
+            .child(div().flex_1().min_size_0().when(self.visible.is_empty(),|view|view.child(div().id("permission-empty").test_support().p_4().text_sm().text_color(cx.theme().muted_foreground).child(crate::i18n::text(if self.loading{"Loading RBAC sources…"}else if self.identity.is_none()||!self.errors.is_empty(){"Bindings could not be fully checked. Review the messages above."}else{"No matching bindings in this scope."}))))
                 .when(!self.visible.is_empty(),|view|view.child(list(self.list.clone(),cx.processor(|view,row,_,cx|view.render_grant(row,cx))).size_full())))
     }
 }

@@ -1,0 +1,707 @@
+{
+  "_version": 2,
+  "messages.backend": {
+    "en": "Backend: %{value0}:%{value1}",
+    "zh-CN": "后端：%{value0}:%{value1}"
+  },
+  "messages.watches": {
+    "en": "Watches (%{value0})",
+    "zh-CN": "监听（%{value0}）"
+  },
+  "messages.collapse": {
+    "en": "Collapse %{value0}",
+    "zh-CN": "折叠 %{value0}"
+  },
+  "messages.remove": {
+    "en": "Remove %{value0}",
+    "zh-CN": "移除 %{value0}"
+  },
+  "messages.prometheus_is_reachable_resource_samples_for": {
+    "en": "Prometheus is reachable: %{value0} resource samples for %{value1}.",
+    "zh-CN": "Prometheus 可连接：%{value0} 个资源样本，范围为 %{value1}。"
+  },
+  "messages.label_theme": {
+    "en": "%{label} theme",
+    "zh-CN": "%{label} 主题"
+  },
+  "messages.label_cluster_icon": {
+    "en": "%{label} cluster icon",
+    "zh-CN": "%{label} 集群图标"
+  },
+  "messages.version": {
+    "en": "Version %{value0}",
+    "zh-CN": "版本 %{value0}"
+  },
+  "messages.cannot_be_listed": {
+    "en": "%{value0} cannot be listed.",
+    "zh-CN": "无法列出 %{value0}。"
+  },
+  "messages.was_not_found_in_this_namespace": {
+    "en": "%{value0} %{value1} was not found in this namespace.",
+    "zh-CN": "此命名空间内未找到 %{value0} %{value1}。"
+  },
+  "messages.could_not_open_the_save_dialog_error": {
+    "en": "Could not open the save dialog: %{error}",
+    "zh-CN": "无法打开保存对话框：%{error}"
+  },
+  "messages.could_not_download_logs_to_error": {
+    "en": "Could not download logs to %{value0}: %{error}",
+    "zh-CN": "无法下载日志至 %{value0}：%{error}"
+  },
+  "messages.downloading_logs_for_container": {
+    "en": "Downloading logs for %{container}…",
+    "zh-CN": "正在下载 %{container} 的日志…"
+  },
+  "messages.saved_logs_to_bytes_bytes": {
+    "en": "Saved logs to %{value0} (%{bytes} bytes)",
+    "zh-CN": "日志已保存至 %{value0}（%{bytes} 字节）"
+  },
+  "messages.count_total_lines_ended": {
+    "en": "%{count}/%{total} lines · ended",
+    "zh-CN": "%{count}/%{total} 行 · 已结束"
+  },
+  "messages.count_total_lines": {
+    "en": "%{count}/%{total} lines",
+    "zh-CN": "%{count}/%{total} 行"
+  },
+  "messages.count_total_lines_dropped_older_dropped": {
+    "en": "%{count}/%{total} lines · %{dropped} older dropped",
+    "zh-CN": "%{count}/%{total} 行 · 已移除 %{dropped} 行较早日志"
+  },
+  "messages.pods_loading": {
+    "en": "%{value0} Pods · Loading…",
+    "zh-CN": "%{value0} 个 Pod · 正在加载…"
+  },
+  "messages.pods": {
+    "en": "%{value0} Pods",
+    "zh-CN": "%{value0} 个 Pod"
+  },
+  "messages.count_disruptions_allowed": {
+    "en": "%{count} disruptions allowed",
+    "zh-CN": "允许中断 %{count} 个"
+  },
+  "messages.pods_on_this_node_daemonset_and_mirror_pods_are_kept": {
+    "en": "%{value0} Pods on this Node · DaemonSet and mirror Pods are kept",
+    "zh-CN": "此节点有 %{value0} 个 Pod · 保留 DaemonSet 和镜像 Pod"
+  },
+  "messages.server_validation_remains_available_error": {
+    "en": "Server validation remains available.\n%{error}",
+    "zh-CN": "仍可使用服务端验证。\n%{error}"
+  },
+  "messages.local_warnings": {
+    "en": "%{value0} local warnings",
+    "zh-CN": "%{value0} 条本地警告"
+  },
+  "messages.summary_advisory_only_the_api_server_validates_saves": {
+    "en": "%{summary} · Advisory only; the API server validates saves.",
+    "zh-CN": "%{summary} · 仅供参考，保存时由 API 服务器验证。"
+  },
+  "messages.line": {
+    "en": "Line %{value0}",
+    "zh-CN": "第 %{value0} 行"
+  },
+  "messages.show_all_messages": {
+    "en": "Show all %{value0} messages",
+    "zh-CN": "显示全部 %{value0} 条提示"
+  },
+  "messages.could_not_choose_a_folder_other": {
+    "en": "Could not choose a folder: %{other}",
+    "zh-CN": "无法选择目录：%{other}"
+  },
+  "messages.saved_count_files_to": {
+    "en": "Saved %{count} files to %{value0}%{value1}",
+    "zh-CN": "已将 %{count} 个文件保存至 %{value0}%{value1}"
+  },
+  "messages.generated_name": {
+    "en": "%{value0} (generated name)",
+    "zh-CN": "%{value0}（自动生成名称）"
+  },
+  "messages.create": {
+    "en": "Create %{value0}",
+    "zh-CN": "创建 %{value0}"
+  },
+  "messages.cluster": {
+    "en": "Cluster: %{value0} · %{value1} · %{value2}",
+    "zh-CN": "集群：%{value0} · %{value1} · %{value2}"
+  },
+  "messages.this_is_not_valid_yaml_error": {
+    "en": "This is not valid YAML: %{error}",
+    "zh-CN": "无效的 YAML：%{error}"
+  },
+  "messages.template_template_was_not_found_in_the_referenced_resource": {
+    "en": "Template %{template} was not found in the referenced resource.",
+    "zh-CN": "引用的资源中未找到模板 %{template}。"
+  },
+  "messages.name_resource_duration": {
+    "en": "%{name} resource duration",
+    "zh-CN": "%{name} 资源时长"
+  },
+  "messages.since_time_server_timestamps_available_container_logs": {
+    "en": "Since %{time} · server timestamps · available container logs",
+    "zh-CN": "自 %{time} 起 · 服务器时间 · 可用容器日志"
+  },
+  "messages.server_timestamps_available_container_logs": {
+    "en": "%{value0} → %{value1} · server timestamps · available container logs",
+    "zh-CN": "%{value0} → %{value1} · 服务器时间 · 可用容器日志"
+  },
+  "messages.choose_where_to_export_count_matching_retained_lines": {
+    "en": "Choose where to export %{count} matching retained lines…",
+    "zh-CN": "选择位置以导出 %{count} 行匹配的保留日志…"
+  },
+  "messages.exported_count_matching_retained_lines_to": {
+    "en": "Exported %{count} matching retained lines to %{value0}",
+    "zh-CN": "已将 %{count} 行匹配的保留日志导出至 %{value0}"
+  },
+  "messages.could_not_choose_an_export_file_other": {
+    "en": "Could not choose an export file: %{other}",
+    "zh-CN": "无法选择导出文件：%{other}"
+  },
+  "messages.fields": {
+    "en": "Fields%{value0}",
+    "zh-CN": "字段%{value0}"
+  },
+  "messages.bookmarks_bookmark_count": {
+    "en": "Bookmarks %{bookmark_count}",
+    "zh-CN": "收藏 %{bookmark_count}"
+  },
+  "messages.node_details_name": {
+    "en": "Node details: %{name}",
+    "zh-CN": "节点详情：%{name}"
+  },
+  "messages.view_all": {
+    "en": "View all (%{value0})",
+    "zh-CN": "查看全部（%{value0}）"
+  },
+  "messages.job_status_error": {
+    "en": "Job status: %{error}",
+    "zh-CN": "Job 状态：%{error}"
+  },
+  "messages.new_job_generated": {
+    "en": "New Job: %{value0}<generated>",
+    "zh-CN": "新 Job：%{value0}<自动生成>"
+  },
+  "messages.provide_a_value_for_before_reviewing": {
+    "en": "Provide a value for %{value0} before reviewing.",
+    "zh-CN": "审阅前请填写 %{value0}。"
+  },
+  "messages.new_workflow_generated": {
+    "en": "New Workflow · %{value0}/%{value1}<generated>",
+    "zh-CN": "新工作流 · %{value0}/%{value1}<自动生成>"
+  },
+  "messages.entrypoint": {
+    "en": "Entrypoint · %{value0}",
+    "zh-CN": "入口 · %{value0}"
+  },
+  "messages.pods_to_delete": {
+    "en": "Pods to delete (%{value0})",
+    "zh-CN": "待删除的 Pod（%{value0}）"
+  },
+  "messages.allowed": {
+    "en": "Allowed: %{value0}",
+    "zh-CN": "可选值：%{value0}"
+  },
+  "messages.matches_connected_clusters_kinds_could_not_be_read": {
+    "en": "%{value0} matches · %{value1} connected clusters · %{value2} kinds could not be read",
+    "zh-CN": "%{value0} 个匹配项 · %{value1} 个已连接集群 · %{value2} 种资源无法读取"
+  },
+  "messages.active_workflow_s": {
+    "en": "%{value0} active workflow(s)",
+    "zh-CN": "%{value0} 个活跃工作流"
+  },
+  "messages.created_ago": {
+    "en": "Created %{value0} ago",
+    "zh-CN": "创建于 %{value0}前"
+  },
+  "messages.ca_certificate": {
+    "en": "CA certificate %{value0}",
+    "zh-CN": "CA 证书 %{value0}"
+  },
+  "messages.chain_certificate": {
+    "en": "Chain certificate %{value0}",
+    "zh-CN": "证书链证书 %{value0}"
+  },
+  "messages.bits_bits": {
+    "en": "%{bits} bits",
+    "zh-CN": "%{bits} 位"
+  },
+  "messages.extensions": {
+    "en": "Extensions · %{value0}",
+    "zh-CN": "扩展 · %{value0}"
+  },
+  "messages.critical": {
+    "en": "%{value0} · critical",
+    "zh-CN": "%{value0} · 关键扩展"
+  },
+  "messages.show_more": {
+    "en": "Show %{value0} more",
+    "zh-CN": "再显示 %{value0} 项"
+  },
+  "messages.restarts": {
+    "en": "%{value0} restarts",
+    "zh-CN": "%{value0} 次重启"
+  },
+  "messages.edited_modified_deleted_review_before_saving": {
+    "en": "%{edited} modified · %{value0} deleted · Review before saving",
+    "zh-CN": "已修改 %{edited} 项 · 已删除 %{value0} 项 · 保存前请审阅"
+  },
+  "messages.server_side_apply_field_manager": {
+    "en": "Server-Side Apply · field manager “%{value0}”",
+    "zh-CN": "服务端应用 · 字段管理者“%{value0}”"
+  },
+  "messages.not_applied": {
+    "en": "Not applied — %{value0}",
+    "zh-CN": "未应用 — %{value0}"
+  },
+  "messages.yours_value": {
+    "en": "yours: %{value}",
+    "zh-CN": "你的值：%{value}"
+  },
+  "messages.ago": {
+    "en": "%{value0} ago",
+    "zh-CN": "%{value0}前"
+  },
+  "messages.running_for": {
+    "en": "Running for %{value0}",
+    "zh-CN": "已运行 %{value0}"
+  },
+  "messages.could_not_write_the_yaml_back_out_error": {
+    "en": "Could not write the YAML back out: %{error}",
+    "zh-CN": "无法重新生成 YAML：%{error}"
+  },
+  "messages.identity_could_not_be_read_error_can_i_can_still_query_the_current_user": {
+    "en": "Identity could not be read: %{error}. Can I can still query the current user.",
+    "zh-CN": "无法读取身份：%{error}。仍可通过权限检查查询当前用户。"
+  },
+  "messages.permission_could_not_be_evaluated_error": {
+    "en": "Permission could not be evaluated: %{error}",
+    "zh-CN": "无法评估权限：%{error}"
+  },
+  "messages.applies_in": {
+    "en": "%{value0} · applies in %{value1}",
+    "zh-CN": "%{value0} · 生效范围：%{value1}"
+  },
+  "messages.matching_bindings_rbac_sources_only_other_authorizers_may_affect_can_i": {
+    "en": "%{value0} matching bindings · RBAC sources only; other authorizers may affect Can I",
+    "zh-CN": "%{value0} 个匹配绑定 · 仅 RBAC 来源，其他授权器也可能影响权限检查结果"
+  },
+  "messages.successful_requested_failed_failed_rollouts_continue_in_the_deployment_controller": {
+    "en": "%{successful} requested · %{failed} failed. Rollouts continue in the Deployment controller.",
+    "zh-CN": "已请求 %{successful} 个 · 失败 %{failed} 个。Deployment 控制器将继续执行滚动更新。"
+  },
+  "messages.restarting_deployments": {
+    "en": "Restarting %{value0} Deployments…",
+    "zh-CN": "正在重启 %{value0} 个 Deployment…"
+  },
+  "messages.restart_deployments": {
+    "en": "Restart %{value0} Deployments?",
+    "zh-CN": "重启 %{value0} 个 Deployment？"
+  },
+  "messages.context": {
+    "en": "Context: %{value0}",
+    "zh-CN": "上下文：%{value0}"
+  },
+  "messages.clusters": {
+    "en": "Clusters (%{value0})",
+    "zh-CN": "集群（%{value0}）"
+  },
+  "messages.kubernetes_files": {
+    "en": "%{value0} · Kubernetes %{value1} · Files",
+    "zh-CN": "%{value0} · Kubernetes %{value1} · 文件"
+  },
+  "messages.restart_requested_for_deployments": {
+    "en": "Restart requested for %{value0} Deployments",
+    "zh-CN": "已请求重启 %{value0} 个 Deployment"
+  },
+  "messages.restart_requested_for_failed_failed_see_restart_results": {
+    "en": "Restart requested for %{value0}; %{failed} failed. See restart results.",
+    "zh-CN": "已请求重启 %{value0} 个；%{failed} 个失败，请查看重启结果。"
+  },
+  "messages.owner_target_is_no_longer_available": {
+    "en": "Owner %{target} is no longer available",
+    "zh-CN": "所属资源 %{target} 已不可用"
+  },
+  "messages.namespace": {
+    "en": "Namespace: %{value0}",
+    "zh-CN": "命名空间：%{value0}"
+  },
+  "messages.include_namespace_name": {
+    "en": "Include namespace %{name}",
+    "zh-CN": "包含命名空间 %{name}"
+  },
+  "messages.only_namespace_name": {
+    "en": "Only namespace %{name}",
+    "zh-CN": "仅此命名空间 %{name}"
+  },
+  "messages.invalid_label_selector_error_the_current_filter_is_unchanged": {
+    "en": "Invalid label selector: %{error} The current filter is unchanged.",
+    "zh-CN": "标签选择器无效：%{error}。当前筛选保持不变。"
+  },
+  "messages.labels": {
+    "en": "Labels: %{value0}",
+    "zh-CN": "标签：%{value0}"
+  },
+  "messages.showing_200_of_matching_labels_refine_your_search_to_find_more": {
+    "en": "Showing 200 of %{value0} matching labels. Refine your search to find more.",
+    "zh-CN": "显示前 200 个匹配标签（共 %{value0} 个），可继续搜索缩小范围。"
+  },
+  "messages.connected_to": {
+    "en": "Connected to %{value0}",
+    "zh-CN": "已连接至 %{value0}"
+  },
+  "messages.revision": {
+    "en": "Revision %{value0} · %{value1} · %{value2}",
+    "zh-CN": "版本 %{value0} · %{value1} · %{value2}"
+  },
+  "messages.revision_unreadable": {
+    "en": "Revision %{value0} · Unreadable",
+    "zh-CN": "版本 %{value0} · 无法读取"
+  },
+  "messages.restart_s_observed_at_refresh_exact_restart_time_unavailable": {
+    "en": "%{value0} · +%{value1} restart(s); observed at refresh, exact restart time unavailable.",
+    "zh-CN": "%{value0} · 新增 %{value1} 次重启；刷新时检测到，确切重启时间未知。"
+  },
+  "messages.latest_sample": {
+    "en": "Latest sample · %{value0}",
+    "zh-CN": "最新样本 · %{value0}"
+  },
+  "messages.restarts_total_restarts_count_markers_in_range": {
+    "en": "%{restarts} total restarts · %{count} markers in range",
+    "zh-CN": "累计重启 %{restarts} 次 · 范围内 %{count} 个标记"
+  },
+  "messages.available": {
+    "en": "Available %{value0} — %{value1}",
+    "zh-CN": "可用 %{value0} — %{value1}"
+  },
+  "messages.apply_filter_name": {
+    "en": "Apply filter %{name}",
+    "zh-CN": "应用筛选 %{name}"
+  },
+  "messages.delete_filter_name": {
+    "en": "Delete filter %{name}",
+    "zh-CN": "删除筛选 %{name}"
+  },
+  "messages.search": {
+    "en": "Search: %{value0}",
+    "zh-CN": "搜索：%{value0}"
+  },
+  "messages.retrying_target_error": {
+    "en": "Retrying target: %{error}",
+    "zh-CN": "正在重试目标：%{error}"
+  },
+  "messages.local_127_0_0_1": {
+    "en": "Local · 127.0.0.1:%{value0}",
+    "zh-CN": "本地 · 127.0.0.1:%{value0}"
+  },
+  "messages.create_from_yaml": {
+    "en": "Create %{value0} from YAML",
+    "zh-CN": "通过 YAML 创建 %{value0}"
+  },
+  "messages.does_not_support_creation": {
+    "en": "%{value0} does not support creation",
+    "zh-CN": "%{value0} 不支持创建"
+  },
+  "messages.shown_of_total": {
+    "en": "%{shown} of %{total}",
+    "zh-CN": "%{shown} / %{total}"
+  },
+  "messages.total_resources_loaded_loading_more": {
+    "en": "%{total} resources loaded; loading more",
+    "zh-CN": "已加载 %{total} 个资源，正在继续加载"
+  },
+  "messages.count_resources": {
+    "en": "%{count} resources",
+    "zh-CN": "%{count} 个资源"
+  },
+  "messages.reset_to_base_color": {
+    "en": "Reset %{value0} to base color",
+    "zh-CN": "将%{value0}重置为基础颜色"
+  },
+  "messages.what_s_new_in": {
+    "en": "What's new in %{value0}",
+    "zh-CN": "%{value0} 的更新内容"
+  },
+  "messages.open": {
+    "en": "Open %{value0}%{value1}",
+    "zh-CN": "打开 %{value0}%{value1}"
+  },
+  "messages.remove_name": {
+    "en": "Remove %{name}?",
+    "zh-CN": "移除 %{name}？"
+  },
+  "messages.enable": {
+    "en": "Enable %{value0}",
+    "zh-CN": "启用 %{value0}"
+  },
+  "messages.files": {
+    "en": "%{value0} files · %{value1} · %{value2}",
+    "zh-CN": "%{value0} 个文件 · %{value1} · %{value2}"
+  },
+  "messages.source": {
+    "en": "Source %{value0}",
+    "zh-CN": "来源 %{value0}"
+  },
+  "messages.group": {
+    "en": "Group %{value0}",
+    "zh-CN": "分组 %{value0}"
+  },
+  "messages.helm_release": {
+    "en": "%{value0} Helm release",
+    "zh-CN": "%{value0} Helm 发布"
+  },
+  "messages.review_a_rollback_to_stored_revision_number_this_creates_a_new_revision_existing_history_is_preserved": {
+    "en": "Review a rollback to stored revision %{number}. This creates a new revision; existing history is preserved.",
+    "zh-CN": "审阅回滚至已保存的版本 %{number}。此操作会创建新版本，保留已有历史。"
+  },
+  "messages.running_for_seconds": {
+    "en": "Running for %{value0} seconds",
+    "zh-CN": "已运行 %{value0} 秒"
+  },
+  "messages.confirm": {
+    "en": "Confirm %{value0}",
+    "zh-CN": "确认%{value0}"
+  },
+  "messages.revision_number_is_not_available_helm_may_have_pruned_its_history_refresh_to_read_the_current_revisions": {
+    "en": "Revision %{number} is not available. Helm may have pruned its history; refresh to read the current revisions.",
+    "zh-CN": "版本 %{number} 不可用，可能已被 Helm 清理。请刷新以读取当前版本。"
+  },
+  "messages.warning_event": {
+    "en": "Warning event: %{value0}",
+    "zh-CN": "警告事件：%{value0}"
+  },
+  "messages.capacity": {
+    "en": "Capacity %{value0}",
+    "zh-CN": "总容量 %{value0}"
+  },
+  "messages.capacity_pods": {
+    "en": "Capacity %{value0} Pods",
+    "zh-CN": "总容量 %{value0} 个 Pod"
+  },
+  "messages.duration_elapsed": {
+    "en": "%{duration} elapsed",
+    "zh-CN": "已用时 %{duration}"
+  },
+  "messages.succeeded": {
+    "en": "%{value0} / %{value1} succeeded",
+    "zh-CN": "%{value0} / %{value1} 个成功"
+  },
+  "messages.ready": {
+    "en": "%{value0} ready",
+    "zh-CN": "%{value0} 就绪"
+  },
+  "messages.ready_ratio": {
+    "en": "%{value0}/%{value1} ready",
+    "zh-CN": "%{value0}/%{value1} 就绪"
+  },
+  "messages.is_not_available_in_this_cluster_choose_another_connected_cluster": {
+    "en": "%{value0} is not available in this cluster. Choose another connected cluster.",
+    "zh-CN": "此集群不支持 %{value0}，请选择其他已连接的集群。"
+  },
+  "messages.no_other_resources_in_this_namespace_try_another_namespace_or_cluster": {
+    "en": "No other %{value0} resources in this namespace. Try another namespace or cluster.",
+    "zh-CN": "此命名空间没有其他 %{value0} 资源，请尝试其他命名空间或集群。"
+  },
+  "messages.could_not_list_resources_enter_a_namespace_and_name_to_compare_directly_error": {
+    "en": "Could not list resources. Enter a namespace and name to compare directly. %{error}",
+    "zh-CN": "无法列出资源，可直接输入命名空间和名称进行对比。%{error}"
+  },
+  "messages.could_not_read_the_source": {
+    "en": "Could not read the source: %{value0}",
+    "zh-CN": "无法读取来源资源：%{value0}"
+  },
+  "messages.could_not_read_the_target": {
+    "en": "Could not read the target: %{value0}",
+    "zh-CN": "无法读取目标资源：%{value0}"
+  },
+  "messages.changed_fields": {
+    "en": "%{value0} changed fields",
+    "zh-CN": "%{value0} 个变更字段"
+  },
+  "messages.invalid_regular_expression_error": {
+    "en": "Invalid regular expression: %{error}",
+    "zh-CN": "正则表达式无效：%{error}"
+  },
+  "messages.forward_port_port": {
+    "en": "Forward port %{port}",
+    "zh-CN": "转发端口 %{port}"
+  },
+  "messages.forward_port_remote_port": {
+    "en": "Forward port %{remote_port}",
+    "zh-CN": "转发端口 %{remote_port}"
+  },
+  "messages.forward_port_port_prompt": {
+    "en": "Forward port %{port}…",
+    "zh-CN": "转发端口 %{port}…"
+  },
+  "messages.actions_for": {
+    "en": "Actions for %{value0}",
+    "zh-CN": "%{value0} 的操作"
+  },
+  "messages.move_the_text_cursor": {
+    "en": "Move the text cursor: %{value0}.",
+    "zh-CN": "移动文字光标：%{value0}。"
+  },
+  "messages.extend_the_text_selection": {
+    "en": "Extend the text selection: %{value0}.",
+    "zh-CN": "扩展文字选区：%{value0}。"
+  },
+  "messages.delete_text_from_the_cursor_to": {
+    "en": "Delete text from the cursor to %{value0}.",
+    "zh-CN": "从光标处删除文字至%{value0}。"
+  },
+  "messages.uploaded_to_path": {
+    "en": "Uploaded to %{path}",
+    "zh-CN": "已上传至 %{path}"
+  },
+  "messages.saved_count_bytes_to": {
+    "en": "Saved %{count} bytes to %{value0}",
+    "zh-CN": "已将 %{count} 字节保存至 %{value0}"
+  },
+  "messages.unsaved_file_or_active_file_operation": {
+    "en": "%{value0}: unsaved file or active file operation",
+    "zh-CN": "%{value0}：有未保存的文件或正在进行的文件操作"
+  },
+  "messages.is_not_available_for_listing_in_this_cluster": {
+    "en": "%{value0} is not available for listing in this cluster.",
+    "zh-CN": "此集群无法列出 %{value0}。"
+  },
+  "messages.name_is_not_available_for_listing_in_this_cluster": {
+    "en": "%{name} is not available for listing in this cluster.",
+    "zh-CN": "此集群无法列出 %{name}。"
+  },
+  "messages.network_view_is_incomplete_error": {
+    "en": "Network view is incomplete. %{error}",
+    "zh-CN": "网络视图不完整。%{error}"
+  },
+  "messages.expires_in": {
+    "en": "Expires in %{value0}",
+    "zh-CN": "将在 %{value0}后到期"
+  },
+  "messages.not_expired_days_days_remaining": {
+    "en": "Not expired · %{days} days remaining",
+    "zh-CN": "未过期 · 剩余 %{days} 天"
+  },
+  "messages.roll_back_to_revision": {
+    "en": "Roll back to revision %{value0}",
+    "zh-CN": "回滚至版本 %{value0}"
+  },
+  "messages.roll_back_to_revision_context": {
+    "en": "%{value0} · %{value1}/%{value2} · Roll back to revision %{value3}",
+    "zh-CN": "%{value0} · %{value1}/%{value2} · 回滚至版本 %{value3}"
+  },
+  "messages.could_not_refresh_cluster_overview_error": {
+    "en": "Could not refresh cluster overview: %{error}",
+    "zh-CN": "无法刷新集群概览：%{error}"
+  },
+  "messages.could_not_refresh_metrics_error": {
+    "en": "Could not refresh metrics: %{error}",
+    "zh-CN": "无法刷新指标：%{error}"
+  },
+  "messages.could_not_open_usage_error": {
+    "en": "Could not open usage: %{error}",
+    "zh-CN": "无法打开引用情况：%{error}"
+  },
+  "messages.could_not_save_favorite_error": {
+    "en": "Could not save favorite: %{error}",
+    "zh-CN": "无法保存收藏：%{error}"
+  },
+  "messages.unknown_theme_color_role": {
+    "en": "Unknown theme color: %{role}",
+    "zh-CN": "未知主题颜色：%{role}"
+  },
+  "messages.role_use_a_hex_color_such_as_3b82f6": {
+    "en": "%{role}: use a hex color such as #3B82F6.",
+    "zh-CN": "%{role}：请使用十六进制颜色，例如 #3B82F6。"
+  },
+  "messages.source_removed_but_its_saved_copy_could_not_be_deleted_error": {
+    "en": "Source removed, but its saved copy could not be deleted: %{error}",
+    "zh-CN": "来源已移除，但无法删除已保存的副本：%{error}"
+  },
+  "messages.sources_available_contexts": {
+    "en": "%{value0} sources · %{value1} available contexts",
+    "zh-CN": "%{value0} 个来源 · %{value1} 个可用上下文"
+  },
+  "messages.could_not_save_the_preset_error_the_listener_was_stopped_retry_without_saving_or_fix_the_config_folder": {
+    "en": "Could not save the preset: %{error}. The listener was stopped; retry without saving or fix the config folder.",
+    "zh-CN": "无法保存预设：%{error}。监听已停止，请取消保存后重试，或修复配置目录。"
+  },
+  "messages.you_do_not_have_on_argoproj_io_workflows_in_this_namespace": {
+    "en": "You do not have %{value0} on argoproj.io/workflows in this namespace",
+    "zh-CN": "你没有此命名空间中 argoproj.io/workflows 的 %{value0} 权限"
+  },
+  "messages.you_do_not_have_on_in": {
+    "en": "You do not have %{value0} on %{value1} in %{value2}",
+    "zh-CN": "你没有在%{value2}对%{value1}执行%{value0}的权限"
+  },
+  "messages.apply_or_discard_these_edits_before_installing": {
+    "en": "Apply or discard these edits before installing:\n\n%{value0}",
+    "zh-CN": "安装前请先应用或放弃下列修改：\n\n%{value0}"
+  },
+  "messages.install_beacon_and_restart_active_shell_command_session_s_and_port_forward_s_will_stop_clusters_will_stay_disconnected_after_restart": {
+    "en": "Install Beacon %{value0} and restart?\n\n%{value1} active shell/command session(s) and %{value2} port forward(s) will stop. Clusters will stay disconnected after restart.",
+    "zh-CN": "安装 Beacon %{value0} 并重启？\n\n将停止 %{value1} 个终端 / 命令会话和 %{value2} 个端口转发，重启后集群保持断开状态。"
+  },
+  "messages.pods_sources_lines_dropped": {
+    "en": "%{value0} Pods · %{value1} sources · %{value2} lines · %{value3} dropped",
+    "zh-CN": "%{value0} 个 Pod · %{value1} 个来源 · %{value2} 行 · 已移除 %{value3} 行"
+  },
+  "display.total_items": {
+    "en": "%{total} items",
+    "zh-CN": "%{total} 项"
+  },
+  "display.count_of_total_items": {
+    "en": "%{count} of %{total} items",
+    "zh-CN": "%{count} / %{total} 项"
+  },
+  "display.selected_inline": {
+    "en": "· %{value0} selected",
+    "zh-CN": "· 已选择 %{value0} 项"
+  },
+  "display.selected": {
+    "en": "%{value0} selected",
+    "zh-CN": "已选择 %{value0} 项"
+  },
+  "display.target_link": {
+    "en": "Target: %{link}",
+    "zh-CN": "目标：%{link}"
+  },
+  "display.failed_failed_running_running": {
+    "en": "%{failed} failed · %{running} running",
+    "zh-CN": "失败 %{failed} 个 · 运行中 %{running} 个"
+  },
+  "display.nodes_failed_failed": {
+    "en": "%{value0} nodes · %{failed} failed",
+    "zh-CN": "%{value0} 个节点 · 失败 %{failed} 个"
+  },
+  "display.nodes_running_running": {
+    "en": "%{value0} nodes · %{running} running",
+    "zh-CN": "%{value0} 个节点 · 运行中 %{running} 个"
+  },
+  "display.nodes": {
+    "en": "%{value0} nodes",
+    "zh-CN": "%{value0} 个节点"
+  },
+  "display.nodes_phase": {
+    "en": "%{value0} nodes · %{phase}",
+    "zh-CN": "%{value0} 个节点 · %{phase}"
+  },
+  "display.reading_n_nodes": {
+    "en": "Reading %{n} nodes…",
+    "zh-CN": "正在读取 %{n} 个节点…"
+  },
+  "display.count_objects": {
+    "en": "%{count} objects",
+    "zh-CN": "%{count} 个资源"
+  },
+  "display.objects_subscribers": {
+    "en": "%{objects} · %{value0} subscribers",
+    "zh-CN": "%{objects} · %{value0} 个订阅者"
+  },
+  "display.labels_selector": {
+    "en": "Labels: %{selector}",
+    "zh-CN": "标签：%{selector}"
+  },
+  "display.fields_selector": {
+    "en": "Fields: %{selector}",
+    "zh-CN": "字段：%{selector}"
+  }
+}

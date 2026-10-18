@@ -99,5 +99,1317 @@
   "tools.until_rfc3339_optional": {
     "en": "Until · RFC3339 (optional)",
     "zh-CN": "结束时间 · RFC3339（可选）"
+  },
+  "tools.inspect_fields_and_raw_log": {
+    "en": "Inspect fields and raw log",
+    "zh-CN": "查看字段与原始日志"
+  },
+  "tools.bookmark_this_log_line": {
+    "en": "Bookmark this log line",
+    "zh-CN": "收藏此日志行"
+  },
+  "tools.close_the_pod_tools_panel": {
+    "en": "Close the Pod tools panel",
+    "zh-CN": "关闭 Pod 工具面板"
+  },
+  "tools.container": {
+    "en": "Container: ",
+    "zh-CN": "容器："
+  },
+  "tools.log_container": {
+    "en": "Log container",
+    "zh-CN": "日志容器"
+  },
+  "tools.search_containers": {
+    "en": "Search containers",
+    "zh-CN": "搜索容器"
+  },
+  "tools.search_running_containers": {
+    "en": "Search running containers",
+    "zh-CN": "搜索运行中的容器"
+  },
+  "tools.pause_follow": {
+    "en": "Pause follow",
+    "zh-CN": "暂停跟随"
+  },
+  "tools.resume_follow": {
+    "en": "Resume follow",
+    "zh-CN": "恢复跟随"
+  },
+  "tools.pause_automatic_scrolling_logs_continue_to_arrive": {
+    "en": "Pause automatic scrolling; logs continue to arrive",
+    "zh-CN": "暂停自动滚动，继续接收日志"
+  },
+  "tools.timestamps": {
+    "en": "Timestamps",
+    "zh-CN": "时间戳"
+  },
+  "tools.export_this_container_s_complete_available_logs_for_the_time_range_ignores_local_filters_choose_a_folder_and_filename": {
+    "en": "Export this container's complete available logs for the time range; ignores local filters. Choose a folder and filename",
+    "zh-CN": "导出此容器在所选时间范围内所有可用日志，忽略本地筛选。可选择目录和文件名"
+  },
+  "tools.copy_matching_retained_raw_log_lines_selected_display_fields_do_not_remove_original_data": {
+    "en": "Copy matching retained raw log lines; selected display fields do not remove original data",
+    "zh-CN": "复制当前保留且符合筛选的原始日志行，显示字段设置不会移除原始数据"
+  },
+  "tools.search_time_ranges": {
+    "en": "Search time ranges",
+    "zh-CN": "搜索时间范围"
+  },
+  "tools.last_hour": {
+    "en": "Last hour",
+    "zh-CN": "最近一小时"
+  },
+  "tools.custom_range": {
+    "en": "Custom range",
+    "zh-CN": "自定义时间范围"
+  },
+  "tools.logs": {
+    "en": "Logs",
+    "zh-CN": "日志"
+  },
+  "tools.exec": {
+    "en": "Exec",
+    "zh-CN": "执行命令"
+  },
+  "tools.shell": {
+    "en": "Shell",
+    "zh-CN": "终端"
+  },
+  "tools.choose_a_folder_and_filename_in_the_save_dialog": {
+    "en": "Choose a folder and filename in the save dialog.",
+    "zh-CN": "请在保存对话框中选择目录和文件名。"
+  },
+  "tools.cancelling_log_download": {
+    "en": "Cancelling log download…",
+    "zh-CN": "正在取消日志下载…"
+  },
+  "tools.log_download_cancelled": {
+    "en": "Log download cancelled.",
+    "zh-CN": "已取消日志下载。"
+  },
+  "tools.a_pod_outside_a_namespace_has_no_logs": {
+    "en": "A pod outside a namespace has no logs.",
+    "zh-CN": "未指定命名空间的 Pod 无法读取日志。"
+  },
+  "tools.opening_the_stream": {
+    "en": "Opening the stream…",
+    "zh-CN": "正在打开日志流…"
+  },
+  "tools.nothing_logged_yet": {
+    "en": "Nothing logged yet.",
+    "zh-CN": "暂无日志。"
+  },
+  "tools.no_log_lines_match_this_search": {
+    "en": "No log lines match this search.",
+    "zh-CN": "没有符合搜索条件的日志行。"
+  },
+  "tools.you_may_not_exec_into_pods_in_this_namespace_check_get_and_create_on_pods_exec": {
+    "en": "You may not exec into pods in this namespace: check `get` and `create` on `pods/exec`.",
+    "zh-CN": "没有在此命名空间执行 Pod 命令的权限，请检查 pods/exec 的 get 和 create 权限。"
+  },
+  "tools.a_pod_outside_a_namespace_has_no_shell": {
+    "en": "A pod outside a namespace has no shell.",
+    "zh-CN": "未指定命名空间的 Pod 无法打开终端。"
+  },
+  "tools.you_may_not_run_commands_in_pods_here_check_get_and_create_on_pods_exec": {
+    "en": "You may not run commands in pods here: check `get` and `create` on `pods/exec`.",
+    "zh-CN": "没有在此 Pod 执行命令的权限，请检查 pods/exec 的 get 和 create 权限。"
+  },
+  "tools.runs_one_command_and_shows_its_output_use_shell_for_an_interactive_session": {
+    "en": "Runs one command and shows its output. Use Shell for an interactive session.",
+    "zh-CN": "执行一条命令并显示输出。交互式会话请使用终端。"
+  },
+  "tools.running": {
+    "en": "Running…",
+    "zh-CN": "正在运行…"
+  },
+  "tools.run": {
+    "en": "Run",
+    "zh-CN": "运行"
+  },
+  "tools.no_output": {
+    "en": "(no output)",
+    "zh-CN": "（无输出）"
+  },
+  "tools.all_containers": {
+    "en": "All containers",
+    "zh-CN": "所有容器"
+  },
+  "tools.enter_a_label_selector_to_choose_the_pods_whose_logs_should_be_combined": {
+    "en": "Enter a label selector to choose the Pods whose logs should be combined.",
+    "zh-CN": "输入标签选择器，选择需要合并日志的 Pod。"
+  },
+  "tools.choose_a_folder_for_aggregated_logs": {
+    "en": "Choose a folder for aggregated logs",
+    "zh-CN": "选择聚合日志保存目录"
+  },
+  "tools.choose_a_download_folder": {
+    "en": "Choose a download folder…",
+    "zh-CN": "选择下载目录…"
+  },
+  "tools.download_cancelled": {
+    "en": "Download cancelled.",
+    "zh-CN": "已取消下载。"
+  },
+  "tools.downloading_complete_available_logs_for_each_source": {
+    "en": "Downloading complete available logs for each source…",
+    "zh-CN": "正在下载各来源的所有可用日志…"
+  },
+  "tools.download_cancelled_completed_files_remain_in_the_selected_folder": {
+    "en": "Download cancelled. Completed files remain in the selected folder.",
+    "zh-CN": "已取消下载，完成的文件保留在所选目录。"
+  },
+  "tools.app_logs_could_not_be_read": {
+    "en": "App logs could not be read.",
+    "zh-CN": "无法读取应用日志。"
+  },
+  "tools.reading_app_logs": {
+    "en": "Reading app logs…",
+    "zh-CN": "正在读取应用日志…"
+  },
+  "tools.no_app_logs_yet": {
+    "en": "No app logs yet.",
+    "zh-CN": "暂无应用日志。"
+  },
+  "tools.no_logs_match_the_filters": {
+    "en": "No logs match the filters.",
+    "zh-CN": "没有符合筛选条件的日志。"
+  },
+  "tools.all_levels": {
+    "en": "All levels",
+    "zh-CN": "所有级别"
+  },
+  "tools.warn_error": {
+    "en": "Warn + Error",
+    "zh-CN": "警告和错误"
+  },
+  "tools.service_port_tcp": {
+    "en": "Service port (TCP)",
+    "zh-CN": "服务端口（TCP）"
+  },
+  "tools.container_port_tcp": {
+    "en": "Container port (TCP)",
+    "zh-CN": "容器端口（TCP）"
+  },
+  "tools.finding_pod": {
+    "en": "Finding Pod…",
+    "zh-CN": "正在查找 Pod…"
+  },
+  "tools.check_target": {
+    "en": "Check target",
+    "zh-CN": "检查目标"
+  },
+  "tools.starting": {
+    "en": "Starting…",
+    "zh-CN": "正在启动…"
+  },
+  "tools.start_forwarding": {
+    "en": "Start forwarding",
+    "zh-CN": "开始转发"
+  },
+  "tools.local_port_must_be_0_65535_0_chooses_a_free_port": {
+    "en": "Local port must be 0–65535; 0 chooses a free port.",
+    "zh-CN": "本地端口必须在 0–65535 之间，0 表示自动选择空闲端口。"
+  },
+  "tools.remote_port_must_be_1_65535": {
+    "en": "Remote port must be 1–65535.",
+    "zh-CN": "远程端口必须在 1–65535 之间。"
+  },
+  "tools.target_lookup_timed_out": {
+    "en": "Target lookup timed out.",
+    "zh-CN": "查找目标超时。"
+  },
+  "tools.waiting_for_target": {
+    "en": "Waiting for target",
+    "zh-CN": "等待目标"
+  },
+  "tools.listening": {
+    "en": "Listening",
+    "zh-CN": "正在监听"
+  },
+  "tools.saved": {
+    "en": "Saved",
+    "zh-CN": "已保存"
+  },
+  "tools.restore": {
+    "en": "Restore",
+    "zh-CN": "恢复"
+  },
+  "tools.open_a_shell": {
+    "en": "Open a shell",
+    "zh-CN": "打开终端"
+  },
+  "tools.connecting_to_the_container": {
+    "en": "Connecting to the container…",
+    "zh-CN": "正在连接容器…"
+  },
+  "tools.the_shell_exited": {
+    "en": "The shell exited.",
+    "zh-CN": "终端会话已退出。"
+  },
+  "tools.copy_terminal_output": {
+    "en": "Copy terminal output",
+    "zh-CN": "复制终端输出"
+  },
+  "tools.waiting_for_the_debug_container": {
+    "en": "Waiting for the debug container…",
+    "zh-CN": "正在等待调试容器…"
+  },
+  "tools.creating_debug_container": {
+    "en": "Creating debug container…",
+    "zh-CN": "正在创建调试容器…"
+  },
+  "tools.container_created_waiting_for_it_to_start": {
+    "en": "Container created. Waiting for it to start…",
+    "zh-CN": "容器已创建，正在等待启动…"
+  },
+  "tools.open_debug_terminal": {
+    "en": "Open debug terminal",
+    "zh-CN": "打开调试终端"
+  },
+  "tools.create_and_open_terminal": {
+    "en": "Create and open terminal",
+    "zh-CN": "创建并打开终端"
+  },
+  "tools.file_operations": {
+    "en": "File operations",
+    "zh-CN": "文件操作"
+  },
+  "tools.no_retained_revisions_older_history_may_have_been_pruned_by_the_controller": {
+    "en": "No retained revisions. Older history may have been pruned by the controller.",
+    "zh-CN": "暂无保留的版本，较早的历史可能已被控制器清理。"
+  },
+  "tools.search_connected_clusters": {
+    "en": "Search connected clusters",
+    "zh-CN": "搜索已连接的集群"
+  },
+  "tools.target_cluster": {
+    "en": "Target cluster",
+    "zh-CN": "目标集群"
+  },
+  "tools.search_namespaces": {
+    "en": "Search namespaces",
+    "zh-CN": "搜索命名空间"
+  },
+  "tools.search_resource_names": {
+    "en": "Search resource names",
+    "zh-CN": "搜索资源名称"
+  },
+  "tools.target_resource": {
+    "en": "Target resource",
+    "zh-CN": "目标资源"
+  },
+  "tools.click_to_connect": {
+    "en": "Click to connect",
+    "zh-CN": "点击连接"
+  },
+  "tools.loading_metadata_from_connected_clusters": {
+    "en": "Loading metadata from connected clusters…",
+    "zh-CN": "正在读取已连接集群的资源信息…"
+  },
+  "tools.searching": {
+    "en": "Searching…",
+    "zh-CN": "正在搜索…"
+  },
+  "tools.connect_a_cluster_to_search_its_resources_favorites_are_saved_locally": {
+    "en": "Connect a cluster to search its resources. Favorites are saved locally.",
+    "zh-CN": "连接集群后可搜索资源，收藏保存在本地。"
+  },
+  "tools.no_resources_match_try_a_name_kind_namespace_or_label": {
+    "en": "No resources match. Try a name, kind, namespace or label.",
+    "zh-CN": "没有匹配的资源，请尝试名称、类型、命名空间或标签。"
+  },
+  "tools.inspect_bindings": {
+    "en": "Inspect bindings",
+    "zh-CN": "检查绑定"
+  },
+  "tools.checking": {
+    "en": "Checking…",
+    "zh-CN": "正在检查…"
+  },
+  "tools.can_i": {
+    "en": "Can I?",
+    "zh-CN": "检查权限"
+  },
+  "tools.enter_the_subject_name": {
+    "en": "Enter the subject name.",
+    "zh-CN": "请输入主体名称。"
+  },
+  "tools.enter_the_serviceaccount_namespace": {
+    "en": "Enter the ServiceAccount namespace.",
+    "zh-CN": "请输入 ServiceAccount 所在的命名空间。"
+  },
+  "tools.choose_a_resource": {
+    "en": "Choose a resource.",
+    "zh-CN": "请选择资源。"
+  },
+  "tools.resource_is_no_longer_available": {
+    "en": "Resource is no longer available.",
+    "zh-CN": "资源已不可用。"
+  },
+  "tools.choose_a_verb": {
+    "en": "Choose a verb.",
+    "zh-CN": "请选择操作动词。"
+  },
+  "tools.all_namespaces_and_cluster_scope": {
+    "en": "all namespaces and cluster scope",
+    "zh-CN": "所有命名空间和集群范围"
+  },
+  "tools.inspect_bindings_to_refresh_this_subject_and_scope": {
+    "en": "Inspect bindings to refresh this subject and scope.",
+    "zh-CN": "检查绑定以刷新此主体和范围。"
+  },
+  "tools.loading_rbac_sources": {
+    "en": "Loading RBAC sources…",
+    "zh-CN": "正在加载 RBAC 来源…"
+  },
+  "tools.bindings_could_not_be_fully_checked_review_the_messages_above": {
+    "en": "Bindings could not be fully checked. Review the messages above.",
+    "zh-CN": "未能完成全部绑定检查，请查看上方提示。"
+  },
+  "tools.no_matching_bindings_in_this_scope": {
+    "en": "No matching bindings in this scope.",
+    "zh-CN": "此范围内没有匹配的绑定。"
+  },
+  "tools.restarting": {
+    "en": "Restarting…",
+    "zh-CN": "正在重启…"
+  },
+  "tools.restart_requested": {
+    "en": "Restart requested",
+    "zh-CN": "已请求重启"
+  },
+  "tools.the_request_returned_no_result_refresh_before_retrying": {
+    "en": "The request returned no result. Refresh before retrying.",
+    "zh-CN": "请求未返回结果，请刷新后重试。"
+  },
+  "tools.the_deployments_below_will_restart_their_pods_using_their_current_update_strategy": {
+    "en": "The Deployments below will restart their Pods using their current update strategy.",
+    "zh-CN": "下列 Deployment 将按照各自的更新策略重启 Pod。"
+  },
+  "tools.restart_results": {
+    "en": "Restart results",
+    "zh-CN": "重启结果"
+  },
+  "tools.restart_deployments": {
+    "en": "Restart Deployments",
+    "zh-CN": "重启 Deployment"
+  },
+  "tools.the_job_was_replaced_open_jobs_to_inspect_the_new_resource": {
+    "en": "The Job was replaced. Open Jobs to inspect the new resource.",
+    "zh-CN": "此 Job 已被替换，请打开 Job 列表查看新资源。"
+  },
+  "tools.create_a_job_from_the_current_template_the_schedule_and_existing_jobs_are_unchanged_this_manual_run_can_overlap_scheduled_executions": {
+    "en": "Create a Job from the current template. The schedule and existing Jobs are unchanged. This manual run can overlap scheduled executions.",
+    "zh-CN": "从当前模板创建 Job，不改变计划和已有 Job。手动执行可能与计划任务重叠。"
+  },
+  "tools.create_a_new_job_with_fresh_pods_the_original_job_its_pods_and_execution_history_are_kept": {
+    "en": "Create a new Job with fresh Pods. The original Job, its Pods and execution history are kept.",
+    "zh-CN": "创建新的 Job 和 Pod，保留原 Job、Pod 及执行历史。"
+  },
+  "tools.pause_future_scheduled_executions_jobs_already_running_will_continue": {
+    "en": "Pause future scheduled executions. Jobs already running will continue.",
+    "zh-CN": "暂停后续计划任务，已运行的 Job 继续执行。"
+  },
+  "tools.resume_scheduled_executions_missed_schedules_may_start_immediately_depending_on_the_starting_deadline": {
+    "en": "Resume scheduled executions. Missed schedules may start immediately, depending on the starting deadline.",
+    "zh-CN": "恢复计划任务。根据启动期限，错过的任务可能立即开始。"
+  },
+  "tools.job_created": {
+    "en": "Job created",
+    "zh-CN": "Job 已创建"
+  },
+  "tools.schedule_updated": {
+    "en": "Schedule updated",
+    "zh-CN": "计划已更新"
+  },
+  "tools.rerun_as_a_new_job": {
+    "en": "Rerun as a new Job",
+    "zh-CN": "重新创建 Job 运行"
+  },
+  "tools.run_cronjob_now": {
+    "en": "Run CronJob now",
+    "zh-CN": "立即运行 CronJob"
+  },
+  "tools.create_job": {
+    "en": "Create Job",
+    "zh-CN": "创建 Job"
+  },
+  "tools.suspend_schedule": {
+    "en": "Suspend schedule",
+    "zh-CN": "暂停计划"
+  },
+  "tools.resume_schedule": {
+    "en": "Resume schedule",
+    "zh-CN": "恢复计划"
+  },
+  "tools.rerun_as_new_job": {
+    "en": "Rerun as new Job…",
+    "zh-CN": "重新创建 Job 运行…"
+  },
+  "tools.suspend_schedule_78cc9d23": {
+    "en": "Suspend schedule…",
+    "zh-CN": "暂停计划…"
+  },
+  "tools.resume_schedule_c13562b0": {
+    "en": "Resume schedule…",
+    "zh-CN": "恢复计划…"
+  },
+  "tools.schedule_suspended_existing_jobs_continue": {
+    "en": "Schedule suspended. Existing Jobs continue.",
+    "zh-CN": "计划已暂停，已有 Job 继续执行。"
+  },
+  "tools.schedule_resumed": {
+    "en": "Schedule resumed.",
+    "zh-CN": "计划已恢复。"
+  },
+  "tools.open_job": {
+    "en": "Open Job",
+    "zh-CN": "打开 Job"
+  },
+  "tools.open_cronjob": {
+    "en": "Open CronJob",
+    "zh-CN": "打开 CronJob"
+  },
+  "tools.done": {
+    "en": "Done",
+    "zh-CN": "完成"
+  },
+  "tools.never": {
+    "en": "Never",
+    "zh-CN": "从未"
+  },
+  "tools.no_matching_pdb": {
+    "en": "No matching PDB",
+    "zh-CN": "没有匹配的 PDB"
+  },
+  "tools.budget_information_unavailable": {
+    "en": "Budget information unavailable",
+    "zh-CN": "中断预算信息不可用"
+  },
+  "tools.unknown_allowance": {
+    "en": "unknown allowance",
+    "zh-CN": "允许中断数未知"
+  },
+  "tools.drain_is_in_progress_each_pod_result_is_shown_above": {
+    "en": "Drain is in progress. Each Pod result is shown above.",
+    "zh-CN": "正在排空节点，各 Pod 的处理结果显示在上方。"
+  },
+  "tools.updating_node_scheduling": {
+    "en": "Updating Node scheduling…",
+    "zh-CN": "正在更新节点调度状态…"
+  },
+  "tools.node_cordoned_existing_pods_keep_running": {
+    "en": "Node cordoned. Existing Pods keep running.",
+    "zh-CN": "节点已禁止调度，已有 Pod 继续运行。"
+  },
+  "tools.node_uncordoned_scheduling_is_enabled": {
+    "en": "Node uncordoned. Scheduling is enabled.",
+    "zh-CN": "节点已恢复调度。"
+  },
+  "tools.cordon_and_drain": {
+    "en": "Cordon and drain",
+    "zh-CN": "禁止调度并排空"
+  },
+  "tools.cordon": {
+    "en": "Cordon",
+    "zh-CN": "禁止调度"
+  },
+  "tools.uncordon": {
+    "en": "Uncordon",
+    "zh-CN": "恢复调度"
+  },
+  "tools.prevent_new_workloads_from_being_scheduled_here_existing_pods_keep_running": {
+    "en": "Prevent new workloads from being scheduled here. Existing Pods keep running.",
+    "zh-CN": "阻止新工作负载调度至此节点，已有 Pod 继续运行。"
+  },
+  "tools.allow_new_workloads_to_be_scheduled_to_this_node_again": {
+    "en": "Allow new workloads to be scheduled to this Node again.",
+    "zh-CN": "允许新工作负载再次调度至此节点。"
+  },
+  "tools.cordon_this_node_then_evict_the_reviewed_pods_through_the_eviction_api_budgets_are_enforced_by_the_server_cancellation_leaves_the_node_cordoned_and_cannot_undo_submitted_evictions": {
+    "en": "Cordon this Node, then evict the reviewed Pods through the Eviction API. Budgets are enforced by the server. Cancellation leaves the Node cordoned and cannot undo submitted evictions.",
+    "zh-CN": "先禁止此节点调度，再通过 Eviction API 驱逐已审阅的 Pod。服务器会强制检查中断预算。取消后节点仍禁止调度，且无法撤销已提交的驱逐。"
+  },
+  "tools.requires_create_on_pods_eviction_in_this_namespace": {
+    "en": "Requires create on pods/eviction in this namespace",
+    "zh-CN": "需要此命名空间中 pods/eviction 的 create 权限"
+  },
+  "tools.pod_uid_is_missing_refresh_the_preview": {
+    "en": "Pod UID is missing; refresh the preview",
+    "zh-CN": "缺少 Pod UID，请刷新预览"
+  },
+  "tools.enter_a_timeout_in_seconds": {
+    "en": "Enter a timeout in seconds.",
+    "zh-CN": "请输入超时秒数。"
+  },
+  "tools.timeout_must_be_between_1_and_86400_seconds": {
+    "en": "Timeout must be between 1 and 86400 seconds.",
+    "zh-CN": "超时必须在 1–86400 秒之间。"
+  },
+  "tools.grace_period_must_be_zero_or_a_positive_number_of_seconds": {
+    "en": "Grace period must be zero or a positive number of seconds.",
+    "zh-CN": "宽限期必须为零或正整数秒。"
+  },
+  "tools.unsupported_node_operation": {
+    "en": "Unsupported Node operation.",
+    "zh-CN": "不支持的节点操作。"
+  },
+  "tools.create_a_workflow_from_this_template_review_its_entrypoint_and_runtime_parameters_before_submitting": {
+    "en": "Create a Workflow from this template. Review its entrypoint and runtime parameters before submitting.",
+    "zh-CN": "从此模板创建工作流，提交前请审阅入口与运行参数。"
+  },
+  "tools.create_a_fresh_execution_with_fresh_pods_the_original_workflow_and_its_history_are_kept": {
+    "en": "Create a fresh execution with fresh Pods. The original Workflow and its history are kept.",
+    "zh-CN": "使用新的 Pod 创建一次新执行，保留原工作流及历史。"
+  },
+  "tools.retry_failed_steps_in_this_workflow_successful_steps_are_kept_failed_pods_and_exit_handler_pods_listed_below_are_deleted_before_resetting_the_failed_branches": {
+    "en": "Retry failed steps in this Workflow. Successful steps are kept; failed Pods and exit-handler Pods listed below are deleted before resetting the failed branches.",
+    "zh-CN": "重试此工作流的失败步骤，保留成功步骤。重置失败分支前会删除下方列出的失败 Pod 和退出处理器 Pod。"
+  },
+  "tools.pause_scheduling_new_steps_pods_already_running_continue_use_resume_to_allow_the_workflow_to_proceed": {
+    "en": "Pause scheduling new steps. Pods already running continue. Use Resume to allow the Workflow to proceed.",
+    "zh-CN": "暂停调度新步骤，运行中的 Pod 继续执行。点击恢复后继续工作流。"
+  },
+  "tools.continue_this_workflow_and_complete_its_active_suspend_steps_supply_any_required_outputs_before_resuming": {
+    "en": "Continue this Workflow and complete its active suspend steps. Supply any required outputs before resuming.",
+    "zh-CN": "继续此工作流并完成当前暂停步骤，恢复前请补齐必需的输出。"
+  },
+  "tools.stop_running_tasks_gracefully_and_run_exit_handlers_the_workflow_may_take_time_to_stop": {
+    "en": "Stop running tasks gracefully and run exit handlers. The Workflow may take time to stop.",
+    "zh-CN": "优雅停止运行中的任务并执行退出处理器，停止可能需要一些时间。"
+  },
+  "tools.terminate_immediately_without_running_exit_handlers_running_pods_will_be_stopped_by_the_controller": {
+    "en": "Terminate immediately, without running exit handlers. Running Pods will be stopped by the controller.",
+    "zh-CN": "立即终止且不执行退出处理器，控制器会停止运行中的 Pod。"
+  },
+  "tools.keep_runtime_reference": {
+    "en": "Keep runtime reference",
+    "zh-CN": "保留运行时引用"
+  },
+  "tools.template_default": {
+    "en": "Template default",
+    "zh-CN": "模板默认值"
+  },
+  "tools.suspend_step_outputs": {
+    "en": "Suspend step outputs",
+    "zh-CN": "暂停步骤的输出"
+  },
+  "tools.runtime_parameters": {
+    "en": "Runtime parameters",
+    "zh-CN": "运行参数"
+  },
+  "tools.1_configure": {
+    "en": "1 · Configure",
+    "zh-CN": "1 · 配置"
+  },
+  "tools.2_review": {
+    "en": "2 · Review",
+    "zh-CN": "2 · 审阅"
+  },
+  "tools.3_apply": {
+    "en": "3 · Apply",
+    "zh-CN": "3 · 应用"
+  },
+  "tools.deleting_reviewed_failed_pods_then_resetting_workflow_state": {
+    "en": "Deleting reviewed failed Pods, then resetting Workflow state…",
+    "zh-CN": "正在删除已审阅的失败 Pod，然后重置工作流状态…"
+  },
+  "tools.review_operation": {
+    "en": "Review operation",
+    "zh-CN": "审阅操作"
+  },
+  "tools.message_printed_by_the_step": {
+    "en": "Message printed by the step",
+    "zh-CN": "步骤输出的消息"
+  },
+  "tools.local_yaml_check": {
+    "en": "Local YAML check",
+    "zh-CN": "本地 YAML 检查"
+  },
+  "tools.loading_schema": {
+    "en": "Loading schema…",
+    "zh-CN": "正在加载 Schema…"
+  },
+  "tools.loading_cluster_schema": {
+    "en": "Loading cluster schema…",
+    "zh-CN": "正在加载集群 Schema…"
+  },
+  "tools.schema_unavailable": {
+    "en": "Schema unavailable",
+    "zh-CN": "Schema 不可用"
+  },
+  "tools.schema_ready": {
+    "en": "Schema ready",
+    "zh-CN": "Schema 已就绪"
+  },
+  "tools.checking_yaml": {
+    "en": "Checking YAML…",
+    "zh-CN": "正在检查 YAML…"
+  },
+  "tools.yaml_syntax_error": {
+    "en": "YAML syntax error",
+    "zh-CN": "YAML 语法错误"
+  },
+  "tools.local_checks_passed": {
+    "en": "Local checks passed",
+    "zh-CN": "本地检查通过"
+  },
+  "tools.local_validation_is_off_field_completion_and_help_remain_available": {
+    "en": "Local validation is off. Field completion and help remain available.",
+    "zh-CN": "本地校验已关闭，字段补全和帮助仍可使用。"
+  },
+  "tools.place_the_caret_on_a_field_or_value_to_see_its_schema_description": {
+    "en": "Place the caret on a field or value to see its schema description.",
+    "zh-CN": "将光标放在字段或值上以查看 Schema 说明。"
+  },
+  "tools.retry_schema": {
+    "en": "Retry schema",
+    "zh-CN": "重新加载 Schema"
+  },
+  "tools.show_fewer_messages": {
+    "en": "Show fewer messages",
+    "zh-CN": "收起提示"
+  },
+  "tools.side_by_side": {
+    "en": "Side by side",
+    "zh-CN": "并排"
+  },
+  "tools.unified": {
+    "en": "Unified",
+    "zh-CN": "合并"
+  },
+  "tools.hide_context": {
+    "en": "Hide context",
+    "zh-CN": "隐藏上下文"
+  },
+  "tools.show_context": {
+    "en": "Show context",
+    "zh-CN": "显示上下文"
+  },
+  "tools.current_proposed": {
+    "en": "Current → Proposed",
+    "zh-CN": "当前 → 修改后"
+  },
+  "tools.new_resource": {
+    "en": "New resource",
+    "zh-CN": "新资源"
+  },
+  "tools.saved_file": {
+    "en": "Saved file",
+    "zh-CN": "已保存文件"
+  },
+  "tools.cluster_yaml": {
+    "en": "Cluster YAML",
+    "zh-CN": "集群 YAML"
+  },
+  "tools.proposed": {
+    "en": "Proposed",
+    "zh-CN": "修改后"
+  },
+  "tools.your_changes": {
+    "en": "Your changes",
+    "zh-CN": "你的修改"
+  },
+  "tools.no_changes_to_save": {
+    "en": "No changes to save",
+    "zh-CN": "没有需要保存的修改"
+  },
+  "tools.review_changes": {
+    "en": "Review changes",
+    "zh-CN": "审阅修改"
+  },
+  "tools.review_file_changes": {
+    "en": "Review file changes",
+    "zh-CN": "审阅文件修改"
+  },
+  "tools.unapplied_resource_edits": {
+    "en": "Unapplied resource edits",
+    "zh-CN": "尚未应用的资源修改"
+  },
+  "tools.return_to_editors": {
+    "en": "Return to editors",
+    "zh-CN": "返回编辑器"
+  },
+  "tools.restart_and_install_update": {
+    "en": "Restart and install update?",
+    "zh-CN": "重启并安装更新？"
+  },
+  "tools.restart_and_install": {
+    "en": "Restart and install",
+    "zh-CN": "重启并安装"
+  },
+  "tools.new_edits_appeared_while_preparing_the_update_apply_or_discard_them_before_retrying": {
+    "en": "New edits appeared while preparing the update. Apply or discard them before retrying.",
+    "zh-CN": "准备更新期间出现了新的修改，请应用或放弃后重试。"
+  },
+  "tools.from": {
+    "en": "From",
+    "zh-CN": "从"
+  },
+  "tools.values": {
+    "en": "Values",
+    "zh-CN": "值"
+  },
+  "tools.manifest": {
+    "en": "Manifest",
+    "zh-CN": "资源清单"
+  },
+  "tools.compare_revisions": {
+    "en": "Compare revisions",
+    "zh-CN": "版本对比"
+  },
+  "tools.hide_values": {
+    "en": "Hide values",
+    "zh-CN": "隐藏值"
+  },
+  "tools.reveal_values": {
+    "en": "Reveal values",
+    "zh-CN": "显示值"
+  },
+  "tools.no_stored_revisions_were_found_this_release_may_have_been_removed": {
+    "en": "No stored revisions were found. This release may have been removed.",
+    "zh-CN": "没有已保存的版本，此发布可能已被删除。"
+  },
+  "tools.select_a_revision_to_inspect_its_values_helm_may_prune_older_revisions_gaps_are_shown_as_stored": {
+    "en": "Select a revision to inspect its values. Helm may prune older revisions; gaps are shown as stored.",
+    "zh-CN": "选择版本以查看值。Helm 可能清理较早的历史，列表仅显示实际保留的版本。"
+  },
+  "tools.unreadable": {
+    "en": "Unreadable",
+    "zh-CN": "无法读取"
+  },
+  "tools.reading_release_history": {
+    "en": "Reading release history…",
+    "zh-CN": "正在读取发布历史…"
+  },
+  "tools.preparing_revision": {
+    "en": "Preparing revision…",
+    "zh-CN": "正在准备版本…"
+  },
+  "tools.stored_release_content_read_only_values_and_secret_data_are_visible": {
+    "en": "Stored release content · read only. Values and Secret data are visible.",
+    "zh-CN": "已保存的发布内容 · 只读，当前显示值和 Secret 数据。"
+  },
+  "tools.values_and_secret_data_are_concealed_reveal_values_to_read_their_contents_concealed_differences_remain_detectable": {
+    "en": "Values and Secret data are concealed. Reveal values to read their contents; concealed differences remain detectable.",
+    "zh-CN": "值和 Secret 数据已隐藏。点击显示后可查看内容，隐藏时仍可识别差异。"
+  },
+  "tools.helm_values": {
+    "en": "Helm values",
+    "zh-CN": "Helm 值"
+  },
+  "tools.helm_rendered_manifest": {
+    "en": "Helm rendered manifest",
+    "zh-CN": "Helm 渲染后的资源清单"
+  },
+  "tools.wait_for_the_helm_operation_to_finish_before_closing_this_window": {
+    "en": "Wait for the Helm operation to finish before closing this window.",
+    "zh-CN": "请等待 Helm 操作完成后再关闭窗口。"
+  },
+  "tools.values_contain_invalid_yaml_correct_the_draft_before_preparing": {
+    "en": "Values contain invalid YAML. Correct the draft before preparing.",
+    "zh-CN": "值包含无效 YAML，请先修正草稿。"
+  },
+  "tools.values_must_be_a_yaml_mapping": {
+    "en": "Values must be a YAML mapping.",
+    "zh-CN": "值必须是 YAML 映射。"
+  },
+  "tools.no_repository_versions_matched_enter_repository_chart_or_supply_an_exact_version_for_an_oci_local_chart": {
+    "en": "No repository versions matched. Enter repository/chart, or supply an exact version for an OCI/local chart.",
+    "zh-CN": "没有匹配的仓库版本。请输入 repository/chart，或为 OCI / 本地 Chart 指定确切版本。"
+  },
+  "tools.starting_helm_operation": {
+    "en": "Starting Helm operation…",
+    "zh-CN": "正在启动 Helm 操作…"
+  },
+  "tools.find_versions": {
+    "en": "Find versions",
+    "zh-CN": "查找版本"
+  },
+  "tools.reveal_to_edit": {
+    "en": "Reveal to edit",
+    "zh-CN": "显示并编辑"
+  },
+  "tools.operation_finished_release_details_and_history_have_been_refreshed": {
+    "en": "Operation finished. Release details and history have been refreshed.",
+    "zh-CN": "操作完成，已刷新发布详情和历史。"
+  },
+  "tools.manifest_cannot_be_safely_concealed_reveal_values_to_inspect_it": {
+    "en": "Manifest cannot be safely concealed. Reveal values to inspect it.",
+    "zh-CN": "无法安全隐藏清单中的敏感内容，请点击显示后查看。"
+  },
+  "tools.this_manifest_cannot_be_safely_concealed_reveal_values_to_inspect_the_stored_text": {
+    "en": "This manifest cannot be safely concealed. Reveal values to inspect the stored text.",
+    "zh-CN": "无法安全隐藏此清单中的敏感内容，请点击显示后查看原文。"
+  },
+  "tools.this_revision_cannot_be_read": {
+    "en": "This revision cannot be read.",
+    "zh-CN": "无法读取此版本。"
+  },
+  "tools.choose_two_different_revisions_to_compare": {
+    "en": "Choose two different revisions to compare.",
+    "zh-CN": "请选择两个不同的版本进行对比。"
+  },
+  "tools.use_an_rfc3339_time_with_a_timezone_e_g_2026_10_13t10_00_00z": {
+    "en": "Use an RFC3339 time with a timezone, e.g. 2026-10-13T10:00:00Z.",
+    "zh-CN": "请输入包含时区的 RFC3339 时间，例如 2026-10-13T10:00:00Z。"
+  },
+  "tools.from_must_be_before_until": {
+    "en": "From must be before Until.",
+    "zh-CN": "开始时间必须早于结束时间。"
+  },
+  "tools.container_start": {
+    "en": "Container start",
+    "zh-CN": "容器启动"
+  },
+  "tools.export_cancelled": {
+    "en": "Export cancelled.",
+    "zh-CN": "已取消导出。"
+  },
+  "tools.loading_objects": {
+    "en": "Loading objects",
+    "zh-CN": "正在加载资源"
+  },
+  "tools.this_namespace": {
+    "en": "this namespace",
+    "zh-CN": "此命名空间"
+  },
+  "tools.this_cluster": {
+    "en": "this cluster",
+    "zh-CN": "此集群"
+  },
+  "tools.choose_a_namespace_to_browse_its_resources_or_enter_the_target_manually": {
+    "en": "Choose a namespace to browse its resources, or enter the target manually.",
+    "zh-CN": "选择命名空间以浏览资源，或手动输入目标。"
+  },
+  "tools.no_same_name_match_search_the_resource_selector_and_choose_a_target": {
+    "en": "No same-name match. Search the resource selector and choose a target.",
+    "zh-CN": "没有同名资源，请在资源选择器中搜索并选择目标。"
+  },
+  "tools.this_resource_type_is_not_available_in_the_selected_cluster": {
+    "en": "This resource type is not available in the selected cluster.",
+    "zh-CN": "所选集群不支持此资源类型。"
+  },
+  "tools.choose_a_target_resource_or_enter_its_namespace_and_name": {
+    "en": "Choose a target resource, or enter its namespace and name.",
+    "zh-CN": "请选择目标资源，或输入其命名空间和名称。"
+  },
+  "tools.comparison_cancelled_choose_a_target_or_click_compare_to_try_again": {
+    "en": "Comparison cancelled. Choose a target or click Compare to try again.",
+    "zh-CN": "已取消对比，选择目标或点击「对比」可重试。"
+  },
+  "tools.2_target_resource": {
+    "en": "2 · Target resource",
+    "zh-CN": "2 · 目标资源"
+  },
+  "tools.browse_resources": {
+    "en": "Browse resources",
+    "zh-CN": "浏览资源"
+  },
+  "tools.enter_manually": {
+    "en": "Enter manually",
+    "zh-CN": "手动输入"
+  },
+  "tools.resource_name": {
+    "en": "Resource name",
+    "zh-CN": "资源名称"
+  },
+  "tools.loading_resources": {
+    "en": "Loading resources…",
+    "zh-CN": "正在加载资源…"
+  },
+  "tools.choose_a_resource_51982936": {
+    "en": "Choose a resource",
+    "zh-CN": "选择资源"
+  },
+  "tools.use_field_value_quote_values_containing_spaces": {
+    "en": "Use field=value; quote values containing spaces.",
+    "zh-CN": "使用 field=value 格式，包含空格的值需要加引号。"
+  },
+  "tools.separate_fields_with_spaces": {
+    "en": "Separate fields with spaces.",
+    "zh-CN": "字段之间用空格分隔。"
+  },
+  "tools.no_structured_fields": {
+    "en": "No structured fields.",
+    "zh-CN": "没有结构化字段。"
+  },
+  "tools.invalid_quoted_field_value": {
+    "en": "Invalid quoted field value.",
+    "zh-CN": "引号中的字段值无效。"
+  },
+  "tools.unclosed_quoted_field_value": {
+    "en": "Unclosed quoted field value.",
+    "zh-CN": "字段值的引号未闭合。"
+  },
+  "tools.kind_namespace_ctx_cluster_command": {
+    "en": "@ kind   # namespace   ctx cluster   > command",
+    "zh-CN": "@ 资源类型   # 命名空间   ctx 集群   > 命令"
+  },
+  "tools.jump_to_a_resource_kind": {
+    "en": "Jump to a resource kind",
+    "zh-CN": "跳转至资源类型"
+  },
+  "tools.scope_to_a_namespace": {
+    "en": "Scope to a namespace",
+    "zh-CN": "限定命名空间"
+  },
+  "tools.go_to_a_cluster": {
+    "en": "Go to a cluster",
+    "zh-CN": "跳转至集群"
+  },
+  "tools.run_a_command": {
+    "en": "Run a command",
+    "zh-CN": "执行命令"
+  },
+  "tools.no_related_resources_match_the_search": {
+    "en": "No related resources match the search.",
+    "zh-CN": "没有符合搜索条件的关联资源。"
+  },
+  "tools.no_related_resources_found": {
+    "en": "No related resources found.",
+    "zh-CN": "未发现关联资源。"
+  },
+  "tools.command_palette": {
+    "en": "Command palette",
+    "zh-CN": "命令面板"
+  },
+  "tools.move_the_current_tab_to_a_separate_window_preserving_its_resource_view_and_pod_tools": {
+    "en": "Move the current tab to a separate window, preserving its resource view and Pod tools.",
+    "zh-CN": "将当前标签页移至独立窗口，保留资源视图和 Pod 工具。"
+  },
+  "tools.move_the_current_detached_tab_back_into_the_main_window_s_focused_pane": {
+    "en": "Move the current detached tab back into the main window's focused pane.",
+    "zh-CN": "将当前独立窗口的标签页合并回主窗口的活动分区。"
+  },
+  "tools.close_the_detail_or_pod_tools_panel_when_the_focused_control_does_not_consume_escape_shell_keeps_escape_for_the_remote_process": {
+    "en": "Close the detail or Pod tools panel when the focused control does not consume Escape. Shell keeps Escape for the remote process.",
+    "zh-CN": "焦点控件未处理 Esc 时，关闭详情或 Pod 工具面板；终端中的 Esc 会发送至远程进程。"
+  },
+  "tools.debug_containers": {
+    "en": "Debug containers",
+    "zh-CN": "调试容器"
+  },
+  "tools.no_running_containers_files_requires_a_running_container_with_sh_and_standard_file_utilities_distroless_images_may_need_a_debug_container": {
+    "en": "No running containers. Files requires a running container with sh and standard file utilities; distroless images may need a debug container.",
+    "zh-CN": "没有运行中的容器。文件浏览器需要容器中提供 sh 和常用文件工具；极简镜像可能需要调试容器。"
+  },
+  "tools.save_or_discard_the_current_edit_before_switching_containers": {
+    "en": "Save or discard the current edit before switching containers.",
+    "zh-CN": "切换容器前，请保存或放弃当前修改。"
+  },
+  "tools.save_or_discard_your_edit_and_cancel_any_transfer_before_reopening_the_current_containers": {
+    "en": "Save or discard your edit and cancel any transfer before reopening the current containers.",
+    "zh-CN": "重新打开容器前，请保存或放弃修改并取消传输。"
+  },
+  "tools.operation_cancelled_refresh_to_check_the_current_directory": {
+    "en": "Operation cancelled. Refresh to check the current directory.",
+    "zh-CN": "操作已取消，请刷新以检查当前目录。"
+  },
+  "tools.save_or_discard_your_changes_before_navigating": {
+    "en": "Save or discard your changes before navigating.",
+    "zh-CN": "跳转前请保存或放弃修改。"
+  },
+  "tools.select_a_running_container": {
+    "en": "Select a running container.",
+    "zh-CN": "请选择运行中的容器。"
+  },
+  "tools.save_or_discard_the_current_edit_first": {
+    "en": "Save or discard the current edit first.",
+    "zh-CN": "请先保存或放弃当前修改。"
+  },
+  "tools.finish_the_current_operation_or_discard_your_edit_first": {
+    "en": "Finish the current operation or discard your edit first.",
+    "zh-CN": "请先完成当前操作或放弃修改。"
+  },
+  "tools.delete_selected_files": {
+    "en": "Delete selected files?",
+    "zh-CN": "删除所选文件？"
+  },
+  "tools.delete_permanently": {
+    "en": "Delete permanently",
+    "zh-CN": "永久删除"
+  },
+  "tools.new_directory": {
+    "en": "New directory",
+    "zh-CN": "新建目录"
+  },
+  "tools.create_directory": {
+    "en": "Create directory",
+    "zh-CN": "创建目录"
+  },
+  "tools.choose_a_file_to_upload": {
+    "en": "Choose a file to upload",
+    "zh-CN": "选择要上传的文件"
+  },
+  "tools.use_a_utf_8_filename": {
+    "en": "Use a UTF-8 filename",
+    "zh-CN": "请使用 UTF-8 文件名"
+  },
+  "tools.overwrite_container_file": {
+    "en": "Overwrite container file?",
+    "zh-CN": "覆盖容器中的文件？"
+  },
+  "tools.could_not_open_the_local_file_chooser": {
+    "en": "Could not open the local file chooser.",
+    "zh-CN": "无法打开本地文件选择器。"
+  },
+  "tools.directory_and_multi_file_downloads_require_tar_in_the_container": {
+    "en": "Directory and multi-file downloads require tar in the container.",
+    "zh-CN": "下载目录或多个文件需要容器中提供 tar。"
+  },
+  "tools.choose_a_download_folder_83283338": {
+    "en": "Choose a download folder",
+    "zh-CN": "选择下载目录"
+  },
+  "tools.could_not_open_the_folder_chooser": {
+    "en": "Could not open the folder chooser.",
+    "zh-CN": "无法打开目录选择器。"
+  },
+  "tools.keep_the_resource_s_apiversion_kind_and_name_unchanged_when_applying_yaml": {
+    "en": "Keep the resource's apiVersion, kind and name unchanged when applying YAML.",
+    "zh-CN": "应用 YAML 时，请保持资源的 apiVersion、kind 和名称不变。"
+  },
+  "tools.keep_the_resource_s_namespace_unchanged_when_applying_yaml": {
+    "en": "Keep the resource's namespace unchanged when applying YAML.",
+    "zh-CN": "应用 YAML 时，请保持资源的命名空间不变。"
+  },
+  "tools.open_details": {
+    "en": "Open details",
+    "zh-CN": "打开详情"
+  },
+  "tools.view_data": {
+    "en": "View data",
+    "zh-CN": "查看数据"
+  },
+  "tools.view_configuration": {
+    "en": "View configuration",
+    "zh-CN": "查看配置"
+  },
+  "tools.run_command": {
+    "en": "Run command",
+    "zh-CN": "执行命令"
+  },
+  "tools.open_shell": {
+    "en": "Open shell",
+    "zh-CN": "打开终端"
+  },
+  "tools.port_forward": {
+    "en": "Port forward…",
+    "zh-CN": "端口转发…"
+  },
+  "tools.network_paths": {
+    "en": "Network paths",
+    "zh-CN": "网络路径"
+  },
+  "tools.compare_resource": {
+    "en": "Compare resource…",
+    "zh-CN": "对比资源…"
+  },
+  "tools.copy_status": {
+    "en": "Copy status",
+    "zh-CN": "复制状态"
+  },
+  "tools.copy_container_states": {
+    "en": "Copy container states",
+    "zh-CN": "复制容器状态"
+  },
+  "tools.this_deployment_was_replaced_refresh_its_details_before_rolling_back": {
+    "en": "This Deployment was replaced. Refresh its details before rolling back.",
+    "zh-CN": "此 Deployment 已被替换，回滚前请刷新详情。"
+  },
+  "tools.rollback_submitted_follow_rollout_progress_below": {
+    "en": "Rollback submitted. Follow rollout progress below.",
+    "zh-CN": "已提交回滚，可在下方查看发布进度。"
+  },
+  "tools.rolling_out": {
+    "en": "Rolling out",
+    "zh-CN": "正在发布"
+  },
+  "tools.compare_roll_back": {
+    "en": "Compare / roll back…",
+    "zh-CN": "对比 / 回滚…"
+  },
+  "tools.compare_revision": {
+    "en": "Compare revision…",
+    "zh-CN": "对比版本…"
+  },
+  "tools.creation_time_unavailable": {
+    "en": "Creation time unavailable",
+    "zh-CN": "创建时间不可用"
+  },
+  "tools.subject_name": {
+    "en": "Subject name",
+    "zh-CN": "主体名称"
+  },
+  "tools.serviceaccount_namespace": {
+    "en": "ServiceAccount namespace",
+    "zh-CN": "ServiceAccount 命名空间"
+  },
+  "tools.groups_separated_by_commas": {
+    "en": "Groups, separated by commas",
+    "zh-CN": "组，使用逗号分隔"
+  },
+  "tools.namespace_empty_all_namespaces_cluster_scope": {
+    "en": "Namespace (empty = all namespaces / cluster scope)",
+    "zh-CN": "命名空间（留空为全部命名空间 / 集群范围）"
+  },
+  "tools.subresource_e_g_log_or_exec": {
+    "en": "Subresource, e.g. log or exec",
+    "zh-CN": "子资源，例如 log 或 exec"
+  },
+  "tools.resource_name_optional": {
+    "en": "Resource name (optional)",
+    "zh-CN": "资源名称（可选）"
+  },
+  "tools.filter_rules_by_verb_resource_or_binding": {
+    "en": "Filter rules by verb, resource or binding",
+    "zh-CN": "按操作动词、资源或绑定筛选规则"
+  },
+  "tools.not_present": {
+    "en": "Not present",
+    "zh-CN": "不存在"
+  },
+  "tools.hidden_secret_value": {
+    "en": "Hidden Secret value",
+    "zh-CN": "已隐藏 Secret 值"
+  },
+  "tools.1_source_resource": {
+    "en": "1 · Source resource",
+    "zh-CN": "1 · 来源资源"
+  },
+  "tools.the_resource_you_opened_comparison_is_read_only": {
+    "en": "The resource you opened. Comparison is read only.",
+    "zh-CN": "当前打开的资源，对比不会修改资源。"
+  },
+  "tools.no_differences": {
+    "en": "No differences",
+    "zh-CN": "没有差异"
+  },
+  "tools.choose_which_fields_to_include_above_changes_are_never_applied_to_either_resource": {
+    "en": "Choose which fields to include above. Changes are never applied to either resource.",
+    "zh-CN": "在上方选择参与对比的字段，修改不会应用至任何资源。"
+  },
+  "tools.status_namespace_and_server_generated_metadata_are_ignored_labels_annotations_and_configuration_are_compared": {
+    "en": "Status, namespace and server-generated metadata are ignored. Labels, annotations and configuration are compared.",
+    "zh-CN": "忽略状态、命名空间和服务端生成的元数据，对比标签、注解和配置。"
+  },
+  "tools.loading_target_resources": {
+    "en": "Loading target resources…",
+    "zh-CN": "正在加载目标资源…"
+  },
+  "tools.reading_both_resources": {
+    "en": "Reading both resources…",
+    "zh-CN": "正在读取两侧资源…"
+  },
+  "tools.preparing_differences": {
+    "en": "Preparing differences…",
+    "zh-CN": "正在准备差异…"
+  },
+  "tools.choose_a_target_to_compare_with_this_resource": {
+    "en": "Choose a target to compare with this resource",
+    "zh-CN": "选择与此资源对比的目标"
+  },
+  "tools.enter_the_target_namespace_and_name_then_click_compare": {
+    "en": "Enter the target namespace and name, then click Compare.",
+    "zh-CN": "输入目标命名空间和名称，然后点击「对比」。"
+  },
+  "tools.select_a_cluster_namespace_and_resource_above_a_same_name_match_is_compared_automatically": {
+    "en": "Select a cluster, namespace and resource above. A same-name match is compared automatically.",
+    "zh-CN": "在上方选择集群、命名空间和资源，存在同名资源时会自动对比。"
+  },
+  "tools.enable_status_or_server_metadata_if_you_want_to_inspect_runtime_differences": {
+    "en": "Enable status or server metadata if you want to inspect runtime differences.",
+    "zh-CN": "如需查看运行时差异，请启用状态或服务端元数据。"
+  },
+  "tools.no_changed_fields_match_this_filter": {
+    "en": "No changed fields match this filter.",
+    "zh-CN": "没有符合筛选条件的变更字段。"
+  },
+  "tools.review_removal_of_this_release_s_resources_revision_history_crds_and_resources_marked_keep_are_retained": {
+    "en": "Review removal of this release's resources. Revision history, CRDs and resources marked keep are retained.",
+    "zh-CN": "审阅删除此发布的资源，保留版本历史、CRD 和标记为 keep 的资源。"
+  },
+  "tools.copy_path": {
+    "en": "Copy path",
+    "zh-CN": "复制路径"
+  },
+  "tools.loading_files": {
+    "en": "Loading files",
+    "zh-CN": "正在加载文件"
+  },
+  "tools.reading_the_container_filesystem": {
+    "en": "Reading the container filesystem…",
+    "zh-CN": "正在读取容器文件系统…"
+  },
+  "tools.container_filesystem": {
+    "en": "Container filesystem",
+    "zh-CN": "容器文件系统"
+  },
+  "tools.choose_a_running_container_to_browse_its_files": {
+    "en": "Choose a running container to browse its files.",
+    "zh-CN": "选择运行中的容器以浏览文件。"
+  },
+  "tools.this_folder_is_empty": {
+    "en": "This folder is empty",
+    "zh-CN": "此目录为空"
+  },
+  "tools.there_are_no_files_in_this_directory": {
+    "en": "There are no files in this directory.",
+    "zh-CN": "此目录中没有文件。"
+  },
+  "tools.no_matching_files": {
+    "en": "No matching files",
+    "zh-CN": "没有匹配的文件"
+  },
+  "tools.try_a_different_name_or_clear_the_search": {
+    "en": "Try a different name or clear the search.",
+    "zh-CN": "请尝试其他名称或清空搜索。"
+  },
+  "tools.close_preview": {
+    "en": "Close preview",
+    "zh-CN": "关闭预览"
+  },
+  "tools.review_and_save_changes": {
+    "en": "Review and save changes",
+    "zh-CN": "审阅并保存修改"
+  },
+  "tools.download_file": {
+    "en": "Download file…",
+    "zh-CN": "下载文件…"
+  },
+  "tools.read_only_file_editing_is_disabled": {
+    "en": "Read-only file. Editing is disabled.",
+    "zh-CN": "此文件为只读，无法编辑。"
+  },
+  "tools.preview_limited_to_256_kib_download_to_view_the_complete_file": {
+    "en": "Preview limited to 256 KiB. Download to view the complete file.",
+    "zh-CN": "预览最多显示 256 KiB，下载后可查看完整文件。"
+  },
+  "tools.open_symlink_target": {
+    "en": "Open symlink target",
+    "zh-CN": "打开符号链接目标"
+  },
+  "tools.text_preview_unavailable": {
+    "en": "Text preview unavailable",
+    "zh-CN": "文本预览不可用"
+  },
+  "tools.parent_folder": {
+    "en": "Parent folder",
+    "zh-CN": "上级目录"
+  },
+  "tools.open_path_enter": {
+    "en": "Open path (Enter)",
+    "zh-CN": "打开路径（回车）"
+  },
+  "tools.refresh_folder": {
+    "en": "Refresh folder",
+    "zh-CN": "刷新目录"
+  },
+  "tools.dismiss_message": {
+    "en": "Dismiss message",
+    "zh-CN": "关闭提示"
   }
 }

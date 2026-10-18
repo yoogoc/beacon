@@ -118,7 +118,13 @@ pub(crate) fn summary(
     let (label, health) = match kind {
         "Workflow" => {
             if let Some(duration) = duration(&data["status"], now) {
-                hints.push(format!("{duration} elapsed"));
+                hints.push(
+                    crate::i18n::message(
+                        "messages.duration_elapsed",
+                        &[("duration", (duration).to_string())],
+                    )
+                    .to_string(),
+                );
             }
             let tasks: Vec<_> = nodes
                 .values()
@@ -130,14 +136,23 @@ pub(crate) fn summary(
                 })
                 .collect();
             if !tasks.is_empty() {
-                hints.push(format!(
-                    "{} / {} succeeded",
-                    tasks
-                        .iter()
-                        .filter(|node| node["phase"] == "Succeeded")
-                        .count(),
-                    tasks.len()
-                ));
+                hints.push(
+                    crate::i18n::message(
+                        "messages.succeeded",
+                        &[
+                            (
+                                "value0",
+                                (tasks
+                                    .iter()
+                                    .filter(|node| node["phase"] == "Succeeded")
+                                    .count())
+                                .to_string(),
+                            ),
+                            ("value1", (tasks.len()).to_string()),
+                        ],
+                    )
+                    .to_string(),
+                );
             }
             let phase = text(&data["status"]["phase"])
                 .filter(|phase| !phase.is_empty())
@@ -162,10 +177,16 @@ pub(crate) fn summary(
             )
         }
         "CronWorkflow" => {
-            hints.push(format!(
-                "{} active workflow(s)",
-                array(data, "/status/active").count()
-            ));
+            hints.push(
+                crate::i18n::message(
+                    "messages.active_workflow_s",
+                    &[(
+                        "value0",
+                        (array(data, "/status/active").count()).to_string(),
+                    )],
+                )
+                .to_string(),
+            );
             (
                 if data["spec"]["suspend"] == true {
                     "Suspended".into()

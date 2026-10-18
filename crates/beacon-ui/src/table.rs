@@ -347,11 +347,11 @@ impl ResourceTable {
                 DetailTab::Overview,
             ));
         menu = menu.item(
-            PopupMenuItem::new(if saved {
+            PopupMenuItem::new(crate::i18n::text(if saved {
                 "Remove favorite"
             } else {
                 "Add to favorites"
-            })
+            }))
             .on_click(move |_, _, cx| {
                 let _ =
                     favorite_view.update(cx, |view, cx| view.toggle_favorite(favorite.clone(), cx));
@@ -426,17 +426,28 @@ impl ResourceTable {
             let ports = crate::forward_dialog::ports(name, &object.data);
             let mut choices: Vec<_> = ports
                 .into_iter()
-                .map(|port| (format!("Forward port {port}…"), port))
+                .map(|port| {
+                    (
+                        crate::i18n::message(
+                            "messages.forward_port_port_prompt",
+                            &[("port", (port).to_string())],
+                        )
+                        .to_string(),
+                        port,
+                    )
+                })
                 .collect();
             choices.push(("Port forward…".into(), 0));
             for (label, port) in choices {
                 let forward_view = view.clone();
                 let forward_target = target.clone();
-                menu = menu.item(PopupMenuItem::new(label).on_click(move |_, window, cx| {
-                    let _ = forward_view.update(cx, |cluster, cx| {
-                        cluster.start_forward_for(forward_target.clone(), port, window, cx)
-                    });
-                }));
+                menu = menu.item(PopupMenuItem::new(crate::i18n::text(label)).on_click(
+                    move |_, window, cx| {
+                        let _ = forward_view.update(cx, |cluster, cx| {
+                            cluster.start_forward_for(forward_target.clone(), port, window, cx)
+                        });
+                    },
+                ));
             }
         }
         menu = menu.item(detail_item("View YAML", &view, &target, DetailTab::Yaml));
@@ -478,13 +489,13 @@ impl ResourceTable {
         let compare_view = view.clone();
         let compare_target = target.clone();
         menu = menu.item(
-            PopupMenuItem::new(
+            PopupMenuItem::new(crate::i18n::text(
                 if self.selected_count() == 2 && self.checked.contains_key(&target) {
                     "Compare selected resources"
                 } else {
                     "Compare resource…"
                 },
-            )
+            ))
             .on_click(move |_, window, cx| {
                 let _ = compare_view
                     .update(cx, |view, cx| view.compare_for(&compare_target, window, cx));
@@ -1317,7 +1328,13 @@ impl TableDelegate for ResourceTable {
                         .xsmall()
                         .ghost()
                         .icon(IconName::Ellipsis)
-                        .accessibility_label(format!("Actions for {}", target.name))
+                        .accessibility_label(
+                            crate::i18n::message(
+                                "messages.actions_for",
+                                &[("value0", (target.name).to_string())],
+                            )
+                            .to_string(),
+                        )
                         .tooltip(crate::i18n::text("Resource actions"))
                         .dropdown_menu(move |menu, _, cx| match table.upgrade() {
                             Some(table) => {
@@ -1547,7 +1564,7 @@ fn detail_item(
 ) -> PopupMenuItem {
     let view = view.clone();
     let target = target.clone();
-    PopupMenuItem::new(label).on_click(move |_, window, cx| {
+    PopupMenuItem::new(crate::i18n::text(label)).on_click(move |_, window, cx| {
         let _ = view.update(cx, |cluster, cx| {
             cluster.open_target(&target, tab, window, cx);
         });
@@ -1562,7 +1579,7 @@ fn pod_tools_item(
 ) -> PopupMenuItem {
     let view = view.clone();
     let target = target.clone();
-    PopupMenuItem::new(label).on_click(move |_, window, cx| {
+    PopupMenuItem::new(crate::i18n::text(label)).on_click(move |_, window, cx| {
         let _ = view.update(cx, |cluster, cx| {
             cluster.open_pod_tools(&target, tab, window, cx);
         });

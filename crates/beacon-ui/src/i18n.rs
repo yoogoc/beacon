@@ -155,6 +155,70 @@ pub(crate) fn filter_text(source: &str) -> SharedString {
     }
 }
 
+/// Resource-section headings may include a resource name or hostname after
+/// the separator. Translate only the label and keep that suffix untouched.
+pub(crate) fn heading_text(source: &str) -> SharedString {
+    if let Some((label, suffix)) = source.split_once(" · ") {
+        format!("{} · {suffix}", text(label)).into()
+    } else {
+        text(source)
+    }
+}
+
+/// A translated option keeps its canonical value for filters and selection.
+/// Raw options, such as container or font names, never enter the catalog.
+#[derive(Clone, Debug)]
+pub(crate) struct Choice {
+    value: String,
+    translated: bool,
+}
+
+impl Choice {
+    pub fn label(value: impl Into<String>) -> Self {
+        Self {
+            value: value.into(),
+            translated: true,
+        }
+    }
+
+    pub fn raw(value: impl Into<String>) -> Self {
+        Self {
+            value: value.into(),
+            translated: false,
+        }
+    }
+}
+
+impl gpui_kit::component::select::SelectItem for Choice {
+    type Value = String;
+
+    fn title(&self) -> SharedString {
+        if self.translated {
+            if self.value.contains(" › ") {
+                self.value
+                    .split(" › ")
+                    .map(|part| text(part).to_string())
+                    .collect::<Vec<_>>()
+                    .join(" › ")
+                    .into()
+            } else {
+                text(&self.value)
+            }
+        } else {
+            self.value.clone().into()
+        }
+    }
+
+    fn value(&self) -> &String {
+        &self.value
+    }
+
+    fn matches(&self, query: &str) -> bool {
+        let query = query.to_lowercase();
+        self.value.to_lowercase().contains(&query) || self.title().to_lowercase().contains(&query)
+    }
+}
+
 pub(crate) fn follow_system<T: 'static>(window: &mut Window, cx: &mut Context<T>) {
     cx.observe_window_activation(window, |_, window, cx| {
         if window.is_window_active()
@@ -185,6 +249,8 @@ pub(crate) fn title_text(source: &str) -> SharedString {
         ("Beacon — Cluster settings · ", "Cluster settings"),
         ("Beacon — Compare ", "Compare"),
         ("Used by · ", "Used by"),
+        ("Aggregated logs · ", "Aggregated logs"),
+        ("Debug Pod · ", "Debug Pod"),
     ] {
         if let Some(suffix) = source.strip_prefix(prefix) {
             let translated = text(label);

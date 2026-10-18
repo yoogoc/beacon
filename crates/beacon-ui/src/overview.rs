@@ -180,17 +180,34 @@ pub(crate) fn summary(group: &str, kind: &str, object: &DynamicObject, now: Time
         ("", "Pod") => {
             let pod = pod::summarize(&object.metadata, data, now);
             hints.extend([
-                format!("{} ready", pod.ready),
-                format!("{} restarts", pod.restarts),
+                crate::i18n::message("messages.ready", &[("value0", (pod.ready).to_string())])
+                    .to_string(),
+                crate::i18n::message(
+                    "messages.restarts",
+                    &[("value0", (pod.restarts).to_string())],
+                )
+                .to_string(),
             ]);
             (pod.status, true)
         }
         ("apps", "Deployment") => {
-            hints.push(format!(
-                "{}/{} ready",
-                defaulted(data, "/status/readyReplicas", "0").value.unwrap(),
-                defaulted(data, "/spec/replicas", "1").value.unwrap()
-            ));
+            hints.push(
+                crate::i18n::message(
+                    "messages.ready_ratio",
+                    &[
+                        (
+                            "value0",
+                            (defaulted(data, "/status/readyReplicas", "0").value.unwrap())
+                                .to_string(),
+                        ),
+                        (
+                            "value1",
+                            (defaulted(data, "/spec/replicas", "1").value.unwrap()).to_string(),
+                        ),
+                    ],
+                )
+                .to_string(),
+            );
             (deployment_status(&object.metadata, data), true)
         }
         ("", "Node") => {

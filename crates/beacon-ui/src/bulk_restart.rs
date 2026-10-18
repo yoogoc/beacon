@@ -196,11 +196,13 @@ impl Render for BulkRestart {
             .filter(|status| matches!(status, Status::Failed(_)))
             .count();
         let message = if self.finished {
-            format!(
-                "{successful} requested · {failed} failed. Rollouts continue in the Deployment controller."
-            )
+            crate::i18n::message("messages.successful_requested_failed_failed_rollouts_continue_in_the_deployment_controller", &[("successful", (successful).to_string()), ("failed", (failed).to_string())]).to_string()
         } else if self.busy {
-            format!("Restarting {} Deployments…", self.targets.len())
+            crate::i18n::message(
+                "messages.restarting_deployments",
+                &[("value0", (self.targets.len()).to_string())],
+            )
+            .to_string()
         } else {
             "The Deployments below will restart their Pods using their current update strategy."
                 .into()
@@ -208,7 +210,11 @@ impl Render for BulkRestart {
         let heading = if self.finished {
             "Restart results".to_string()
         } else {
-            format!("Restart {} Deployments?", self.targets.len())
+            crate::i18n::message(
+                "messages.restart_deployments",
+                &[("value0", (self.targets.len()).to_string())],
+            )
+            .to_string()
         };
         let table = v_flex()
             .w_full()
@@ -261,11 +267,11 @@ impl Render for BulkRestart {
                     Button::new("bulk-restart-confirm")
                         .small()
                         .primary()
-                        .label(if self.busy {
+                        .label(crate::i18n::text(if self.busy {
                             "Restarting…"
                         } else {
                             "Restart Deployments"
-                        })
+                        }))
                         .disabled(self.busy || self.targets.is_empty())
                         .on_click(cx.listener(|view, _, window, cx| view.start(window, cx))),
                 )

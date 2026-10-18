@@ -62,7 +62,7 @@ impl DetailView {
                         .text_color(cx.theme().warning)
                         .child(copyable_text(
                             "account-inspection-error-text",
-                            error.clone(),
+                            crate::i18n::text(error),
                         )),
                 )
                 .child(
@@ -120,7 +120,7 @@ impl DetailView {
                     .child(v_flex().gap_2()
                         .child(div().text_sm().font_weight(FontWeight::MEDIUM).child(crate::i18n::text("JWT details")))
                         .child(div().id("account-token-timing").test_support().text_sm().text_color(cx.theme().tone(tone))
-                            .child(SelectableText::new("timing", timing.label())))
+                            .child(SelectableText::new("timing", crate::i18n::text(timing.label()))))
                         .child(div().text_xs().text_color(cx.theme().muted_foreground)
                             .child(crate::i18n::text("Decoded locally · Signature and token validity are not verified."))))
                     .child(self.field_rows(&token.fields(), cx))

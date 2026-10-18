@@ -75,9 +75,9 @@ impl SourcesView {
             let view = weak.clone();
             let id = id.clone();
             let directory = directory.clone();
-            dialog.title(format!("Remove {name}?"))
+            dialog.title(crate::i18n::message("messages.remove_name", &[("name", (name).to_string())]).to_string())
                 .button_props(gpui_kit::component::dialog::DialogButtonProps::default().cancel_text("Cancel").show_cancel(true).ok_text("Remove source"))
-                .child(div().text_sm().child(if imported { "Remove this source and Beacon’s saved kubeconfig copy. Existing connections stay open until you disconnect." } else { "Remove this source from Beacon. Original files and existing connections stay in place." }))
+                .child(div().text_sm().child(crate::i18n::text(if imported { "Remove this source and Beacon’s saved kubeconfig copy. Existing connections stay open until you disconnect." } else { "Remove this source from Beacon. Original files and existing connections stay in place." })))
                 .on_ok(move |_, window, cx| {
                     let mut preferences = settings::store(cx).read(cx).preferences.clone();
                     preferences.kubeconfigs.sources.retain(|s| s.id != id);
@@ -90,7 +90,7 @@ impl SourcesView {
                                     let result = cx.background_executor().spawn(async move {
                                         match std::fs::remove_file(path) { Ok(()) => Ok(()), Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()), Err(error) => Err(error.to_string()) }
                                     }).await;
-                                    if let Err(error) = result { let _ = view.update(cx, |view, cx| { view.message = Some((true, format!("Source removed, but its saved copy could not be deleted: {error}"))); cx.notify(); }); }
+                                    if let Err(error) = result { let _ = view.update(cx, |view, cx| { view.message = Some((true, crate::i18n::message("messages.source_removed_but_its_saved_copy_could_not_be_deleted_error", &[("error", (error).to_string())]).to_string())); cx.notify(); }); }
                                 }).detach();
                             }
                             true
@@ -122,13 +122,13 @@ impl SourcesView {
             .child(h_flex().gap_3().justify_between().items_start()
                 .child(v_flex().flex_1().min_w_0().gap_1().child(div().font_weight(FontWeight::MEDIUM).child(status.name.clone())).child(hint(label, cx)))
                 .child(Switch::new("source-enabled").label(crate::i18n::text("Enabled")).checked(status.enabled)
-                    .accessibility_label(format!("Enable {}", status.name)).on_click(cx.listener(move |view, enabled, window, cx| view.toggle(toggle_id.clone(), *enabled, window, cx)))))
+                    .accessibility_label(crate::i18n::message("messages.enable", &[("value0", (status.name).to_string())]).to_string()).on_click(cx.listener(move |view, enabled, window, cx| view.toggle(toggle_id.clone(), *enabled, window, cx)))))
             .child(h_flex().gap_3().items_start().child(div().w(px(76.)).text_sm().text_color(cx.theme().muted_foreground).child(crate::i18n::text("Location")))
                 .child(div().flex_1().min_w_0().text_sm().child(copyable_text("source-location", if status.location.is_empty() { "No system kubeconfig path found".into() } else { status.location.clone() }))))
             .when_some(source.clone(), |column, source| {
                 column.when(matches!(source.kind, SourceKind::Directory { .. }), |column| {
                     let SourceKind::Directory { recursive, patterns, .. } = &source.kind else { unreachable!() };
-                    column.child(hint(&format!("{} files · {} · {}", status.files, if *recursive { "Including subfolders" } else { "This folder only" }, patterns), cx))
+                    column.child(hint(crate::i18n::message("messages.files", &[("value0", (status.files).to_string()), ("value1", (if *recursive { "Including subfolders" } else { "This folder only" }).to_string()), ("value2", (patterns).to_string())]).as_ref(), cx))
                 })
             })
             .child(h_flex().gap_2().flex_wrap()
@@ -136,7 +136,7 @@ impl SourcesView {
                 .when_some(source, |row, source| {
                     let rename = source.clone(); let edit = source.clone(); let id = source.id;
                     row.child(Button::new("source-rename").small().ghost().icon(IconName::Pencil).label(crate::i18n::text("Rename")).on_click(move |_, window, cx| editor::open(Some(rename.clone()), true, window, cx)))
-                        .child(Button::new("source-edit").small().ghost().icon(IconName::FolderOpen).label(if matches!(edit.kind, SourceKind::Imported) { "Replace YAML" } else { "Change location" }).on_click(move |_, window, cx| editor::open(Some(edit.clone()), false, window, cx)))
+                        .child(Button::new("source-edit").small().ghost().icon(IconName::FolderOpen).label(crate::i18n::text(if matches!(edit.kind, SourceKind::Imported) { "Replace YAML" } else { "Change location" })).on_click(move |_, window, cx| editor::open(Some(edit.clone()), false, window, cx)))
                         .child(Button::new("source-remove").small().ghost().icon(IconName::Unlink).label(crate::i18n::text("Remove")).on_click(cx.listener(move |view, _, window, cx| view.remove(id.clone(), window, cx))))
                 }))
             .children(status.issues.iter().enumerate().map(|(index, issue)| {
@@ -149,7 +149,7 @@ impl SourcesView {
                 v_flex().gap_1().py_2().border_b_1().border_color(cx.theme().border)
                     .child(h_flex().gap_2().child(div().flex_1().min_w_0().text_sm().child(copyable_text(("source-context", index), context.entry.id.context_name().to_string())))
                         .child(div().text_xs().text_color(if context.included { cx.theme().success } else { cx.theme().muted_foreground }).child(crate::i18n::text(if context.included { "Available" } else { "Excluded" }))))
-                    .child(hint(&format!("{} · {}{}", context.entry.initial_namespace(), context.authentication,
+                    .child(hint(&format!("{} · {}{}", context.entry.initial_namespace(), crate::i18n::text(&context.authentication),
                         context.file.strip_prefix(std::path::Path::new(&status.location)).ok().filter(|path| !path.as_os_str().is_empty()).map_or(String::new(), |path| format!(" · {}", path.display()))), cx))
                     .child(div().text_xs().text_color(cx.theme().muted_foreground).child(copyable_text(("source-context-server", index), context.server.clone())))
             }))
@@ -213,7 +213,13 @@ impl Render for SourcesView {
                     })
                     .rounded(cx.theme().radius)
                     .p_3()
-                    .accessibility_label(format!("Source {}", status.name))
+                    .accessibility_label(
+                        crate::i18n::message(
+                            "messages.source",
+                            &[("value0", (status.name).to_string())],
+                        )
+                        .to_string(),
+                    )
                     .child(
                         v_flex()
                             .w_full()
@@ -262,11 +268,16 @@ impl Render for SourcesView {
                             .flex_1()
                             .text_sm()
                             .text_color(cx.theme().muted_foreground)
-                            .child(format!(
-                                "{} sources · {} available contexts",
-                                catalog.statuses.len(),
-                                catalog.contexts.entries().len()
-                            )),
+                            .child(
+                                crate::i18n::message(
+                                    "messages.sources_available_contexts",
+                                    &[
+                                        ("value0", (catalog.statuses.len()).to_string()),
+                                        ("value1", (catalog.contexts.entries().len()).to_string()),
+                                    ],
+                                )
+                                .to_string(),
+                            ),
                     )
                     .child(
                         Button::new("reload-kubeconfigs")

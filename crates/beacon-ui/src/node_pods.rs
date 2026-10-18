@@ -211,13 +211,18 @@ fn render_pods_content(
     let state = table.read(cx).delegate();
     let loading = state.is_loading();
     let count = if loading && state.total() > 0 {
-        format!("{} Pods · Loading…", state.total())
+        crate::i18n::message(
+            "messages.pods_loading",
+            &[("value0", (state.total()).to_string())],
+        )
+        .to_string()
     } else if loading {
         "Loading Pods…".into()
     } else if error.is_some() {
         "Pods".into()
     } else if state.len() == state.total() {
-        format!("{} Pods", state.total())
+        crate::i18n::message("messages.pods", &[("value0", (state.total()).to_string())])
+            .to_string()
     } else {
         format!("{} / {} Pods", state.len(), state.total())
     };
@@ -252,11 +257,11 @@ fn render_pods_content(
             .p_4()
             .text_sm()
             .text_color(cx.theme().muted_foreground)
-            .child(if state.total() == 0 {
+            .child(crate::i18n::text(if state.total() == 0 {
                 "No Pods are scheduled to this node."
             } else {
                 "No Pods match the search."
-            })
+            }))
             .test_support()
             .into_any_element()
     } else {
@@ -310,7 +315,7 @@ mod rendering_tests {
                 &self.table,
                 &self.search,
                 None,
-                Button::new("refresh-node-pods").label("Refresh"),
+                Button::new("refresh-node-pods").label(crate::i18n::text("Refresh")),
                 cx,
             )
         }
@@ -330,7 +335,9 @@ mod rendering_tests {
                 .child(div().w(px(420.)).h_full().min_size_0().child(if self.pods {
                     self.pane.clone().into_any_element()
                 } else {
-                    div().child("Overview").into_any_element()
+                    div()
+                        .child(crate::i18n::text("Overview"))
+                        .into_any_element()
                 }))
         }
     }
@@ -361,7 +368,7 @@ mod rendering_tests {
                         cx,
                     )
                 });
-                let search = cx.new(|cx| InputState::new(window, cx).placeholder("Search Pods"));
+                let search = cx.new(|cx| crate::i18n::input("Search Pods", window, cx));
                 let pane = cx.new(|_| Pane { table, search });
                 let nodes = cx.new(|cx| {
                     let mut delegate = ResourceTable::new(ColumnSet::for_kind("", "Node", false));

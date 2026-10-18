@@ -173,10 +173,11 @@ pub fn available_for_object(
             label: format!("{}…", action.label()),
             allowed,
             blocked_because: (!allowed).then(|| {
-                format!(
-                    "You do not have {} on argoproj.io/workflows in this namespace",
-                    action.verb()
+                crate::i18n::message(
+                    "messages.you_do_not_have_on_argoproj_io_workflows_in_this_namespace",
+                    &[("value0", (action.verb()).to_string())],
                 )
+                .to_string()
             }),
         });
     }
@@ -272,16 +273,26 @@ fn label(operation: &Operation) -> String {
 /// Phrased as the RBAC question that was asked, because that is what somebody
 /// has to take to whoever grants them access.
 fn refusal(operation: &Operation, kind: &Kind) -> String {
-    format!(
-        "You do not have {} on {} in {}",
-        operation.verb(),
-        operation.resource(&kind.resource.plural),
-        if kind.namespaced {
-            "this namespace"
-        } else {
-            "this cluster"
-        }
+    crate::i18n::message(
+        "messages.you_do_not_have_on_in",
+        &[
+            ("value0", (operation.verb()).to_string()),
+            (
+                "value1",
+                (operation.resource(&kind.resource.plural)).to_string(),
+            ),
+            (
+                "value2",
+                crate::i18n::text(if kind.namespaced {
+                    "this namespace"
+                } else {
+                    "this cluster"
+                })
+                .to_string(),
+            ),
+        ],
     )
+    .to_string()
 }
 
 #[cfg(test)]

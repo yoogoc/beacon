@@ -352,15 +352,19 @@ impl Updater {
         let download = download.clone();
         let blockers = crate::app::update_blockers(cx);
         if !blockers.edits.is_empty() {
-            let detail = format!(
-                "Apply or discard these edits before installing:\n\n{}",
-                blockers.edits.join("\n")
-            );
+            let detail = crate::i18n::message(
+                "messages.apply_or_discard_these_edits_before_installing",
+                &[("value0", (blockers.edits.join("\n")).to_string())],
+            )
+            .to_string();
             let answer = window.prompt(
                 PromptLevel::Warning,
-                "Unapplied resource edits",
+                crate::i18n::text("Unapplied resource edits").as_ref(),
                 Some(&detail),
-                &["Cancel", "Return to editors"],
+                &[
+                    crate::i18n::text("Cancel").as_ref(),
+                    crate::i18n::text("Return to editors").as_ref(),
+                ],
                 cx,
             );
             cx.spawn(async move |_, cx| {
@@ -371,15 +375,15 @@ impl Updater {
             .detach();
             return;
         }
-        let detail = format!(
-            "Install Beacon {} and restart?\n\n{} active shell/command session(s) and {} port forward(s) will stop. Clusters will stay disconnected after restart.",
-            download.release.version, blockers.shells, blockers.forwards
-        );
+        let detail = crate::i18n::message("messages.install_beacon_and_restart_active_shell_command_session_s_and_port_forward_s_will_stop_clusters_will_stay_disconnected_after_restart", &[("value0", (download.release.version).to_string()), ("value1", (blockers.shells).to_string()), ("value2", (blockers.forwards).to_string())]).to_string();
         let answer = window.prompt(
             PromptLevel::Warning,
-            "Restart and install update?",
+            crate::i18n::text("Restart and install update?").as_ref(),
             Some(&detail),
-            &["Cancel", "Restart and install"],
+            &[
+                crate::i18n::text("Cancel").as_ref(),
+                crate::i18n::text("Restart and install").as_ref(),
+            ],
             cx,
         );
         let installation = self.installation.clone();

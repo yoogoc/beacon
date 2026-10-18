@@ -101,9 +101,13 @@ impl NetworkView {
             else {
                 self.loading[index] = false;
                 if index != 0 {
-                    self.errors[index] = Some(format!(
-                        "{name} is not available for listing in this cluster."
-                    ));
+                    self.errors[index] = Some(
+                        crate::i18n::message(
+                            "messages.name_is_not_available_for_listing_in_this_cluster",
+                            &[("name", (name).to_string())],
+                        )
+                        .to_string(),
+                    );
                 }
                 continue;
             };
@@ -284,7 +288,7 @@ impl Render for NetworkView {
                 .child(Button::new("refresh-network").small().ghost().label(crate::i18n::text("Refresh")).on_click(cx.listener(|view,_,window,cx|view.load(window,cx)))))
             .child(div().px_3().text_xs().text_color(cx.theme().muted_foreground).child(crate::i18n::text("Configured resource relationships. Click a hop to inspect it; this view does not test live network connectivity.")))
             .when(self.loading.iter().any(|loading| *loading),|view|view.child(div().px_3().child(crate::i18n::text("Loading network resources…"))))
-            .children(self.errors.iter().enumerate().filter_map(|(i,error)|error.as_ref().map(|error|div().px_3().child(copyable_text(("network-load-error",i),format!("Network view is incomplete. {error}"))))))
+            .children(self.errors.iter().enumerate().filter_map(|(i,error)|error.as_ref().map(|error|div().px_3().child(copyable_text(("network-load-error",i),crate::i18n::message("messages.network_view_is_incomplete_error", &[("error", (error).to_string())]).to_string())))))
             .child(div().flex_1().min_size_0().relative().child(list).child(Scrollbar::horizontal(&self.scroll).mode(ScrollbarMode::Always)).child(Scrollbar::vertical(&self.scroll)))
     }
 }

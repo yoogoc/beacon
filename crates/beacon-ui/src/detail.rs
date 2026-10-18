@@ -599,7 +599,7 @@ impl DetailView {
             .unwrap_or_else(|| {
                 div()
                     .p_4()
-                    .child("Related resources are not available.")
+                    .child(crate::i18n::text("Related resources are not available."))
                     .into_any_element()
             })
     }
@@ -643,7 +643,7 @@ impl DetailView {
                 .text_color(cx.theme().muted_foreground)
                 .child(copyable_text(
                     "node-pods-unavailable",
-                    "The Pod resource is not available in this cluster.",
+                    crate::i18n::text("The Pod resource is not available in this cluster."),
                 ))
                 .into_any_element(),
         }
@@ -1191,7 +1191,7 @@ impl DetailView {
         window.open_sheet(cx, move |sheet, window, _| {
             let owner = owner.clone();
             sheet
-                .title("Node details")
+                .title(crate::i18n::text("Node details"))
                 .size(px(560.).min(window.viewport_size().width - px(24.)))
                 .resizable(true)
                 .child(node.clone())
@@ -1221,7 +1221,7 @@ impl DetailView {
                     .small()
                     .ghost()
                     .icon(IconName::ChevronLeft)
-                    .label("Back to workflow")
+                    .label(crate::i18n::text("Back to workflow"))
                     .on_click(cx.listener(|view, _, _, cx| {
                         view.argo_scope = None;
                         view.argo_reveal = None;
@@ -1314,7 +1314,7 @@ impl DetailView {
                             .xsmall()
                             .ghost()
                             .label("×")
-                            .tooltip("Close the details panel")
+                            .tooltip(crate::i18n::text("Close the details panel"))
                             .on_click(cx.listener(|_, _, _, cx| cx.emit(DetailClosed))),
                     ),
             )
@@ -1389,7 +1389,7 @@ impl DetailView {
                     .text_color(cx.theme().muted_foreground)
                     .child(copyable_text(
                         "argo-runs-loading",
-                        "Waiting for workflow history…",
+                        crate::i18n::text("Waiting for workflow history…"),
                     ))
                     .into_any_element()
             };
@@ -1582,12 +1582,19 @@ impl DetailView {
                     )),
             );
         for (index, hint) in summary.hints.into_iter().enumerate() {
-            line = line.child(SelectableText::new(("summary-hint", index), hint));
+            line = line.child(SelectableText::new(
+                ("summary-hint", index),
+                crate::i18n::text(hint),
+            ));
         }
         if let Some(created) = &self.object.metadata.creation_timestamp {
             line = line.child(SelectableText::new(
                 "summary-age",
-                format!("Created {} ago", format_age(created, self.now)),
+                crate::i18n::message(
+                    "messages.created_ago",
+                    &[("value0", (format_age(created, self.now)).to_string())],
+                )
+                .to_string(),
             ));
         }
         self.overview_block("summary", cx).child(line).when_some(
@@ -1866,9 +1873,9 @@ impl DetailView {
                     div()
                         .text_xs()
                         .text_color(cx.theme().muted_foreground)
-                        .child(
+                        .child(crate::i18n::text(
                             "Expiry checks time only; issuer trust and hostname are not verified.",
-                        ),
+                        )),
                 )
                 .into_any_element(),
         }
@@ -1892,11 +1899,19 @@ impl DetailView {
             Tone::Healthy
         };
         let title = if ca_bundle {
-            format!("CA certificate {}", index + 1)
+            crate::i18n::message(
+                "messages.ca_certificate",
+                &[("value0", (index + 1).to_string())],
+            )
+            .to_string()
         } else if index == 0 {
             "Leaf certificate".to_string()
         } else {
-            format!("Chain certificate {}", index + 1)
+            crate::i18n::message(
+                "messages.chain_certificate",
+                &[("value0", (index + 1).to_string())],
+            )
+            .to_string()
         };
 
         v_flex()
@@ -1947,14 +1962,24 @@ impl DetailView {
                     ("Public key", Some(certificate.public_key_algorithm.clone())),
                     (
                         "Key size",
-                        certificate.public_key_bits.map(|bits| format!("{bits} bits")),
+                        certificate.public_key_bits.map(|bits| {
+                            crate::i18n::message(
+                                "messages.bits_bits",
+                                &[("bits", (bits).to_string())],
+                            )
+                            .to_string()
+                        }),
                     ),
                 ],
                 cx,
             ))
             .child(
                 self.disclosure(
-                    &format!("Extensions · {}", certificate.extensions.len()),
+                    crate::i18n::message(
+                        "messages.extensions",
+                        &[("value0", (certificate.extensions.len()).to_string())],
+                    )
+                    .as_ref(),
                     &format!("certificate:{index}:extensions"),
                     v_flex().w_full().gap_3().children(
                         certificate
@@ -1970,7 +1995,11 @@ impl DetailView {
                                         SelectableText::new(
                                             "name",
                                             if extension.critical {
-                                                format!("{} · critical", extension.name)
+                                                crate::i18n::message(
+                                                    "messages.critical",
+                                                    &[("value0", (extension.name).to_string())],
+                                                )
+                                                .to_string()
                                             } else {
                                                 extension.name.clone()
                                             },
@@ -2055,6 +2084,17 @@ impl DetailView {
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let title = title.into();
+        let display_title = crate::i18n::heading_text(&title);
+        let shift = display_title.len() as isize - title.len() as isize;
+        let display_links: Vec<_> = links
+            .iter()
+            .cloned()
+            .map(|mut link| {
+                link.range.start = link.range.start.saturating_add_signed(shift);
+                link.range.end = link.range.end.saturating_add_signed(shift);
+                link
+            })
+            .collect();
         h_flex()
             .min_w_0()
             .gap_2()
@@ -2067,8 +2107,8 @@ impl DetailView {
                     .text_color(cx.theme().muted_foreground),
             )
             .child(div().flex_1().min_w_0().child(crate::web_links::render(
-                title.to_string(),
-                links,
+                display_title.to_string(),
+                &display_links,
                 cx,
             )))
     }
@@ -2136,7 +2176,11 @@ impl DetailView {
                         .label(if expanded {
                             "Show less".to_string()
                         } else {
-                            format!("Show {} more", entries.len() - PREVIEW_LIMIT)
+                            crate::i18n::message(
+                                "messages.show_more",
+                                &[("value0", (entries.len() - PREVIEW_LIMIT).to_string())],
+                            )
+                            .to_string()
                         })
                         .on_click(cx.listener(move |view, _, _, cx| {
                             let expanded = match group {
@@ -2234,11 +2278,11 @@ impl DetailView {
                                             } else {
                                                 gpui_kit::component::IconName::ChevronRight
                                             })
-                                            .tooltip(if expanded {
+                                            .tooltip(crate::i18n::text(if expanded {
                                                 "Collapse container"
                                             } else {
                                                 "Expand container"
-                                            })
+                                            }))
                                             .on_click(cx.listener(move |view, _, _, cx| {
                                                 if !view.expanded_sections.remove(&key) {
                                                     view.expanded_sections.insert(key.clone());
@@ -2274,7 +2318,14 @@ impl DetailView {
                                                 .text_color(cx.theme().muted_foreground)
                                                 .child(SelectableText::new(
                                                     "restarts",
-                                                    format!("{} restarts", container.restarts),
+                                                    crate::i18n::message(
+                                                        "messages.restarts",
+                                                        &[(
+                                                            "value0",
+                                                            (container.restarts).to_string(),
+                                                        )],
+                                                    )
+                                                    .to_string(),
                                                 )),
                                         )
                                     }),
@@ -2296,7 +2347,7 @@ impl DetailView {
             Button::new(id)
                 .ghost()
                 .small()
-                .label("View usage")
+                .label(crate::i18n::text("View usage"))
                 .on_click(cx.listener(move |view, _, window, cx| view.select(tab, window, cx)))
                 .into_any_element()
         })
@@ -2340,10 +2391,10 @@ impl DetailView {
         .small()
         .primary()
         .disabled(blocked)
-        .menu_accessibility_label("Choose save method")
+        .menu_accessibility_label(crate::i18n::text("Choose save method"))
         .button(
             Button::new(if data { "save-data" } else { "apply" })
-                .label(if self.reviewing {
+                .label(crate::i18n::text(if self.reviewing {
                     "Reviewing…"
                 } else if running {
                     "Saving…"
@@ -2351,15 +2402,15 @@ impl DetailView {
                     "Save (SSA)"
                 } else {
                     "Save"
-                })
-                .tooltip(match method {
+                }))
+                .tooltip(crate::i18n::text(match method {
                     SaveMethod::Patch => {
                         "Review and save changed fields with resource version checks"
                     }
                     SaveMethod::ServerSideApply => {
                         "Review and apply with server-side field ownership checks"
                     }
-                })
+                }))
                 .disabled(blocked || (data && !self.data_changed(cx)))
                 .on_click(cx.listener(move |view, _, window, cx| {
                     if data {
@@ -2378,7 +2429,7 @@ impl DetailView {
             .fold(menu, |menu, (label, option)| {
                 let owner = owner.clone();
                 menu.item(
-                    PopupMenuItem::new(label)
+                    PopupMenuItem::new(crate::i18n::text(label))
                         .checked(method == option)
                         .disabled(deleting_keys && option == SaveMethod::ServerSideApply)
                         .on_click(move |_, _, cx| {
@@ -2428,10 +2479,16 @@ impl DetailView {
                         .test_support()
                         .text_xs()
                         .text_color(cx.theme().muted_foreground)
-                        .child(format!(
-                            "{edited} modified · {} deleted · Review before saving",
-                            self.data_browser.deleted.len()
-                        )),
+                        .child(
+                            crate::i18n::message(
+                                "messages.edited_modified_deleted_review_before_saving",
+                                &[
+                                    ("edited", (edited).to_string()),
+                                    ("value0", (self.data_browser.deleted.len()).to_string()),
+                                ],
+                            )
+                            .to_string(),
+                        ),
                 )
             })
             .when(
@@ -2452,7 +2509,7 @@ impl DetailView {
                             Button::new("review-latest-data")
                                 .small()
                                 .outline()
-                                .label("Review latest")
+                                .label(crate::i18n::text("Review latest"))
                                 .disabled(running || !may_apply || (secret && !revealed))
                                 .on_click(cx.listener(|view, _, window, cx| {
                                     view.review_latest(window, cx)
@@ -2467,7 +2524,7 @@ impl DetailView {
                                 Button::new("force-apply-data")
                                     .danger()
                                     .small()
-                                    .label("Force apply…")
+                                    .label(crate::i18n::text("Force apply…"))
                                     .disabled(running || !may_apply || (secret && !revealed))
                                     .on_click(cx.listener(|view, _, window, cx| {
                                         view.apply_data(true, window, cx)
@@ -2554,7 +2611,7 @@ impl DetailView {
                             Button::new("review-latest-yaml")
                                 .small()
                                 .outline()
-                                .label("Review latest")
+                                .label(crate::i18n::text("Review latest"))
                                 .disabled(running || !may_apply)
                                 .on_click(cx.listener(|view, _, window, cx| {
                                     view.review_latest(window, cx)
@@ -2569,7 +2626,7 @@ impl DetailView {
                                 Button::new("force-apply")
                                     .danger()
                                     .small()
-                                    .label("Force apply…")
+                                    .label(crate::i18n::text("Force apply…"))
                                     .disabled(running || !may_apply)
                                     .on_click(cx.listener(|view, _, window, cx| {
                                         view.apply(true, window, cx)
@@ -2581,8 +2638,10 @@ impl DetailView {
                         Button::new("format-yaml")
                             .ghost()
                             .small()
-                            .label("Format")
-                            .tooltip("Rewrite it the way the pane does — comments are not kept")
+                            .label(crate::i18n::text("Format"))
+                            .tooltip(crate::i18n::text(
+                                "Rewrite it the way the pane does — comments are not kept",
+                            ))
                             .disabled(!may_apply || running)
                             .on_click(cx.listener(|view, _, window, cx| view.format(window, cx))),
                     )
@@ -2599,7 +2658,7 @@ impl DetailView {
             return div()
                 .text_xs()
                 .text_color(cx.theme().muted_foreground)
-                .child("Preparing YAML changes for review…")
+                .child(crate::i18n::text("Preparing YAML changes for review…"))
                 .into_any_element();
         }
         match &self.apply {
@@ -2610,21 +2669,22 @@ impl DetailView {
                     SaveMethod::Patch => {
                         "Patch · Checks the resource version before saving.".to_string()
                     }
-                    SaveMethod::ServerSideApply => format!(
-                        "Server-Side Apply · field manager “{}”",
-                        beacon_kube::ops::FIELD_MANAGER
-                    ),
+                    SaveMethod::ServerSideApply => crate::i18n::message(
+                        "messages.server_side_apply_field_manager",
+                        &[("value0", (beacon_kube::ops::FIELD_MANAGER).to_string())],
+                    )
+                    .to_string(),
                 })
                 .into_any_element(),
             Apply::Running => div()
                 .text_xs()
                 .text_color(cx.theme().tone(Tone::Progressing))
-                .child("Saving…")
+                .child(crate::i18n::text("Saving…"))
                 .into_any_element(),
             Apply::Done => div()
                 .text_xs()
                 .text_color(cx.theme().tone(Tone::Healthy))
-                .child("Saved.")
+                .child(crate::i18n::text("Saved."))
                 .into_any_element(),
             Apply::Stale(message) => div()
                 .id("save-version-conflict")
@@ -2654,45 +2714,53 @@ impl DetailView {
                     },
                 ))
                 .into_any_element(),
-            Apply::Refused(conflict) => {
-                v_flex()
-                    .gap_1()
-                    .child(
-                        div()
-                            .text_xs()
-                            .font_weight(FontWeight::MEDIUM)
-                            .text_color(cx.theme().tone(Tone::Warning))
-                            .child(copyable_text(
-                                "apply-conflict",
-                                format!("Not applied — {}", conflict.summary()),
-                            )),
-                    )
-                    .children(conflict.fields.iter().enumerate().map(|(index, field)| {
-                        let mine = self.value_at(field, cx);
-                        h_flex()
-                            .id(("conflict-field", index))
-                            .flex_wrap()
-                            .gap_2()
-                            .items_baseline()
-                            .text_xs()
-                            .child(
-                                div()
-                                    .font_family("monospace")
-                                    .text_color(cx.theme().foreground)
-                                    .child(copyable_text("field", field.clone())),
+            Apply::Refused(conflict) => v_flex()
+                .gap_1()
+                .child(
+                    div()
+                        .text_xs()
+                        .font_weight(FontWeight::MEDIUM)
+                        .text_color(cx.theme().tone(Tone::Warning))
+                        .child(copyable_text(
+                            "apply-conflict",
+                            crate::i18n::message(
+                                "messages.not_applied",
+                                &[("value0", (conflict.summary()).to_string())],
                             )
-                            .child(div().text_color(cx.theme().muted_foreground).child(
-                                copyable_text(
+                            .to_string(),
+                        )),
+                )
+                .children(conflict.fields.iter().enumerate().map(|(index, field)| {
+                    let mine = self.value_at(field, cx);
+                    h_flex()
+                        .id(("conflict-field", index))
+                        .flex_wrap()
+                        .gap_2()
+                        .items_baseline()
+                        .text_xs()
+                        .child(
+                            div()
+                                .font_family("monospace")
+                                .text_color(cx.theme().foreground)
+                                .child(copyable_text("field", field.clone())),
+                        )
+                        .child(
+                            div()
+                                .text_color(cx.theme().muted_foreground)
+                                .child(copyable_text(
                                     "yours",
                                     match mine {
-                                        Some(value) => format!("yours: {value}"),
+                                        Some(value) => crate::i18n::message(
+                                            "messages.yours_value",
+                                            &[("value", (value).to_string())],
+                                        )
+                                        .to_string(),
                                         None => "yours: (removed)".to_string(),
                                     },
-                                ),
-                            ))
-                    }))
-                    .into_any_element()
-            }
+                                )),
+                        )
+                }))
+                .into_any_element(),
         }
     }
 
@@ -2783,9 +2851,13 @@ impl DetailView {
                                             .child(copyable_text("event-reason", event.reason)),
                                     )
                                     .child(
-                                        div()
-                                            .text_color(cx.theme().muted_foreground)
-                                            .child(format!("{} ago", event.last_seen)),
+                                        div().text_color(cx.theme().muted_foreground).child(
+                                            crate::i18n::message(
+                                                "messages.ago",
+                                                &[("value0", (event.last_seen).to_string())],
+                                            )
+                                            .to_string(),
+                                        ),
                                     )
                                     .when(event.count > 1, |this| {
                                         this.child(
@@ -2827,7 +2899,10 @@ impl DetailView {
             .when(waiting, |this| {
                 this.child(Spinner::new().small().color(cx.theme().tone(tone)))
             })
-            .child(copyable_text("detail-notice", message))
+            .child(copyable_text(
+                "detail-notice",
+                crate::i18n::text(message.into()),
+            ))
             .into_any_element()
     }
 
@@ -2852,7 +2927,7 @@ impl DetailView {
                 div()
                     .text_xs()
                     .text_color(cx.theme().muted_foreground)
-                    .child("Owner"),
+                    .child(crate::i18n::text("Owner")),
             )
             .when(owners.is_empty(), |this| {
                 this.child(
@@ -3105,10 +3180,15 @@ fn container_state(status: &Value) -> String {
     if let Some(running) = state.get("running") {
         return match running.get("startedAt").and_then(Value::as_str) {
             Some(started) => match started.parse::<Timestamp>() {
-                Ok(started) => format!(
-                    "Running for {}",
-                    format_duration(Timestamp::now().duration_since(started).as_secs())
-                ),
+                Ok(started) => crate::i18n::message(
+                    "messages.running_for",
+                    &[(
+                        "value0",
+                        (format_duration(Timestamp::now().duration_since(started).as_secs()))
+                            .to_string(),
+                    )],
+                )
+                .to_string(),
                 Err(_) => "Running".into(),
             },
             None => "Running".into(),
@@ -3213,7 +3293,13 @@ fn tls_certificates(
 
 /// Reads a YAML document into the value the rest of this works with.
 fn parse(yaml: &str) -> Result<Value, String> {
-    serde_saphyr::from_str(yaml).map_err(|error| format!("This is not valid YAML: {error}"))
+    serde_saphyr::from_str(yaml).map_err(|error| {
+        crate::i18n::message(
+            "messages.this_is_not_valid_yaml_error",
+            &[("error", (error).to_string())],
+        )
+        .to_string()
+    })
 }
 
 /// Rewrites a YAML document by round-tripping it through that value.
@@ -3229,8 +3315,13 @@ fn parse(yaml: &str) -> Result<Value, String> {
 /// it is not a new loss: applying already sends the parsed object, so anything
 /// the parse drops was never going to reach the cluster either.
 fn reformat(yaml: &str) -> Result<String, String> {
-    serde_saphyr::to_string(&parse(yaml)?)
-        .map_err(|error| format!("Could not write the YAML back out: {error}"))
+    serde_saphyr::to_string(&parse(yaml)?).map_err(|error| {
+        crate::i18n::message(
+            "messages.could_not_write_the_yaml_back_out_error",
+            &[("error", (error).to_string())],
+        )
+        .to_string()
+    })
 }
 
 #[cfg(all(test, feature = "ui-tests"))]

@@ -219,7 +219,7 @@ impl Render for DebugView {
                 .child(Button::new("debug-profile-restricted").small().ghost().label(crate::i18n::text("Restricted")).selected(self.profile == Profile::Restricted).disabled(locked).on_click(cx.listener(|view, _, _, cx| { view.profile = Profile::Restricted; cx.notify(); })))
                 .child(Button::new("debug-profile-baseline").small().ghost().label(crate::i18n::text("Baseline")).selected(self.profile == Profile::Baseline).disabled(locked).on_click(cx.listener(|view, _, _, cx| { view.profile = Profile::Baseline; cx.notify(); }))))
             .child(div().text_sm().text_color(cx.theme().muted_foreground).child(crate::i18n::text("Adds an ephemeral container to this Pod. Its entry remains until the Pod is removed. Restricted runs as user 1000 with all capabilities dropped.")))
-            .child(Button::new("start-debug-container").small().primary().label(if self.created.is_some() { "Open debug terminal" } else { "Create and open terminal" }).disabled(self.busy).on_click(cx.listener(|view, _, window, cx| view.start(window, cx))))
+            .child(Button::new("start-debug-container").small().primary().label(crate::i18n::text(if self.created.is_some() { "Open debug terminal" } else { "Create and open terminal" })).disabled(self.busy).on_click(cx.listener(|view, _, window, cx| view.start(window, cx))))
             .children(self.message.as_ref().map(|message| copyable_text("debug-message", message.clone())))
             .when_some(self.terminal.clone(), |view, terminal| view.child(div().flex_1().min_h_0().child(terminal)))
     }

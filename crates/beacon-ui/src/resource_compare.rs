@@ -84,7 +84,7 @@ fn label(text: &str, cx: &App) -> AnyElement {
     div()
         .text_xs()
         .text_color(cx.theme().muted_foreground)
-        .child(text.to_string())
+        .child(crate::i18n::text(text))
         .into_any_element()
 }
 
@@ -268,18 +268,12 @@ fn comparison_view(
             namespace_picker: picker(vec![namespace.clone()], &namespace, window, cx),
             resource_picker: picker(vec![], "", window, cx),
             namespace: cx.new(|cx| {
-                InputState::new(window, cx)
-                    .default_value(namespace)
-                    .placeholder("Target namespace")
+                crate::i18n::input("Target namespace", window, cx).default_value(namespace)
             }),
             name: cx.new(|cx| {
-                InputState::new(window, cx)
-                    .default_value(name)
-                    .placeholder("Target resource name")
+                crate::i18n::input("Target resource name", window, cx).default_value(name)
             }),
-            search: cx.new(|cx| {
-                InputState::new(window, cx).placeholder("Filter changed fields or values")
-            }),
+            search: cx.new(|cx| crate::i18n::input("Filter changed fields or values", window, cx)),
             cluster,
             manual: false,
             catalog_loading: false,
@@ -477,10 +471,13 @@ impl CompareView {
         };
         let Some(kind) = self.right_kind(&right) else {
             self.catalog_loading = false;
-            self.message = Some(format!(
-                "{} is not available in this cluster. Choose another connected cluster.",
-                self.kind.resource.kind
-            ));
+            self.message = Some(
+                crate::i18n::message(
+                    "messages.is_not_available_in_this_cluster_choose_another_connected_cluster",
+                    &[("value0", (self.kind.resource.kind).to_string())],
+                )
+                .to_string(),
+            );
             cx.notify();
             return;
         };
@@ -529,7 +526,7 @@ impl CompareView {
                         view.name.update(cx, |input, cx| input.set_value(selected.clone(), window, cx));
                         if selected.is_empty() {
                             view.catalog_note = Some(if view.target_names.is_empty() {
-                                format!("No other {} resources in this namespace. Try another namespace or cluster.", view.kind.resource.kind)
+                                crate::i18n::message("messages.no_other_resources_in_this_namespace_try_another_namespace_or_cluster", &[("value0", (view.kind.resource.kind).to_string())]).to_string()
                             } else {
                                 "No same-name match. Search the resource selector and choose a target.".into()
                             });
@@ -543,7 +540,7 @@ impl CompareView {
                             Err(error) => error.to_string(),
                             _ => unreachable!(),
                         };
-                        view.catalog_note = Some(format!("Could not list resources. Enter a namespace and name to compare directly. {error}"));
+                        view.catalog_note = Some(crate::i18n::message("messages.could_not_list_resources_enter_a_namespace_and_name_to_compare_directly_error", &[("error", (error).to_string())]).to_string());
                         view.manual = true;
                         if !view.name.read(cx).value().trim().is_empty() {
                             view.load(window, cx);
@@ -586,10 +583,20 @@ impl CompareView {
                 left.get_object(resource, source.namespace, source.name),
                 right.get_object(kind.resource, kind.namespaced.then_some(namespace), name)
             );
-            let a =
-                a.map_err(|error| format!("Could not read the source: {}", error.user_message()))?;
-            let b =
-                b.map_err(|error| format!("Could not read the target: {}", error.user_message()))?;
+            let a = a.map_err(|error| {
+                crate::i18n::message(
+                    "messages.could_not_read_the_source",
+                    &[("value0", (error.user_message()).to_string())],
+                )
+                .to_string()
+            })?;
+            let b = b.map_err(|error| {
+                crate::i18n::message(
+                    "messages.could_not_read_the_target",
+                    &[("value0", (error.user_message()).to_string())],
+                )
+                .to_string()
+            })?;
             Ok::<_, String>((
                 serde_json::to_value(a).map_err(|error| error.to_string())?,
                 serde_json::to_value(b).map_err(|error| error.to_string())?,
@@ -701,11 +708,11 @@ impl CompareView {
                             .small()
                             .ghost()
                             .selected(self.manual)
-                            .label(if self.manual {
+                            .label(crate::i18n::text(if self.manual {
                                 "Browse resources"
                             } else {
                                 "Enter manually"
-                            })
+                            }))
                             .on_click(cx.listener(|view, _, window, cx| {
                                 view.manual = !view.manual;
                                 if view.manual {
@@ -726,9 +733,9 @@ impl CompareView {
                     Select::new(&self.cluster)
                         .small()
                         .w_full()
-                        .placeholder("Choose a connected cluster")
-                        .search_placeholder("Search connected clusters")
-                        .accessibility_label("Target cluster"),
+                        .placeholder(crate::i18n::text("Choose a connected cluster"))
+                        .search_placeholder(crate::i18n::text("Search connected clusters"))
+                        .accessibility_label(crate::i18n::text("Target cluster")),
                 ),
             )
             .child(
@@ -747,9 +754,9 @@ impl CompareView {
                                     Select::new(&self.namespace_picker)
                                         .small()
                                         .w_full()
-                                        .placeholder("Namespace")
-                                        .search_placeholder("Search namespaces")
-                                        .accessibility_label("Target namespace")
+                                        .placeholder(crate::i18n::text("Namespace"))
+                                        .search_placeholder(crate::i18n::text("Search namespaces"))
+                                        .accessibility_label(crate::i18n::text("Target namespace"))
                                         .into_any_element()
                                 }),
                         )
@@ -772,8 +779,8 @@ impl CompareView {
                                     } else {
                                         "Choose a resource"
                                     })
-                                    .search_placeholder("Search resource names")
-                                    .accessibility_label("Target resource")
+                                    .search_placeholder(crate::i18n::text("Search resource names"))
+                                    .accessibility_label(crate::i18n::text("Target resource"))
                                     .into_any_element()
                             }),
                     ),

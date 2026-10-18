@@ -201,7 +201,7 @@ impl ReviewView {
                             Button::new(id)
                                 .small()
                                 .ghost()
-                                .label(label)
+                                .label(crate::i18n::text(label))
                                 .selected(mode == selected)
                                 .on_click(cx.listener(move |view, _, _, cx| {
                                     view.diff
@@ -216,11 +216,11 @@ impl ReviewView {
                     .small()
                     .ghost()
                     .icon(IconName::List)
-                    .label(if self.show_context {
+                    .label(crate::i18n::text(if self.show_context {
                         "Hide context"
                     } else {
                         "Show context"
-                    })
+                    }))
                     .selected(self.show_context)
                     .on_click(cx.listener(|view, _, _, cx| {
                         view.show_context = !view.show_context;
@@ -294,7 +294,7 @@ impl ReviewView {
                     div()
                         .text_xs()
                         .text_color(cx.theme().muted_foreground)
-                        .child(description.to_owned()),
+                        .child(crate::i18n::text(description)),
                 )
         };
         h_flex()
@@ -385,7 +385,7 @@ impl ReviewView {
                             .primary()
                             .small()
                             .icon(IconName::Check)
-                            .label(label)
+                            .label(crate::i18n::text(label))
                             .disabled(
                                 !self.preview.changed
                                     || self.resolved

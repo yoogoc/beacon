@@ -308,7 +308,11 @@ impl Palette {
                 })
                 .chain(self.sources.ports.iter().map(|port| {
                     (
-                        format!("Forward port {port}"),
+                        crate::i18n::message(
+                            "messages.forward_port_port",
+                            &[("port", (port).to_string())],
+                        )
+                        .to_string(),
                         Choice::Forward { remote_port: *port },
                     )
                 }))
@@ -363,9 +367,13 @@ impl Palette {
             ),
             Choice::Action(action) => crate::i18n::text(action.label()),
             Choice::Operation(operation) => SharedString::from(operation.describe()),
-            Choice::Forward { remote_port } => {
-                SharedString::from(format!("Forward port {remote_port}"))
-            }
+            Choice::Forward { remote_port } => SharedString::from(
+                crate::i18n::message(
+                    "messages.forward_port_remote_port",
+                    &[("remote_port", (remote_port).to_string())],
+                )
+                .to_string(),
+            ),
         }
     }
 }

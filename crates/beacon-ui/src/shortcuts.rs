@@ -43,10 +43,19 @@ pub(crate) fn open(cx: &mut App) {
 }
 
 struct Entry {
+    action: Option<String>,
     scope: String,
     keys: String,
     function: String,
     description: String,
+}
+impl Entry {
+    fn localized_description(&self) -> SharedString {
+        self.action.as_ref().map_or_else(
+            || crate::i18n::text(&self.description),
+            |name| crate::i18n::text(describe(name, &self.scope).1),
+        )
+    }
 }
 struct Shortcuts {
     focus: FocusHandle,
@@ -89,6 +98,7 @@ impl Shortcuts {
             };
             let (function, description) = describe(name, scope);
             entries.push(Entry {
+                action: Some(name.to_owned()),
                 scope: scope.into(),
                 keys: binding
                     .keystrokes()
@@ -107,6 +117,7 @@ impl Shortcuts {
         };
         entries.extend([
             Entry {
+                action: None,
                 scope: "Overview / messages".into(),
                 keys: copy.into(),
                 function: "Copy selected values".into(),
@@ -114,6 +125,7 @@ impl Shortcuts {
                     .into(),
             },
             Entry {
+                action: None,
                 scope: "Pod shell".into(),
                 keys: "ctrl-c".into(),
                 function: "Interrupt command".into(),
@@ -121,6 +133,7 @@ impl Shortcuts {
                     .into(),
             },
             Entry {
+                action: None,
                 scope: "Pod shell".into(),
                 keys: "ctrl-d".into(),
                 function: "End input".into(),
@@ -129,6 +142,7 @@ impl Shortcuts {
                         .into(),
             },
             Entry {
+                action: None,
                 scope: "Pod shell".into(),
                 keys: "ctrl-z".into(),
                 function: "Suspend command".into(),
@@ -171,7 +185,7 @@ impl Render for Shortcuts {
                     e.description,
                     crate::i18n::text(&e.scope),
                     crate::i18n::text(&e.function),
-                    crate::i18n::text(&e.description)
+                    e.localized_description()
                 )
                 .to_lowercase()
                 .contains(&self.query)
@@ -189,7 +203,7 @@ impl Render for Shortcuts {
                         .child(div().w(px(180.)).flex_shrink_0().font_family("monospace").text_sm().child(SelectableText::new("keys",e.keys.clone())))
                         .child(v_flex().flex_1().min_w_0().gap_1()
                             .child(div().text_sm().font_weight(FontWeight::MEDIUM).child(crate::i18n::text(&e.function)))
-                            .child(div().text_xs().text_color(cx.theme().muted_foreground).child(format!("{} · {}",crate::i18n::text(&e.scope),crate::i18n::text(&e.description)))))
+                            .child(div().text_xs().text_color(cx.theme().muted_foreground).child(format!("{} · {}",crate::i18n::text(&e.scope),e.localized_description()))))
                 }))))
             .child(div().p_3().text_xs().text_color(cx.theme().muted_foreground).child(crate::i18n::text("Command palette: @ resource kind · # namespace · ctx cluster · > command. Select with ↑ / ↓ and confirm with Enter.")))
     }
@@ -264,25 +278,39 @@ fn describe(name: &str, scope: &str) -> (String, String) {
     };
     let function = words(name);
     let description = if name.starts_with("Move") {
-        format!(
-            "Move the text cursor: {}.",
-            words(name.trim_start_matches("Move")).to_lowercase()
+        crate::i18n::message(
+            "messages.move_the_text_cursor",
+            &[(
+                "value0",
+                crate::i18n::text(words(name.trim_start_matches("Move")).to_lowercase())
+                    .to_string(),
+            )],
         )
+        .to_string()
     } else if name.starts_with("SelectTo")
         || matches!(
             name,
             "SelectLeft" | "SelectRight" | "SelectUp" | "SelectDown"
         ) && scope == "Text fields / YAML editor"
     {
-        format!(
-            "Extend the text selection: {}.",
-            words(name.trim_start_matches("Select")).to_lowercase()
+        crate::i18n::message(
+            "messages.extend_the_text_selection",
+            &[(
+                "value0",
+                crate::i18n::text(words(name.trim_start_matches("Select")).to_lowercase())
+                    .to_string(),
+            )],
         )
+        .to_string()
     } else if name.starts_with("DeleteTo") {
-        format!(
-            "Delete text from the cursor to {}.",
-            words(name.trim_start_matches("DeleteTo")).to_lowercase()
+        crate::i18n::message(
+            "messages.delete_text_from_the_cursor_to",
+            &[(
+                "value0",
+                (words(name.trim_start_matches("DeleteTo")).to_lowercase()).to_string(),
+            )],
         )
+        .to_string()
     } else if matches!(name, "Indent" | "IndentInline") {
         "Indent the selected lines or insert indentation.".into()
     } else if matches!(name, "Outdent" | "OutdentInline") {

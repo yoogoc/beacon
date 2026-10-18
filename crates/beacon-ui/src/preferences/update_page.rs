@@ -7,11 +7,11 @@ use gpui_kit::component::progress::Progress;
 
 fn last_checked(updater: &Updater) -> String {
     let Some(checked) = updater.last_checked else {
-        return "Not checked yet".into();
+        return crate::i18n::text("Not checked yet").to_string();
     };
     let seconds = checked.elapsed().map_or(0, |elapsed| elapsed.as_secs());
     let (count, unit) = if seconds < 60 {
-        return "Last checked just now".into();
+        return crate::i18n::text("Last checked just now").to_string();
     } else if seconds < 3600 {
         (seconds / 60, "minute")
     } else if seconds < 86400 {
@@ -19,10 +19,19 @@ fn last_checked(updater: &Updater) -> String {
     } else {
         (seconds / 86400, "day")
     };
-    format!(
-        "Last checked {count} {unit}{} ago",
-        if count == 1 { "" } else { "s" }
+    let unit = if count == 1 {
+        unit.to_owned()
+    } else {
+        format!("{unit}s")
+    };
+    crate::i18n::message(
+        "updates.last_checked_ago",
+        &[
+            ("count", count.to_string()),
+            ("unit", crate::i18n::text(unit).to_string()),
+        ],
     )
+    .to_string()
 }
 
 fn update_actions(updater: &Updater) -> AnyElement {
@@ -50,11 +59,13 @@ fn update_actions(updater: &Updater) -> AnyElement {
                     .small()
                     .primary()
                     .icon(IconName::Download)
-                    .label(if matches!(updater.status, Status::Failed { .. }) {
-                        "Retry download"
-                    } else {
-                        "Download update"
-                    })
+                    .label(crate::i18n::text(
+                        if matches!(updater.status, Status::Failed { .. }) {
+                            "Retry download"
+                        } else {
+                            "Download update"
+                        },
+                    ))
                     .on_click(|_, _, cx| {
                         crate::updates::store(cx).update(cx, |view, cx| view.download(cx))
                     })
@@ -442,7 +453,13 @@ impl PreferencesView {
                                     } else {
                                         IconName::ChevronRight
                                     })
-                                    .label(format!("What's new in {}", release.version))
+                                    .label(
+                                        crate::i18n::message(
+                                            "messages.what_s_new_in",
+                                            &[("value0", (release.version).to_string())],
+                                        )
+                                        .to_string(),
+                                    )
                                     .on_click(cx.listener(|view, _, _, cx| {
                                         view.update_notes_expanded = !view.update_notes_expanded;
                                         cx.notify();

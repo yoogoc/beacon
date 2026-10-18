@@ -211,5 +211,333 @@
   "shortcuts.remove_one_indentation_level_from_the_selected_lines": {
     "en": "Remove one indentation level from the selected lines.",
     "zh-CN": "移除所选行的一级缩进。"
+  },
+  "shortcuts.close_detail": {
+    "en": "Close Detail",
+    "zh-CN": "关闭详情"
+  },
+  "shortcuts.enter": {
+    "en": "Enter",
+    "zh-CN": "回车"
+  },
+  "shortcuts.select_up": {
+    "en": "Select Up",
+    "zh-CN": "选择至上一行"
+  },
+  "shortcuts.select_down": {
+    "en": "Select Down",
+    "zh-CN": "选择至下一行"
+  },
+  "shortcuts.select_prev_column": {
+    "en": "Select Prev Column",
+    "zh-CN": "选择上一列"
+  },
+  "shortcuts.select_next_column": {
+    "en": "Select Next Column",
+    "zh-CN": "选择下一列"
+  },
+  "shortcuts.select_first": {
+    "en": "Select First",
+    "zh-CN": "选择首项"
+  },
+  "shortcuts.select_last": {
+    "en": "Select Last",
+    "zh-CN": "选择末项"
+  },
+  "shortcuts.select_page_up": {
+    "en": "Select Page Up",
+    "zh-CN": "选择至上一页"
+  },
+  "shortcuts.select_page_down": {
+    "en": "Select Page Down",
+    "zh-CN": "选择至下一页"
+  },
+  "shortcuts.add_cursor_above": {
+    "en": "Add Cursor Above",
+    "zh-CN": "在上方添加光标"
+  },
+  "shortcuts.add_cursor_below": {
+    "en": "Add Cursor Below",
+    "zh-CN": "在下方添加光标"
+  },
+  "shortcuts.show_character_palette": {
+    "en": "Show Character Palette",
+    "zh-CN": "打开字符面板"
+  },
+  "shortcuts.toggle_code_actions": {
+    "en": "Toggle Code Actions",
+    "zh-CN": "打开编辑器操作"
+  },
+  "shortcuts.indent": {
+    "en": "Indent",
+    "zh-CN": "增加缩进"
+  },
+  "shortcuts.indent_inline": {
+    "en": "Indent Inline",
+    "zh-CN": "增加行内缩进"
+  },
+  "shortcuts.outdent": {
+    "en": "Outdent",
+    "zh-CN": "减少缩进"
+  },
+  "shortcuts.outdent_inline": {
+    "en": "Outdent Inline",
+    "zh-CN": "减少行内缩进"
+  },
+  "shortcuts.left": {
+    "en": "left",
+    "zh-CN": "左侧"
+  },
+  "shortcuts.move_left": {
+    "en": "Move Left",
+    "zh-CN": "移动光标至左侧"
+  },
+  "shortcuts.select_left": {
+    "en": "Select Left",
+    "zh-CN": "选择至左侧"
+  },
+  "shortcuts.delete_left": {
+    "en": "Delete Left",
+    "zh-CN": "删除至左侧"
+  },
+  "shortcuts.right": {
+    "en": "right",
+    "zh-CN": "右侧"
+  },
+  "shortcuts.move_right": {
+    "en": "Move Right",
+    "zh-CN": "移动光标至右侧"
+  },
+  "shortcuts.select_right": {
+    "en": "Select Right",
+    "zh-CN": "选择至右侧"
+  },
+  "shortcuts.delete_right": {
+    "en": "Delete Right",
+    "zh-CN": "删除至右侧"
+  },
+  "shortcuts.up": {
+    "en": "up",
+    "zh-CN": "上一行"
+  },
+  "shortcuts.move_up": {
+    "en": "Move Up",
+    "zh-CN": "移动光标至上一行"
+  },
+  "shortcuts.delete_up": {
+    "en": "Delete Up",
+    "zh-CN": "删除至上一行"
+  },
+  "shortcuts.down": {
+    "en": "down",
+    "zh-CN": "下一行"
+  },
+  "shortcuts.move_down": {
+    "en": "Move Down",
+    "zh-CN": "移动光标至下一行"
+  },
+  "shortcuts.delete_down": {
+    "en": "Delete Down",
+    "zh-CN": "删除至下一行"
+  },
+  "shortcuts.end": {
+    "en": "end",
+    "zh-CN": "末尾"
+  },
+  "shortcuts.move_end": {
+    "en": "Move End",
+    "zh-CN": "移动光标至末尾"
+  },
+  "shortcuts.select_end": {
+    "en": "Select End",
+    "zh-CN": "选择至末尾"
+  },
+  "shortcuts.delete_end": {
+    "en": "Delete End",
+    "zh-CN": "删除至末尾"
+  },
+  "shortcuts.home": {
+    "en": "home",
+    "zh-CN": "开头"
+  },
+  "shortcuts.move_home": {
+    "en": "Move Home",
+    "zh-CN": "移动光标至开头"
+  },
+  "shortcuts.select_home": {
+    "en": "Select Home",
+    "zh-CN": "选择至开头"
+  },
+  "shortcuts.delete_home": {
+    "en": "Delete Home",
+    "zh-CN": "删除至开头"
+  },
+  "shortcuts.page_down": {
+    "en": "page down",
+    "zh-CN": "下一页"
+  },
+  "shortcuts.move_page_down": {
+    "en": "Move Page Down",
+    "zh-CN": "移动光标至下一页"
+  },
+  "shortcuts.delete_page_down": {
+    "en": "Delete Page Down",
+    "zh-CN": "删除至下一页"
+  },
+  "shortcuts.page_up": {
+    "en": "page up",
+    "zh-CN": "上一页"
+  },
+  "shortcuts.move_page_up": {
+    "en": "Move Page Up",
+    "zh-CN": "移动光标至上一页"
+  },
+  "shortcuts.delete_page_up": {
+    "en": "Delete Page Up",
+    "zh-CN": "删除至上一页"
+  },
+  "shortcuts.to_end": {
+    "en": "to end",
+    "zh-CN": "文档末尾"
+  },
+  "shortcuts.move_to_end": {
+    "en": "Move To End",
+    "zh-CN": "移动光标至文档末尾"
+  },
+  "shortcuts.select_to_end": {
+    "en": "Select To End",
+    "zh-CN": "选择至文档末尾"
+  },
+  "shortcuts.delete_to_end": {
+    "en": "Delete To End",
+    "zh-CN": "删除至文档末尾"
+  },
+  "shortcuts.to_start": {
+    "en": "to start",
+    "zh-CN": "文档开头"
+  },
+  "shortcuts.move_to_start": {
+    "en": "Move To Start",
+    "zh-CN": "移动光标至文档开头"
+  },
+  "shortcuts.select_to_start": {
+    "en": "Select To Start",
+    "zh-CN": "选择至文档开头"
+  },
+  "shortcuts.delete_to_start": {
+    "en": "Delete To Start",
+    "zh-CN": "删除至文档开头"
+  },
+  "shortcuts.to_end_of_line": {
+    "en": "to end of line",
+    "zh-CN": "行尾"
+  },
+  "shortcuts.move_to_end_of_line": {
+    "en": "Move To End Of Line",
+    "zh-CN": "移动光标至行尾"
+  },
+  "shortcuts.select_to_end_of_line": {
+    "en": "Select To End Of Line",
+    "zh-CN": "选择至行尾"
+  },
+  "shortcuts.delete_to_end_of_line": {
+    "en": "Delete To End Of Line",
+    "zh-CN": "删除至行尾"
+  },
+  "shortcuts.to_start_of_line": {
+    "en": "to start of line",
+    "zh-CN": "行首"
+  },
+  "shortcuts.move_to_start_of_line": {
+    "en": "Move To Start Of Line",
+    "zh-CN": "移动光标至行首"
+  },
+  "shortcuts.select_to_start_of_line": {
+    "en": "Select To Start Of Line",
+    "zh-CN": "选择至行首"
+  },
+  "shortcuts.delete_to_start_of_line": {
+    "en": "Delete To Start Of Line",
+    "zh-CN": "删除至行首"
+  },
+  "shortcuts.to_next_word": {
+    "en": "to next word",
+    "zh-CN": "下一个单词"
+  },
+  "shortcuts.move_to_next_word": {
+    "en": "Move To Next Word",
+    "zh-CN": "移动光标至下一个单词"
+  },
+  "shortcuts.select_to_next_word": {
+    "en": "Select To Next Word",
+    "zh-CN": "选择至下一个单词"
+  },
+  "shortcuts.delete_to_next_word": {
+    "en": "Delete To Next Word",
+    "zh-CN": "删除至下一个单词"
+  },
+  "shortcuts.to_previous_word": {
+    "en": "to previous word",
+    "zh-CN": "上一个单词"
+  },
+  "shortcuts.move_to_previous_word": {
+    "en": "Move To Previous Word",
+    "zh-CN": "移动光标至上一个单词"
+  },
+  "shortcuts.select_to_previous_word": {
+    "en": "Select To Previous Word",
+    "zh-CN": "选择至上一个单词"
+  },
+  "shortcuts.delete_to_previous_word": {
+    "en": "Delete To Previous Word",
+    "zh-CN": "删除至上一个单词"
+  },
+  "shortcuts.to_beginning_of_line": {
+    "en": "to beginning of line",
+    "zh-CN": "行首"
+  },
+  "shortcuts.move_to_beginning_of_line": {
+    "en": "Move To Beginning Of Line",
+    "zh-CN": "移动光标至行首"
+  },
+  "shortcuts.select_to_beginning_of_line": {
+    "en": "Select To Beginning Of Line",
+    "zh-CN": "选择至行首"
+  },
+  "shortcuts.delete_to_beginning_of_line": {
+    "en": "Delete To Beginning Of Line",
+    "zh-CN": "删除至行首"
+  },
+  "shortcuts.to_next_word_end": {
+    "en": "to next word end",
+    "zh-CN": "下一个单词末尾"
+  },
+  "shortcuts.move_to_next_word_end": {
+    "en": "Move To Next Word End",
+    "zh-CN": "移动光标至下一个单词末尾"
+  },
+  "shortcuts.select_to_next_word_end": {
+    "en": "Select To Next Word End",
+    "zh-CN": "选择至下一个单词末尾"
+  },
+  "shortcuts.delete_to_next_word_end": {
+    "en": "Delete To Next Word End",
+    "zh-CN": "删除至下一个单词末尾"
+  },
+  "shortcuts.to_previous_word_start": {
+    "en": "to previous word start",
+    "zh-CN": "上一个单词开头"
+  },
+  "shortcuts.move_to_previous_word_start": {
+    "en": "Move To Previous Word Start",
+    "zh-CN": "移动光标至上一个单词开头"
+  },
+  "shortcuts.select_to_previous_word_start": {
+    "en": "Select To Previous Word Start",
+    "zh-CN": "选择至上一个单词开头"
+  },
+  "shortcuts.delete_to_previous_word_start": {
+    "en": "Delete To Previous Word Start",
+    "zh-CN": "删除至上一个单词开头"
   }
 }

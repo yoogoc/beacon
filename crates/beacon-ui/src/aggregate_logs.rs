@@ -76,9 +76,7 @@ pub(crate) fn open(
             session,
             namespaces,
             selector: cx.new(|cx| {
-                InputState::new(window, cx)
-                    .default_value(selector)
-                    .placeholder("Pod label selector")
+                crate::i18n::input("Pod label selector", window, cx).default_value(selector)
             }),
             search: search.clone(),
             container: container.clone(),
@@ -391,7 +389,13 @@ impl AggregateLogs {
                 other => {
                     let _ = this.update(cx, |view, cx| {
                         view.downloading = false;
-                        view.message = Some(format!("Could not choose a folder: {other:?}"));
+                        view.message = Some(
+                            crate::i18n::message(
+                                "messages.could_not_choose_a_folder_other",
+                                &[("other", format!("{:?}", other))],
+                            )
+                            .to_string(),
+                        );
                         cx.notify();
                     });
                     return;
@@ -442,15 +446,23 @@ impl AggregateLogs {
             let _ = this.update(cx, |view, cx| {
                 view.downloading = false;
                 view.message = Some(match result {
-                    Ok(Ok((count, failures))) => format!(
-                        "Saved {count} files to {}{}",
-                        directory.display(),
-                        if failures.is_empty() {
-                            String::new()
-                        } else {
-                            format!("\n{}", failures.join("\n"))
-                        }
-                    ),
+                    Ok(Ok((count, failures))) => crate::i18n::message(
+                        "messages.saved_count_files_to",
+                        &[
+                            ("count", (count).to_string()),
+                            ("value0", (directory.display()).to_string()),
+                            (
+                                "value1",
+                                (if failures.is_empty() {
+                                    String::new()
+                                } else {
+                                    format!("\n{}", failures.join("\n"))
+                                })
+                                .to_string(),
+                            ),
+                        ],
+                    )
+                    .to_string(),
                     Ok(Err(error)) => error,
                     Err(error) => error.to_string(),
                 });
@@ -476,16 +488,16 @@ impl Render for AggregateLogs {
             .child(h_flex().gap_2().child(div().flex_1().child(Input::new(&self.selector).small()))
                 .child(Button::new("apply-log-selector").small().ghost().label(crate::i18n::text("Apply selector / retry")).on_click(cx.listener(|view, _, window, cx| view.load(window, cx)))))
             .child(h_flex().id("aggregate-log-toolbar").w_full().overflow_x_scroll().gap_2().flex_shrink_0()
-                .child(div().w(px(210.)).flex_shrink_0().child(Select::new(&self.container).small().title_prefix("Container: ")))
+                .child(div().w(px(210.)).flex_shrink_0().child(Select::new(&self.container).small().title_prefix(crate::i18n::text("Container: "))))
                 .child(div().w(px(180.)).flex_shrink_0().child(Input::new(&self.search).small()))
-                .child(Button::new("aggregate-pause").small().ghost().label(if self.follow { "Pause follow" } else { "Resume follow" }).on_click(cx.listener(|view, _, _, cx| { view.follow = !view.follow; if view.follow { view.latest(); } cx.notify(); })))
+                .child(Button::new("aggregate-pause").small().ghost().label(crate::i18n::text(if self.follow { "Pause follow" } else { "Resume follow" })).on_click(cx.listener(|view, _, _, cx| { view.follow = !view.follow; if view.follow { view.latest(); } cx.notify(); })))
                 .child(Button::new("aggregate-latest").small().ghost().label(crate::i18n::text("Latest")).on_click(cx.listener(|view, _, _, cx| { view.follow = true; view.latest(); cx.notify(); })))
                 .child(Button::new("aggregate-wrap").small().ghost().label(crate::i18n::text("Wrap")).on_click(cx.listener(|view, _, _, cx| { view.wrap = !view.wrap; if view.follow { view.latest(); } cx.notify(); })))
                 .child(Button::new("aggregate-previous").small().ghost().label(if self.previous { "Previous: on" } else { "Previous" }).on_click(cx.listener(|view, _, window, cx| { view.previous = !view.previous; view.clear_logs(); view.streams.clear(); view.sync(window, cx); })))
                 .child(Button::new("aggregate-copy").small().ghost().label(crate::i18n::text("Copy")).tooltip(crate::i18n::text("Copy matching retained raw lines; field projection does not remove original data")).on_click(cx.listener(|view, _, _, cx| cx.write_to_clipboard(ClipboardItem::new_string(view.display.borrow().text())))))
                 .child(Button::new("aggregate-download").small().ghost().label(crate::i18n::text("Export all…")).tooltip(crate::i18n::text("Download complete available logs for every current source; active time bounds apply")).disabled(self.downloading || self.streams.is_empty()).on_click(cx.listener(|view, _, window, cx| view.download(window, cx))))
                 .when(self.downloading, |bar| bar.child(Button::new("aggregate-cancel-download").small().ghost().label(crate::i18n::text("Cancel download")).on_click(cx.listener(|view, _, _, cx| { view._download = None; view.downloading = false; view.message = Some("Download cancelled. Completed files remain in the selected folder.".into()); cx.notify(); }))))
-                .child(div().whitespace_nowrap().text_sm().child(format!("{} Pods · {} sources · {} lines · {} dropped", self.pods.iter().map(ResourceStore::len).sum::<usize>(), self.streams.len(), self.display.borrow().rows.len(), self.logs.dropped()))))
+                .child(div().whitespace_nowrap().text_sm().child(crate::i18n::message("messages.pods_sources_lines_dropped", &[("value0", (self.pods.iter().map(ResourceStore::len).sum::<usize>()).to_string()), ("value1", (self.streams.len()).to_string()), ("value2", (self.display.borrow().rows.len()).to_string()), ("value3", (self.logs.dropped()).to_string())]).to_string())))
             .child(self.workbench.clone())
             .children(self.message.as_ref().map(|message| copyable_text("aggregate-message", message.clone())))
             .when(self.loading > 0, |view| view.child(crate::i18n::text("Loading matching Pods…")))

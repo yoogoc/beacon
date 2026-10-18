@@ -327,5 +327,745 @@
   "updates.channel_latest": {
     "en": "Find the latest release on the %{channel} channel.",
     "zh-CN": "查找%{channel}渠道的最新版本。"
+  },
+  "settings.search_installed_fonts": {
+    "en": "Search installed fonts",
+    "zh-CN": "搜索已安装字体"
+  },
+  "settings.search_color_options": {
+    "en": "Search color options",
+    "zh-CN": "搜索颜色选项"
+  },
+  "settings.search_chart_versions": {
+    "en": "Search chart versions",
+    "zh-CN": "搜索 Chart 版本"
+  },
+  "settings.search_revisions": {
+    "en": "Search revisions",
+    "zh-CN": "搜索历史版本"
+  },
+  "settings.system_font": {
+    "en": "System font",
+    "zh-CN": "系统字体"
+  },
+  "settings.page_background": {
+    "en": "Page background",
+    "zh-CN": "页面背景"
+  },
+  "settings.resource_pages_and_settings": {
+    "en": "Resource pages and settings",
+    "zh-CN": "资源页面与设置"
+  },
+  "settings.main_text": {
+    "en": "Main text",
+    "zh-CN": "主要文字"
+  },
+  "settings.names_headings_and_values": {
+    "en": "Names, headings and values",
+    "zh-CN": "名称、标题和内容"
+  },
+  "settings.secondary_text": {
+    "en": "Secondary text",
+    "zh-CN": "次要文字"
+  },
+  "settings.descriptions_and_supporting_details": {
+    "en": "Descriptions and supporting details",
+    "zh-CN": "描述和辅助信息"
+  },
+  "settings.borders": {
+    "en": "Borders",
+    "zh-CN": "边框"
+  },
+  "settings.dividers_and_control_outlines": {
+    "en": "Dividers and control outlines",
+    "zh-CN": "分隔线和控件轮廓"
+  },
+  "settings.resource_links": {
+    "en": "Resource links",
+    "zh-CN": "资源链接"
+  },
+  "settings.clickable_references_to_resources_in_the_cluster": {
+    "en": "Clickable references to resources in the cluster",
+    "zh-CN": "可点击的集群内部资源引用"
+  },
+  "settings.primary_button": {
+    "en": "Primary button",
+    "zh-CN": "主按钮"
+  },
+  "settings.main_actions_such_as_save": {
+    "en": "Main actions such as Save",
+    "zh-CN": "保存等主要操作"
+  },
+  "settings.primary_button_text": {
+    "en": "Primary button text",
+    "zh-CN": "主按钮文字"
+  },
+  "settings.text_and_icons_on_primary_buttons": {
+    "en": "Text and icons on primary buttons",
+    "zh-CN": "主按钮的文字和图标"
+  },
+  "settings.primary_button_hover": {
+    "en": "Primary button hover",
+    "zh-CN": "主按钮悬停"
+  },
+  "settings.background_when_the_pointer_is_over_it": {
+    "en": "Background when the pointer is over it",
+    "zh-CN": "鼠标悬停时的背景"
+  },
+  "settings.secondary_button": {
+    "en": "Secondary button",
+    "zh-CN": "次按钮"
+  },
+  "settings.supporting_actions": {
+    "en": "Supporting actions",
+    "zh-CN": "辅助操作"
+  },
+  "settings.secondary_button_text": {
+    "en": "Secondary button text",
+    "zh-CN": "次按钮文字"
+  },
+  "settings.text_and_icons_on_secondary_buttons": {
+    "en": "Text and icons on secondary buttons",
+    "zh-CN": "次按钮的文字和图标"
+  },
+  "settings.sidebar_background": {
+    "en": "Sidebar background",
+    "zh-CN": "侧栏背景"
+  },
+  "settings.cluster_and_resource_navigation": {
+    "en": "Cluster and resource navigation",
+    "zh-CN": "集群与资源导航"
+  },
+  "settings.sidebar_text": {
+    "en": "Sidebar text",
+    "zh-CN": "侧栏文字"
+  },
+  "settings.navigation_labels_and_icons": {
+    "en": "Navigation labels and icons",
+    "zh-CN": "导航文字和图标"
+  },
+  "settings.selected_navigation": {
+    "en": "Selected navigation",
+    "zh-CN": "选中导航项"
+  },
+  "settings.background_of_the_active_item": {
+    "en": "Background of the active item",
+    "zh-CN": "当前导航项的背景"
+  },
+  "settings.selected_navigation_text": {
+    "en": "Selected navigation text",
+    "zh-CN": "选中导航文字"
+  },
+  "settings.text_of_the_active_item": {
+    "en": "Text of the active item",
+    "zh-CN": "当前导航项的文字"
+  },
+  "settings.success": {
+    "en": "Success",
+    "zh-CN": "成功"
+  },
+  "settings.running_and_healthy_resources": {
+    "en": "Running and healthy resources",
+    "zh-CN": "运行中和健康的资源"
+  },
+  "settings.pending_or_degraded_resources": {
+    "en": "Pending or degraded resources",
+    "zh-CN": "等待中或降级的资源"
+  },
+  "settings.failed_resources_and_error_messages": {
+    "en": "Failed resources and error messages",
+    "zh-CN": "失败资源和错误消息"
+  },
+  "settings.information": {
+    "en": "Information",
+    "zh-CN": "信息"
+  },
+  "settings.informational_status_and_notices": {
+    "en": "Informational status and notices",
+    "zh-CN": "信息状态和提示"
+  },
+  "settings.discard_unsaved_theme_changes": {
+    "en": "Discard unsaved theme changes?",
+    "zh-CN": "放弃未保存的主题修改？"
+  },
+  "settings.save_the_current_theme_first_if_you_want_to_keep_your_edits": {
+    "en": "Save the current theme first if you want to keep your edits.",
+    "zh-CN": "如需保留修改，请先保存当前主题。"
+  },
+  "settings.discard_changes": {
+    "en": "Discard changes",
+    "zh-CN": "放弃修改"
+  },
+  "settings.save_a_copy": {
+    "en": "Save a copy",
+    "zh-CN": "另存副本"
+  },
+  "settings.a_theme_with_this_name_already_exists_choose_another_name_or_select_the_saved_theme_to_edit_it": {
+    "en": "A theme with this name already exists. Choose another name, or select the saved theme to edit it.",
+    "zh-CN": "已有同名主题。请选择其他名称，或选择已保存的主题进行编辑。"
+  },
+  "settings.theme_saved_and_applied_across_all_windows": {
+    "en": "Theme saved and applied across all windows.",
+    "zh-CN": "主题已保存并应用至所有窗口。"
+  },
+  "settings.theme_saved_locally_click_apply_theme_to_use_it": {
+    "en": "Theme saved locally. Click Apply theme to use it.",
+    "zh-CN": "主题已保存到本地，点击「应用主题」即可使用。"
+  },
+  "settings.custom_color": {
+    "en": "Custom color",
+    "zh-CN": "自定义颜色"
+  },
+  "settings.inherited_from_base": {
+    "en": "Inherited from base",
+    "zh-CN": "继承基础主题"
+  },
+  "settings.colors": {
+    "en": "Colors",
+    "zh-CN": "颜色"
+  },
+  "settings.typography": {
+    "en": "Typography",
+    "zh-CN": "字体排版"
+  },
+  "settings.advanced": {
+    "en": "Advanced",
+    "zh-CN": "高级"
+  },
+  "settings.interface": {
+    "en": "Interface",
+    "zh-CN": "界面"
+  },
+  "settings.buttons": {
+    "en": "Buttons",
+    "zh-CN": "按钮"
+  },
+  "settings.sidebar": {
+    "en": "Sidebar",
+    "zh-CN": "侧栏"
+  },
+  "settings.interface_font": {
+    "en": "Interface font",
+    "zh-CN": "界面字体"
+  },
+  "settings.monospace_font": {
+    "en": "Monospace font",
+    "zh-CN": "等宽字体"
+  },
+  "settings.advanced_color": {
+    "en": "Advanced color",
+    "zh-CN": "高级颜色"
+  },
+  "settings.new_theme_not_saved_yet": {
+    "en": "New theme · Not saved yet",
+    "zh-CN": "新主题 · 尚未保存"
+  },
+  "settings.saved_theme_unsaved_edits": {
+    "en": "Saved theme · Unsaved edits",
+    "zh-CN": "已保存主题 · 有未保存的修改"
+  },
+  "settings.saved_locally_on_this_device": {
+    "en": "Saved locally on this device",
+    "zh-CN": "已保存到此设备"
+  },
+  "settings.not_checked_yet": {
+    "en": "Not checked yet",
+    "zh-CN": "尚未检查"
+  },
+  "settings.last_checked_just_now": {
+    "en": "Last checked just now",
+    "zh-CN": "刚刚检查过"
+  },
+  "settings.retry_download": {
+    "en": "Retry download",
+    "zh-CN": "重试下载"
+  },
+  "settings.no_release_notes_provided": {
+    "en": "No release notes provided.",
+    "zh-CN": "暂无版本说明。"
+  },
+  "settings.checks_and_downloads_use_the_system_proxy": {
+    "en": "Checks and downloads use the system proxy.",
+    "zh-CN": "检查和下载使用系统代理。"
+  },
+  "settings.change_the_proxy_in_network_settings": {
+    "en": "Change the proxy in Network settings.",
+    "zh-CN": "可在「网络」设置中修改代理。"
+  },
+  "settings.checks_and_downloads_use_a_direct_connection": {
+    "en": "Checks and downloads use a direct connection.",
+    "zh-CN": "检查和下载使用直连。"
+  },
+  "settings.checks_and_downloads_use_the_global_proxy": {
+    "en": "Checks and downloads use the global proxy.",
+    "zh-CN": "检查和下载使用全局代理。"
+  },
+  "settings.recommended_for_everyday_use": {
+    "en": "Recommended for everyday use.",
+    "zh-CN": "推荐日常使用。"
+  },
+  "settings.includes_development_releases_never_downgrades": {
+    "en": "Includes development releases; never downgrades.",
+    "zh-CN": "包含开发版本，不会降级。"
+  },
+  "settings.check_automatically": {
+    "en": "Check automatically",
+    "zh-CN": "自动检查"
+  },
+  "settings.at_startup_then_every_hour": {
+    "en": "At startup, then every hour.",
+    "zh-CN": "启动时检查，之后每小时检查一次。"
+  },
+  "settings.download_automatically": {
+    "en": "Download automatically",
+    "zh-CN": "自动下载"
+  },
+  "settings.ask_before_restarting_to_install": {
+    "en": "Ask before restarting to install.",
+    "zh-CN": "重启安装前先确认。"
+  },
+  "settings.group_contexts_under_collapsible_sources": {
+    "en": "Group contexts under collapsible sources.",
+    "zh-CN": "按来源分组，可折叠各组。"
+  },
+  "settings.show_each_context_s_source_in_a_flat_list": {
+    "en": "Show each context's source in a flat list.",
+    "zh-CN": "平铺显示，并标注每个上下文的来源。"
+  },
+  "settings.custom_themes_are_available_in_application_settings": {
+    "en": "Custom themes are available in application settings.",
+    "zh-CN": "自定义主题位于应用设置中。"
+  },
+  "settings.invalid_font_size": {
+    "en": "Invalid font size.",
+    "zh-CN": "字体大小无效。"
+  },
+  "settings.invalid_monospace_font_size": {
+    "en": "Invalid monospace font size.",
+    "zh-CN": "等宽字体大小无效。"
+  },
+  "settings.fonts_are_loading_try_saving_again_in_a_moment": {
+    "en": "Fonts are loading. Try saving again in a moment.",
+    "zh-CN": "正在加载字体，请稍后再保存。"
+  },
+  "settings.cluster_alias_must_be_at_most_120_characters": {
+    "en": "Cluster alias must be at most 120 characters.",
+    "zh-CN": "集群别名最多 120 个字符。"
+  },
+  "settings.saved_reconnecting_cluster": {
+    "en": "Saved. Reconnecting cluster…",
+    "zh-CN": "已保存，正在重新连接集群…"
+  },
+  "settings.saved_yaml_folding_applies_the_next_time_a_resource_opens_reconnect_to_apply_connection_changes": {
+    "en": "Saved. YAML folding applies the next time a resource opens. Reconnect to apply connection changes.",
+    "zh-CN": "已保存。下次打开资源时应用 YAML 折叠设置，连接设置需重连后生效。"
+  },
+  "settings.saved_connection_changes_apply_when_the_cluster_next_connects": {
+    "en": "Saved. Connection changes apply when the cluster next connects.",
+    "zh-CN": "已保存，连接设置将在下次连接集群时生效。"
+  },
+  "settings.choose_an_svg_cluster_icon": {
+    "en": "Choose an SVG cluster icon",
+    "zh-CN": "选择 SVG 集群图标"
+  },
+  "settings.metrics_test_was_interrupted": {
+    "en": "Metrics test was interrupted.",
+    "zh-CN": "指标测试已中断。"
+  },
+  "settings.use_global_proxy": {
+    "en": "Use global proxy",
+    "zh-CN": "使用全局代理"
+  },
+  "settings.follow_the_application_network_settings": {
+    "en": "Follow the application network settings.",
+    "zh-CN": "跟随应用网络设置。"
+  },
+  "settings.use_your_existing_network_configuration": {
+    "en": "Use your existing network configuration.",
+    "zh-CN": "使用现有网络配置。"
+  },
+  "settings.use_system_proxy_settings_for_updates_and_kubeconfig_environment_settings_for_clusters": {
+    "en": "Use system proxy settings for updates, and kubeconfig / environment settings for clusters.",
+    "zh-CN": "更新使用系统代理，集群使用 kubeconfig 或环境变量设置。"
+  },
+  "settings.connect_without_a_proxy": {
+    "en": "Connect without a proxy.",
+    "zh-CN": "不使用代理，直接连接。"
+  },
+  "settings.set_an_explicit_http_https_or_socks5_proxy": {
+    "en": "Set an explicit HTTP, HTTPS or SOCKS5 proxy.",
+    "zh-CN": "指定 HTTP、HTTPS 或 SOCKS5 代理。"
+  },
+  "settings.system_proxy_kubeconfig_environment": {
+    "en": "System proxy / kubeconfig / environment",
+    "zh-CN": "系统代理 / kubeconfig / 环境变量"
+  },
+  "settings.an_explicit_proxy_overrides_no_proxy_direct_bypasses_both_kubeconfig_and_environment_proxies": {
+    "en": "An explicit proxy overrides NO_PROXY. Direct bypasses both kubeconfig and environment proxies.",
+    "zh-CN": "指定代理会覆盖 NO_PROXY；直连会忽略 kubeconfig 和环境变量代理。"
+  },
+  "settings.an_explicit_proxy_overrides_no_proxy_direct_bypasses_system_kubeconfig_and_environment_proxies": {
+    "en": "An explicit proxy overrides NO_PROXY. Direct bypasses system, kubeconfig and environment proxies.",
+    "zh-CN": "指定代理会覆盖 NO_PROXY；直连会忽略系统、kubeconfig 和环境变量代理。"
+  },
+  "settings.connection_changes_take_effect_after_reconnecting": {
+    "en": "Connection changes take effect after reconnecting.",
+    "zh-CN": "连接设置在重新连接后生效。"
+  },
+  "settings.clusters_can_override_this_setting_in_their_connection_preferences": {
+    "en": "Clusters can override this setting in their connection preferences.",
+    "zh-CN": "可在各集群的连接设置中覆盖此设置。"
+  },
+  "settings.no_saved_themes": {
+    "en": "No saved themes",
+    "zh-CN": "暂无已保存的主题"
+  },
+  "settings.saved_themes": {
+    "en": "Saved themes",
+    "zh-CN": "已保存的主题"
+  },
+  "settings.choose_a_theme": {
+    "en": "Choose a theme",
+    "zh-CN": "选择主题"
+  },
+  "settings.use_metrics_server_from_this_cluster": {
+    "en": "Use metrics-server from this cluster.",
+    "zh-CN": "使用此集群的 metrics-server。"
+  },
+  "settings.query_an_external_prometheus_endpoint": {
+    "en": "Query an external Prometheus endpoint.",
+    "zh-CN": "查询外部 Prometheus 地址。"
+  },
+  "settings.do_not_fetch_usage_metrics": {
+    "en": "Do not fetch usage metrics.",
+    "zh-CN": "不获取使用量指标。"
+  },
+  "settings.testing": {
+    "en": "Testing…",
+    "zh-CN": "正在测试…"
+  },
+  "settings.test_metrics_source": {
+    "en": "Test metrics source",
+    "zh-CN": "测试指标来源"
+  },
+  "settings.this_cluster": {
+    "en": "THIS CLUSTER",
+    "zh-CN": "当前集群"
+  },
+  "settings.save_other_settings": {
+    "en": "Save other settings",
+    "zh-CN": "保存其他设置"
+  },
+  "settings.choose_an_svg_image": {
+    "en": "Choose an SVG image.",
+    "zh-CN": "请选择 SVG 图片。"
+  },
+  "settings.source_unavailable": {
+    "en": "Source unavailable",
+    "zh-CN": "来源不可用"
+  },
+  "settings.system_kubeconfig": {
+    "en": "System kubeconfig",
+    "zh-CN": "系统 kubeconfig"
+  },
+  "settings.close_workspace": {
+    "en": "Close workspace?",
+    "zh-CN": "关闭工作区？"
+  },
+  "settings.unsaved_file_edits_will_be_discarded_and_active_file_operations_will_stop": {
+    "en": "Unsaved file edits will be discarded and active file operations will stop.",
+    "zh-CN": "未保存的文件修改将被丢弃，正在进行的文件操作将停止。"
+  },
+  "settings.close_files": {
+    "en": "Close Files?",
+    "zh-CN": "关闭文件浏览器？"
+  },
+  "settings.unsaved_edits_will_be_discarded_and_the_active_file_operation_will_be_cancelled": {
+    "en": "Unsaved edits will be discarded and the active file operation will be cancelled.",
+    "zh-CN": "未保存的修改将被丢弃，正在进行的文件操作将取消。"
+  },
+  "settings.add_to_favorites": {
+    "en": "Add to favorites",
+    "zh-CN": "添加到收藏"
+  },
+  "settings.move_to_left_split": {
+    "en": "Move to left split",
+    "zh-CN": "移至左侧分区"
+  },
+  "settings.move_to_right_split": {
+    "en": "Move to right split",
+    "zh-CN": "移至右侧分区"
+  },
+  "settings.move_to_upper_split": {
+    "en": "Move to upper split",
+    "zh-CN": "移至上方分区"
+  },
+  "settings.move_to_lower_split": {
+    "en": "Move to lower split",
+    "zh-CN": "移至下方分区"
+  },
+  "settings.merge_into_tab_group": {
+    "en": "Merge into tab group",
+    "zh-CN": "合并至标签组"
+  },
+  "settings.view_watches_in_the_current_cluster": {
+    "en": "View watches in the current cluster",
+    "zh-CN": "查看当前集群的监听"
+  },
+  "settings.view_connected_clusters": {
+    "en": "View connected clusters",
+    "zh-CN": "查看已连接的集群"
+  },
+  "settings.no_connected_cluster_in_the_active_tab": {
+    "en": "No connected cluster in the active tab.",
+    "zh-CN": "当前标签页没有已连接的集群。"
+  },
+  "settings.connected_sessions_click_a_cluster_to_open_its_tab": {
+    "en": "Connected sessions · click a cluster to open its tab",
+    "zh-CN": "已连接会话 · 点击集群打开标签页"
+  },
+  "settings.no_cluster_selected": {
+    "en": "no cluster selected",
+    "zh-CN": "未选择集群"
+  },
+  "settings.no_tab_open": {
+    "en": "no tab open",
+    "zh-CN": "未打开标签页"
+  },
+  "settings.a_new_version_is_available_open_updates_settings": {
+    "en": "A new version is available. Open Updates settings.",
+    "zh-CN": "发现新版本，点击打开更新设置。"
+  },
+  "settings.copy_connection_details": {
+    "en": "Copy connection details",
+    "zh-CN": "复制连接信息"
+  },
+  "settings.this_context_is_no_longer_available_from_an_enabled_kubeconfig_source_check_kubeconfig_sources_before_reconnecting": {
+    "en": "This context is no longer available from an enabled kubeconfig source. Check Kubeconfig sources before reconnecting.",
+    "zh-CN": "已启用的 kubeconfig 来源中不再包含此上下文，请检查来源后再连接。"
+  },
+  "settings.sorted_descending": {
+    "en": "Sorted descending",
+    "zh-CN": "降序排列"
+  },
+  "settings.sorted_ascending": {
+    "en": "Sorted ascending",
+    "zh-CN": "升序排列"
+  },
+  "settings.theme_name_must_contain_1_80_characters": {
+    "en": "Theme name must contain 1–80 characters.",
+    "zh-CN": "主题名称长度必须在 1–80 个字符之间。"
+  },
+  "settings.choose_an_installed_font_family": {
+    "en": "Choose an installed font family.",
+    "zh-CN": "请选择已安装的字体。"
+  },
+  "settings.selected_custom_theme_is_missing": {
+    "en": "Selected custom theme is missing.",
+    "zh-CN": "所选自定义主题不存在。"
+  },
+  "settings.could_not_read_saved_preferences": {
+    "en": "Could not read saved preferences.",
+    "zh-CN": "无法读取已保存的设置。"
+  },
+  "settings.saved_preferences_are_invalid_the_original_file_has_been_preserved": {
+    "en": "Saved preferences are invalid. The original file has been preserved.",
+    "zh-CN": "已保存的设置无效，原文件已保留。"
+  },
+  "settings.no_settings_directory": {
+    "en": "No settings directory.",
+    "zh-CN": "找不到设置目录。"
+  },
+  "settings.filter_names_must_contain_1_120_characters": {
+    "en": "Filter names must contain 1–120 characters.",
+    "zh-CN": "筛选名称长度必须在 1–120 个字符之间。"
+  },
+  "settings.column_widths_must_be_between_56_and_4000_pixels": {
+    "en": "Column widths must be between 56 and 4000 pixels.",
+    "zh-CN": "列宽必须在 56–4000 像素之间。"
+  },
+  "settings.rename_source": {
+    "en": "Rename source",
+    "zh-CN": "重命名来源"
+  },
+  "settings.add_kubeconfig_source": {
+    "en": "Add kubeconfig source",
+    "zh-CN": "添加 kubeconfig 来源"
+  },
+  "settings.choose_a_location_or_enter_a_path": {
+    "en": "Choose a location or enter a path",
+    "zh-CN": "选择位置或输入路径"
+  },
+  "settings.optional_base_folder_for_relative_file_references": {
+    "en": "Optional base folder for relative file references",
+    "zh-CN": "相对路径文件引用的基础目录（可选）"
+  },
+  "settings.filename_patterns": {
+    "en": "Filename patterns",
+    "zh-CN": "文件名匹配规则"
+  },
+  "settings.choose_kubeconfig_folder": {
+    "en": "Choose kubeconfig folder",
+    "zh-CN": "选择 kubeconfig 目录"
+  },
+  "settings.choose_kubeconfig_files": {
+    "en": "Choose kubeconfig files",
+    "zh-CN": "选择 kubeconfig 文件"
+  },
+  "settings.choose_a_location_first": {
+    "en": "Choose a location first.",
+    "zh-CN": "请先选择位置。"
+  },
+  "settings.give_this_source_a_name": {
+    "en": "Give this source a name.",
+    "zh-CN": "请为此来源命名。"
+  },
+  "settings.this_source_no_longer_exists": {
+    "en": "This source no longer exists.",
+    "zh-CN": "此来源已不存在。"
+  },
+  "settings.select_at_least_one_valid_context": {
+    "en": "Select at least one valid context.",
+    "zh-CN": "请至少选择一个有效上下文。"
+  },
+  "settings.the_source_files_changed_during_review_preview_contexts_again_before_saving": {
+    "en": "The source files changed during review. Preview contexts again before saving.",
+    "zh-CN": "来源文件在审阅期间发生变化，请重新预览上下文后再保存。"
+  },
+  "settings.sources_changed_in_another_window_preview_again_before_saving": {
+    "en": "Sources changed in another window. Preview again before saving.",
+    "zh-CN": "其他窗口已修改来源，请重新预览后再保存。"
+  },
+  "settings.paste_yaml": {
+    "en": "Paste YAML",
+    "zh-CN": "粘贴 YAML"
+  },
+  "settings.kubeconfig_file": {
+    "en": "Kubeconfig file",
+    "zh-CN": "kubeconfig 文件"
+  },
+  "settings.choose_one_or_more_files_each_file_becomes_a_separate_source_and_the_originals_stay_in_place": {
+    "en": "Choose one or more files. Each file becomes a separate source and the originals stay in place.",
+    "zh-CN": "选择一个或多个文件，每个文件作为独立来源，原文件保留在原位置。"
+  },
+  "settings.only_matching_kubeconfig_files_are_loaded_invalid_files_do_not_block_the_rest_of_the_folder": {
+    "en": "Only matching kubeconfig files are loaded. Invalid files do not block the rest of the folder.",
+    "zh-CN": "仅加载符合规则的 kubeconfig 文件，无效文件不会影响目录内其他文件。"
+  },
+  "settings.beacon_keeps_an_owner_only_copy_locally_credentials_and_exec_helpers_are_not_used_during_this_preview": {
+    "en": "Beacon keeps an owner-only copy locally. Credentials and exec helpers are not used during this preview.",
+    "zh-CN": "Beacon 会在本地保存仅当前用户可访问的副本，预览时不使用凭据或执行认证助手。"
+  },
+  "settings.changes_apply_to_the_source_label_in_all_windows": {
+    "en": "Changes apply to the source label in all windows.",
+    "zh-CN": "修改将应用至所有窗口的来源标签。"
+  },
+  "settings.2_of_2_choose_which_contexts_appear_in_beacon": {
+    "en": "2 of 2 · Choose which contexts appear in Beacon",
+    "zh-CN": "第 2 步，共 2 步 · 选择要在 Beacon 中显示的上下文"
+  },
+  "settings.1_of_2_choose_a_source": {
+    "en": "1 of 2 · Choose a source",
+    "zh-CN": "第 1 步，共 2 步 · 选择来源"
+  },
+  "settings.save_name": {
+    "en": "Save name",
+    "zh-CN": "保存名称"
+  },
+  "settings.save_source": {
+    "en": "Save source",
+    "zh-CN": "保存来源"
+  },
+  "settings.preview_contexts": {
+    "en": "Preview contexts",
+    "zh-CN": "预览上下文"
+  },
+  "settings.remove_source": {
+    "en": "Remove source",
+    "zh-CN": "移除来源"
+  },
+  "settings.remove_this_source_and_beacon_s_saved_kubeconfig_copy_existing_connections_stay_open_until_you_disconnect": {
+    "en": "Remove this source and Beacon’s saved kubeconfig copy. Existing connections stay open until you disconnect.",
+    "zh-CN": "移除此来源和 Beacon 保存的 kubeconfig 副本，已有连接保持至手动断开。"
+  },
+  "settings.remove_this_source_from_beacon_original_files_and_existing_connections_stay_in_place": {
+    "en": "Remove this source from Beacon. Original files and existing connections stay in place.",
+    "zh-CN": "从 Beacon 移除此来源，保留原文件和已有连接。"
+  },
+  "settings.kubeconfig_default_path": {
+    "en": "KUBECONFIG / default path",
+    "zh-CN": "KUBECONFIG / 默认路径"
+  },
+  "settings.linked_file": {
+    "en": "Linked file",
+    "zh-CN": "关联文件"
+  },
+  "settings.watched_folder": {
+    "en": "Watched folder",
+    "zh-CN": "监听目录"
+  },
+  "settings.beacon_managed_copy": {
+    "en": "Beacon-managed copy",
+    "zh-CN": "Beacon 管理的副本"
+  },
+  "settings.no_system_kubeconfig_path_found": {
+    "en": "No system kubeconfig path found",
+    "zh-CN": "未找到系统 kubeconfig 路径"
+  },
+  "settings.including_subfolders": {
+    "en": "Including subfolders",
+    "zh-CN": "包含子目录"
+  },
+  "settings.this_folder_only": {
+    "en": "This folder only",
+    "zh-CN": "仅当前目录"
+  },
+  "settings.replace_yaml": {
+    "en": "Replace YAML",
+    "zh-CN": "替换 YAML"
+  },
+  "settings.change_location": {
+    "en": "Change location",
+    "zh-CN": "修改位置"
+  },
+  "settings.no_matching_kubeconfigs_found": {
+    "en": "No matching kubeconfigs found.",
+    "zh-CN": "未找到符合规则的 kubeconfig。"
+  },
+  "settings.enable_this_source_to_load_its_contexts": {
+    "en": "Enable this source to load its contexts.",
+    "zh-CN": "启用此来源以加载上下文。"
+  },
+  "settings.reload_all": {
+    "en": "Reload all",
+    "zh-CN": "重新加载全部"
+  },
+  "settings.minute": {
+    "en": "minute",
+    "zh-CN": "分钟"
+  },
+  "settings.minutes": {
+    "en": "minutes",
+    "zh-CN": "分钟"
+  },
+  "settings.hour": {
+    "en": "hour",
+    "zh-CN": "小时"
+  },
+  "settings.hours": {
+    "en": "hours",
+    "zh-CN": "小时"
+  },
+  "settings.day": {
+    "en": "day",
+    "zh-CN": "天"
+  },
+  "settings.days": {
+    "en": "days",
+    "zh-CN": "天"
+  },
+  "updates.last_checked_ago": {
+    "en": "Last checked %{count} %{unit} ago",
+    "zh-CN": "上次检查：%{count} %{unit}前"
   }
 }

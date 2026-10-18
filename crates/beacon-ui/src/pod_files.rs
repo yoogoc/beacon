@@ -125,7 +125,8 @@ impl FilesView {
                                 .filter(|c| c.group == group)
                                 .map(|c| c.name.clone())
                                 .collect::<Vec<_>>();
-                            (!names.is_empty()).then(|| SelectGroup::new(group).items(names))
+                            (!names.is_empty())
+                                .then(|| SelectGroup::new(crate::i18n::text(group)).items(names))
                         })
                         .collect::<Vec<_>>(),
                 ),
@@ -139,11 +140,8 @@ impl FilesView {
             }
             picker
         });
-        let path = cx.new(|cx| {
-            InputState::new(window, cx)
-                .default_value("/")
-                .placeholder("Absolute container path")
-        });
+        let path = cx
+            .new(|cx| crate::i18n::input("Absolute container path", window, cx).default_value("/"));
         let search = cx.new(|cx| crate::i18n::input("Filter files", window, cx));
         let mut view = Self {
             session,
@@ -298,8 +296,13 @@ impl FilesView {
             .is_some_and(|(editor, p)| p.text.as_deref() != Some(editor.read(cx).value().as_str()))
     }
     pub fn pending(&self, cx: &App) -> Option<String> {
-        (self.dirty(cx) || self.busy)
-            .then(|| format!("{}: unsaved file or active file operation", self.title()))
+        (self.dirty(cx) || self.busy).then(|| {
+            crate::i18n::message(
+                "messages.unsaved_file_or_active_file_operation",
+                &[("value0", (self.title()).to_string())],
+            )
+            .to_string()
+        })
     }
     fn browser(&self, cx: &App) -> Option<Browser> {
         let name = self.picker.read(cx).selected_value()?;
@@ -384,13 +387,28 @@ impl FilesView {
                 }
                 Work::Upload(local, path, overwrite) => {
                     browser.upload(local, &path, overwrite, progress).await?;
-                    Done::Uploaded(format!("Uploaded to {path}"))
+                    Done::Uploaded(
+                        crate::i18n::message(
+                            "messages.uploaded_to_path",
+                            &[("path", (path).to_string())],
+                        )
+                        .to_string(),
+                    )
                 }
                 Work::Download(paths, archive, local) => {
                     let count = browser
                         .download(&paths, archive, local.clone(), progress)
                         .await?;
-                    Done::Transferred(format!("Saved {count} bytes to {}", local.display()))
+                    Done::Transferred(
+                        crate::i18n::message(
+                            "messages.saved_count_bytes_to",
+                            &[
+                                ("count", (count).to_string()),
+                                ("value0", (local.display()).to_string()),
+                            ],
+                        )
+                        .to_string(),
+                    )
                 }
             })
         });
@@ -807,11 +825,7 @@ impl FilePrompt {
     ) -> Entity<Self> {
         let view = cx.new(|cx| Self {
             input: initial.map(|value| {
-                cx.new(|cx| {
-                    InputState::new(window, cx)
-                        .default_value(value)
-                        .placeholder("Name")
-                })
+                cx.new(|cx| crate::i18n::input("Name", window, cx).default_value(value))
             }),
             entries,
             label: label.into(),
@@ -822,7 +836,7 @@ impl FilePrompt {
         let title = title.to_owned();
         window.open_dialog(cx, move |dialog, _, _| {
             dialog
-                .title(title.clone())
+                .title(crate::i18n::text(&title))
                 .width(px(760.))
                 .child(content.clone())
         });
@@ -900,7 +914,7 @@ impl Render for FilePrompt {
                         Button::new("file-prompt-confirm")
                             .small()
                             .primary()
-                            .label(self.label.clone())
+                            .label(crate::i18n::text(&self.label))
                             .on_click(cx.listener(|v, _, window, cx| {
                                 let value = v
                                     .input

@@ -286,7 +286,13 @@ impl Filter {
             .size_limit(1024 * 1024)
             .build()
             .map(Some)
-            .map_err(|error| format!("Invalid regular expression: {error}"))
+            .map_err(|error| {
+                crate::i18n::message(
+                    "messages.invalid_regular_expression_error",
+                    &[("error", (error).to_string())],
+                )
+                .to_string()
+            })
     }
     fn includes(&self, record: &Record, regex: Option<&Regex>) -> bool {
         (self.levels.is_empty() || self.levels.contains(record.level.label()))

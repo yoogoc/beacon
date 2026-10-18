@@ -298,15 +298,44 @@ impl ArgoCanvas {
                 .filter(|i| self.prepared.source.nodes[**i].data["phase"] == "Running")
                 .count();
             if failed > 0 && running > 0 {
-                format!("{failed} failed · {running} running")
+                crate::i18n::message(
+                    "display.failed_failed_running_running",
+                    &[
+                        ("failed", (failed).to_string()),
+                        ("running", (running).to_string()),
+                    ],
+                )
+                .to_string()
             } else if failed > 0 {
-                format!("{} nodes · {failed} failed", members.len())
+                crate::i18n::message(
+                    "display.nodes_failed_failed",
+                    &[
+                        ("value0", (members.len()).to_string()),
+                        ("failed", (failed).to_string()),
+                    ],
+                )
+                .to_string()
             } else if running > 0 {
-                format!("{} nodes · {running} running", members.len())
+                crate::i18n::message(
+                    "display.nodes_running_running",
+                    &[
+                        ("value0", (members.len()).to_string()),
+                        ("running", (running).to_string()),
+                    ],
+                )
+                .to_string()
             } else if phase == "Succeeded" {
-                format!("{} nodes", members.len())
+                crate::i18n::message("display.nodes", &[("value0", (members.len()).to_string())])
+                    .to_string()
             } else {
-                format!("{} nodes · {phase}", members.len())
+                crate::i18n::message(
+                    "display.nodes_phase",
+                    &[
+                        ("value0", (members.len()).to_string()),
+                        ("phase", (phase).to_string()),
+                    ],
+                )
+                .to_string()
             }
         } else if node.runtime {
             let duration =
@@ -555,7 +584,13 @@ impl ArgoCanvas {
                                             .text_color(cx.theme().muted_foreground)
                                             .child(
                                                 self.expected
-                                                    .map(|n| format!("Reading {n} nodes…"))
+                                                    .map(|n| {
+                                                        crate::i18n::message(
+                                                            "display.reading_n_nodes",
+                                                            &[("n", (n).to_string())],
+                                                        )
+                                                        .to_string()
+                                                    })
                                                     .unwrap_or_else(|| {
                                                         "Reading node status…".into()
                                                     }),
