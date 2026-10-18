@@ -22,6 +22,7 @@ gpui_kit::assets::icon_assets!(
         Shapes,
         Layers,
         Columns3,
+        GripVertical,
         Bookmark,
         Logs,
         Database,
@@ -148,5 +149,36 @@ pub(crate) fn overview(title: &str) -> Icon {
         "Configuration" | "Secret" | "Data keys" => section(&Section::Builtin(Category::Config)),
         "System" => section(&Section::Builtin(Category::Cluster)),
         _ => Icon::new(IconName::Info),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn list_customization_icons_are_available_from_the_application_bundle() {
+        use gpui_kit::assets::IconName as Glyph;
+
+        let paths = Assets.list("icons/").unwrap();
+        for icon in [
+            Glyph::Columns3,
+            Glyph::GripVertical,
+            Glyph::Bookmark,
+            Glyph::Search,
+            Glyph::Check,
+            Glyph::Info,
+            Glyph::Trash,
+        ] {
+            let path = icon.path();
+            let data = Assets.load(&path).unwrap().unwrap_or_else(|| {
+                panic!("missing application icon: {path}");
+            });
+            assert!(
+                std::str::from_utf8(&data).unwrap().contains("<svg"),
+                "{path}"
+            );
+            assert!(paths.contains(&path), "unlisted application icon: {path}");
+        }
     }
 }

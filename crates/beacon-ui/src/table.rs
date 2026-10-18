@@ -551,17 +551,29 @@ impl ResourceTable {
         else {
             return;
         };
-        let mut layout = self.layout_snapshot();
         let id = self.column_ids[from_index].clone();
         let destination = self.column_ids[to_index].clone();
-        layout.order.retain(|column| column != &id);
-        if let Some(position) = layout
+        self.reorder_column_by_id(&id, &destination);
+    }
+
+    /// Stable IDs let the column picker reorder hidden columns and search
+    /// results using the same layout as header dragging.
+    pub(crate) fn reorder_column_by_id(&mut self, id: &str, destination: &str) {
+        if id == destination
+            || !self.column_ids.iter().any(|column| column == id)
+            || !self.column_ids.iter().any(|column| column == destination)
+        {
+            return;
+        }
+        let mut layout = self.layout_snapshot();
+        let from = layout.order.iter().position(|column| column == id).unwrap();
+        let to = layout
             .order
             .iter()
-            .position(|column| column == &destination)
-        {
-            layout.order.insert(position + usize::from(from < to), id);
-        }
+            .position(|column| column == destination)
+            .unwrap();
+        let column = layout.order.remove(from);
+        layout.order.insert(to, column);
         self.layout = layout;
         self.rebuild_display_columns();
     }
