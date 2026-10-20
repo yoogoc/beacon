@@ -18,12 +18,13 @@ use beacon_kube::labels::LabelSelector;
 use beacon_kube::{
     DeleteTarget, Delta, DeltaBatch, DynamicObject, Metrics, ObjectRef, ResourceStore, data,
 };
+use gpui_kit::assets::IconName;
 use gpui_kit::base::TestSupportExt as _;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::menu::{DropdownMenu as _, PopupMenu, PopupMenuItem};
 use gpui_kit::component::table::{Column, ColumnSort, TableDelegate, TableState};
 use gpui_kit::component::tooltip::Tooltip;
-use gpui_kit::component::{ActiveTheme as _, IconName, Sizable as _, h_flex, v_flex};
+use gpui_kit::component::{ActiveTheme as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use nucleo_matcher::{
@@ -304,7 +305,16 @@ impl ResourceTable {
             && column == self.display_columns.len() + usize::from(self.selection_column)
     }
 
-    fn row_menu(&self, target: ObjectRef, mut menu: PopupMenu, cx: &App) -> PopupMenu {
+    fn row_menu(&self, target: ObjectRef, menu: PopupMenu, cx: &App) -> PopupMenu {
+        self.resource_menu(target, cx).popup(menu)
+    }
+
+    pub(crate) fn resource_menu(
+        &self,
+        target: ObjectRef,
+        cx: &App,
+    ) -> crate::resource_menu::ResourceMenu {
+        let mut menu = crate::resource_menu::ResourceMenu::default();
         let Some(view) = self.context_view.clone() else {
             return menu;
         };
@@ -340,7 +350,7 @@ impl ResourceTable {
 
         menu = menu
             .label(format!("{name} · {}", target.name))
-            .item(detail_item(
+            .popup_only_item(detail_item(
                 "Open details",
                 &view,
                 &target,
@@ -352,17 +362,20 @@ impl ResourceTable {
             } else {
                 "Add to favorites"
             }))
+            .icon(IconName::Bookmark)
             .on_click(move |_, _, cx| {
                 let _ =
                     favorite_view.update(cx, |view, cx| view.toggle_favorite(favorite.clone(), cx));
             }),
         );
         menu = menu.item(
-            PopupMenuItem::new(crate::i18n::text("Permissions…")).on_click(move |_, _, cx| {
-                let _ = permission_view.update(cx, |view, cx| {
-                    view.show_permissions(permission_target.clone(), None, cx)
-                });
-            }),
+            PopupMenuItem::new(crate::i18n::text("Permissions…"))
+                .icon(IconName::ShieldCheck)
+                .on_click(move |_, _, cx| {
+                    let _ = permission_view.update(cx, |view, cx| {
+                        view.show_permissions(permission_target.clone(), None, cx)
+                    });
+                }),
         );
 
         if data::is_keyed(group, name) {
@@ -370,7 +383,7 @@ impl ResourceTable {
             menu = menu.item(detail_item("View usage", &view, &target, DetailTab::UsedBy));
         }
         if beacon_kube::config_refs::supported(group, name) {
-            menu = menu.item(detail_item(
+            menu = menu.popup_only_item(detail_item(
                 "View configuration",
                 &view,
                 &target,
@@ -386,6 +399,7 @@ impl ResourceTable {
                 && actions::may_exec(rules.as_deref());
             menu = menu.item(
                 PopupMenuItem::new(crate::i18n::text("Debug container…"))
+                    .icon(IconName::Box)
                     .disabled(!may_debug)
                     .on_click(move |_, window, cx| {
                         let _ = debug_view
@@ -413,6 +427,7 @@ impl ResourceTable {
             let files_target = target.clone();
             menu = menu.item(
                 PopupMenuItem::new(crate::i18n::text("Files…"))
+                    .icon(IconName::FolderOpen)
                     .disabled(!may_exec)
                     .on_click(move |_, _, cx| {
                         let _ =
@@ -441,13 +456,15 @@ impl ResourceTable {
             for (label, port) in choices {
                 let forward_view = view.clone();
                 let forward_target = target.clone();
-                menu = menu.item(PopupMenuItem::new(crate::i18n::text(label)).on_click(
-                    move |_, window, cx| {
-                        let _ = forward_view.update(cx, |cluster, cx| {
-                            cluster.start_forward_for(forward_target.clone(), port, window, cx)
-                        });
-                    },
-                ));
+                menu = menu.item(
+                    PopupMenuItem::new(crate::i18n::text(label))
+                        .icon(IconName::RadioTower)
+                        .on_click(move |_, window, cx| {
+                            let _ = forward_view.update(cx, |cluster, cx| {
+                                cluster.start_forward_for(forward_target.clone(), port, window, cx)
+                            });
+                        }),
+                );
             }
         }
         menu = menu.item(detail_item("View YAML", &view, &target, DetailTab::Yaml));
@@ -477,12 +494,12 @@ impl ResourceTable {
             let logs_view = view.clone();
             let logs_target = target.clone();
             menu = menu.item(
-                PopupMenuItem::new(crate::i18n::text("View aggregated logs")).on_click(
-                    move |_, window, cx| {
+                PopupMenuItem::new(crate::i18n::text("View aggregated logs"))
+                    .icon(IconName::List)
+                    .on_click(move |_, window, cx| {
                         let _ = logs_view
                             .update(cx, |view, cx| view.aggregate_for(&logs_target, window, cx));
-                    },
-                ),
+                    }),
             );
         }
 
@@ -496,6 +513,7 @@ impl ResourceTable {
                     "Compare resource…"
                 },
             ))
+            .icon(IconName::GitCompareArrows)
             .on_click(move |_, window, cx| {
                 let _ = compare_view
                     .update(cx, |view, cx| view.compare_for(&compare_target, window, cx));
@@ -509,7 +527,8 @@ impl ResourceTable {
             let action_view = view.clone();
             let action_target = target.clone();
             let operation = choice.operation;
-            menu = menu.item(
+            let presentation = operation.clone();
+            menu = menu.operation(
                 PopupMenuItem::new(crate::i18n::text(choice.label))
                     .disabled(!choice.allowed)
                     .on_click(move |_, window, cx| {
@@ -517,17 +536,18 @@ impl ResourceTable {
                             cluster.start_for(action_target.clone(), operation.clone(), window, cx);
                         });
                     }),
+                &presentation,
             );
         }
 
         let copy_name = target.name.clone();
-        menu = menu
-            .separator()
-            .item(
-                PopupMenuItem::new(crate::i18n::text("Copy name")).on_click(move |_, _, cx| {
+        menu = menu.separator().item(
+            PopupMenuItem::new(crate::i18n::text("Copy name"))
+                .icon(IconName::Copy)
+                .on_click(move |_, _, cx| {
                     cx.write_to_clipboard(ClipboardItem::new_string(copy_name.clone()));
                 }),
-            );
+        );
         if let Some(row) = self.rows.iter().position(|key| key == &target)
             && let Some(index) = self
                 .columns
@@ -537,16 +557,19 @@ impl ResourceTable {
             && let Some((_, value)) = self.cell(row, index)
             && !value.is_missing()
         {
-            menu = menu.item(crate::copyable_text::copy_item(
-                "Copy status",
-                value.display().to_string(),
-            ));
+            menu = menu.item(
+                crate::copyable_text::copy_item("Copy status", value.display().to_string())
+                    .icon(IconName::Copy),
+            );
         }
         if is_pod {
-            menu = menu.item(crate::copyable_text::copy_item(
-                "Copy container states",
-                beacon_columns::containers::description(&object.data),
-            ));
+            menu = menu.item(
+                crate::copyable_text::copy_item(
+                    "Copy container states",
+                    beacon_columns::containers::description(&object.data),
+                )
+                .icon(IconName::Copy),
+            );
         }
         menu
     }
@@ -1564,11 +1587,22 @@ fn detail_item(
 ) -> PopupMenuItem {
     let view = view.clone();
     let target = target.clone();
-    PopupMenuItem::new(crate::i18n::text(label)).on_click(move |_, window, cx| {
-        let _ = view.update(cx, |cluster, cx| {
-            cluster.open_target(&target, tab, window, cx);
-        });
-    })
+    let icon = match tab {
+        DetailTab::Yaml => IconName::FileCode,
+        DetailTab::Data => IconName::FileKey,
+        DetailTab::UsedBy | DetailTab::Related => IconName::Link,
+        DetailTab::Configuration => IconName::Settings,
+        DetailTab::Network => IconName::Network,
+        DetailTab::History => IconName::RotateCcw,
+        _ => IconName::Info,
+    };
+    PopupMenuItem::new(crate::i18n::text(label))
+        .icon(icon)
+        .on_click(move |_, window, cx| {
+            let _ = view.update(cx, |cluster, cx| {
+                cluster.open_target(&target, tab, window, cx);
+            });
+        })
 }
 
 fn pod_tools_item(
@@ -1579,11 +1613,18 @@ fn pod_tools_item(
 ) -> PopupMenuItem {
     let view = view.clone();
     let target = target.clone();
-    PopupMenuItem::new(crate::i18n::text(label)).on_click(move |_, window, cx| {
-        let _ = view.update(cx, |cluster, cx| {
-            cluster.open_pod_tools(&target, tab, window, cx);
-        });
-    })
+    let icon = match tab {
+        PodToolTab::Logs => IconName::FileText,
+        PodToolTab::Exec => IconName::SquareTerminal,
+        PodToolTab::Shell => IconName::Terminal,
+    };
+    PopupMenuItem::new(crate::i18n::text(label))
+        .icon(icon)
+        .on_click(move |_, window, cx| {
+            let _ = view.update(cx, |cluster, cx| {
+                cluster.open_pod_tools(&target, tab, window, cx);
+            });
+        })
 }
 
 #[cfg(all(test, feature = "ui-tests"))]

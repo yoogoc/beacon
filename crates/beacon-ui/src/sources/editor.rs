@@ -11,10 +11,11 @@ use gpui_kit::component::{
 };
 use gpui_kit::prelude::FluentBuilder as _;
 use std::{
-    collections::BTreeSet,
     path::{Path, PathBuf},
     sync::atomic::{AtomicU64, Ordering},
 };
+
+mod file_form;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Kind {
@@ -28,6 +29,12 @@ struct Review {
     imported: Option<Arc<Kubeconfig>>,
     original: Preferences,
     inputs: Preferences,
+}
+struct FileDraft {
+    id: String,
+    path: PathBuf,
+    name: Entity<InputState>,
+    _input: Subscription,
 }
 pub(super) fn open(source: Option<Source>, rename: bool, window: &mut Window, cx: &mut App) {
     let editor = cx.new(|cx| SourceEditor::new(source, rename, window, cx));
@@ -52,7 +59,9 @@ struct SourceEditor {
     base: Entity<InputState>,
     patterns: Entity<InputState>,
     yaml: Entity<EditorState>,
-    extra_files: Vec<PathBuf>,
+    files: Vec<FileDraft>,
+    manual_path: bool,
+    file_scroll: ScrollHandle,
     recursive: bool,
     review: Option<Review>,
     message: Option<String>,
@@ -123,13 +132,23 @@ impl SourceEditor {
                 sources::default_patterns(),
             ),
         };
+        let initial_file = (kind == Kind::File && !path.is_empty()).then(|| PathBuf::from(&path));
         let name = input(
             "Source name",
             source.as_ref().map(|s| s.name.clone()).unwrap_or_default(),
             window,
             cx,
         );
-        let path = input("Choose a location or enter a path", path, window, cx);
+        let path = input(
+            "Choose a location or enter a path",
+            if kind == Kind::File {
+                String::new()
+            } else {
+                path
+            },
+            window,
+            cx,
+        );
         let base = input(
             "Optional base folder for relative file references",
             String::new(),
@@ -147,12 +166,7 @@ impl SourceEditor {
             .map(|input| {
                 cx.subscribe(input, |view: &mut Self, _, event: &InputEvent, cx| {
                     if matches!(event, InputEvent::Change) {
-                        view.revision += 1;
-                        view.review = None;
-                        view.message = None;
-                        view.busy = false;
-                        view._operation = None;
-                        cx.notify();
+                        view.invalidate(cx);
                     }
                 })
             })
@@ -160,17 +174,26 @@ impl SourceEditor {
         inputs.push(
             cx.subscribe(&yaml, |view: &mut Self, _, event: &InputEvent, cx| {
                 if matches!(event, InputEvent::Change) {
-                    view.revision += 1;
-                    view.review = None;
-                    view.message = None;
-                    view.busy = false;
-                    view._operation = None;
-                    cx.notify();
+                    view.invalidate(cx);
                 }
             }),
         );
-        name.read(cx).focus_handle(cx).focus(window, cx);
-        Self {
+        inputs.push(cx.subscribe_in(
+            &path,
+            window,
+            |view: &mut Self, _, event: &InputEvent, window, cx| {
+                if matches!(event, InputEvent::PressEnter { .. })
+                    && view.kind == Kind::File
+                    && view.manual_path
+                {
+                    view.add_entered_path(window, cx);
+                }
+            },
+        ));
+        if rename || kind != Kind::File {
+            name.read(cx).focus_handle(cx).focus(window, cx);
+        }
+        let mut this = Self {
             source,
             rename,
             kind,
@@ -179,7 +202,9 @@ impl SourceEditor {
             base,
             patterns,
             yaml,
-            extra_files: vec![],
+            files: vec![],
+            manual_path: false,
+            file_scroll: ScrollHandle::new(),
             recursive,
             review: None,
             message: None,
@@ -187,7 +212,71 @@ impl SourceEditor {
             revision: 0,
             _operation: None,
             _inputs: inputs,
+        };
+        if let Some(path) = initial_file {
+            this.add_files(vec![path], window, cx);
         }
+        this
+    }
+    fn invalidate(&mut self, cx: &mut Context<Self>) {
+        self.revision += 1;
+        self.review = None;
+        self.message = None;
+        self.busy = false;
+        self._operation = None;
+        cx.notify();
+    }
+
+    fn add_files(&mut self, paths: Vec<PathBuf>, window: &mut Window, cx: &mut Context<Self>) {
+        if paths.is_empty() {
+            return;
+        }
+        let replacing_name = self.source.as_ref().map(|source| {
+            self.files.first().map_or_else(
+                || source.name.clone(),
+                |file| file.name.read(cx).value().to_string(),
+            )
+        });
+        if self.source.is_some() {
+            self.files.clear();
+        }
+        for path in paths {
+            if self.files.iter().any(|file| file.path == path) {
+                continue;
+            }
+            let name = input(
+                "Source name",
+                replacing_name.clone().unwrap_or_else(|| file_name(&path)),
+                window,
+                cx,
+            );
+            let subscription = cx.subscribe(&name, |view: &mut Self, _, event: &InputEvent, cx| {
+                if matches!(event, InputEvent::Change) {
+                    view.invalidate(cx);
+                }
+            });
+            self.files.push(FileDraft {
+                id: new_id(),
+                path,
+                name,
+                _input: subscription,
+            });
+            if self.source.is_some() {
+                break;
+            }
+        }
+        self.invalidate(cx);
+    }
+
+    fn add_entered_path(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let value = self.path.read(cx).value().trim().to_string();
+        if value.is_empty() {
+            return;
+        }
+        self.add_files(vec![PathBuf::from(value)], window, cx);
+        self.path
+            .update(cx, |state, cx| state.set_value("", window, cx));
+        self.manual_path = false;
     }
     fn choose(&mut self, base: bool, window: &mut Window, cx: &mut Context<Self>) {
         let folder = base || self.kind == Kind::Directory;
@@ -196,32 +285,30 @@ impl SourceEditor {
             files: !folder,
             directories: folder,
             multiple,
-            prompt: Some(
-                if folder {
-                    "Choose kubeconfig folder"
-                } else {
-                    "Choose kubeconfig files"
-                }
-                .into(),
-            ),
+            prompt: Some(crate::i18n::text(if folder {
+                "Choose kubeconfig folder"
+            } else {
+                "Choose kubeconfig files"
+            })),
         });
         cx.spawn_in(window, async move |this, cx| {
             if let Ok(Ok(Some(paths))) = choosing.await
-                && let Some(first) = paths.first()
+                && let Some(first) = paths.first().cloned()
             {
                 let _ = cx.update(|window, cx| {
                     this.update(cx, |view, cx| {
+                        if !base && view.kind == Kind::File {
+                            view.add_files(paths, window, cx);
+                            return;
+                        }
                         let input = if base { &view.base } else { &view.path };
                         input.update(cx, |state, cx| {
                             state.set_value(first.display().to_string(), window, cx)
                         });
-                        if !base {
-                            view.extra_files = paths.iter().skip(1).cloned().collect();
-                            if view.name.read(cx).value().trim().is_empty() {
-                                view.name.update(cx, |state, cx| {
-                                    state.set_value(file_name(first), window, cx)
-                                });
-                            }
+                        if !base && view.name.read(cx).value().trim().is_empty() {
+                            view.name.update(cx, |state, cx| {
+                                state.set_value(file_name(&first), window, cx)
+                            });
                         }
                         cx.notify();
                     })
@@ -231,6 +318,37 @@ impl SourceEditor {
         .detach();
     }
     fn drafts(&self, cx: &App) -> Result<Vec<Source>, String> {
+        if self.kind == Kind::File {
+            if self.files.is_empty() {
+                return Err("Choose a location first.".into());
+            }
+            let sources = self
+                .files
+                .iter()
+                .map(|file| Source {
+                    id: self
+                        .source
+                        .as_ref()
+                        .map_or_else(|| file.id.clone(), |s| s.id.clone()),
+                    name: file.name.read(cx).value().trim().to_string(),
+                    kind: SourceKind::File {
+                        path: file.path.clone(),
+                    },
+                    enabled: true,
+                    excluded: self
+                        .source
+                        .as_ref()
+                        .map(|s| s.excluded.clone())
+                        .unwrap_or_default(),
+                })
+                .collect::<Vec<_>>();
+            Preferences {
+                system_enabled: false,
+                sources: sources.clone(),
+            }
+            .validate()?;
+            return Ok(sources);
+        }
         let name = self.name.read(cx).value().trim().to_string();
         let path = PathBuf::from(self.path.read(cx).value().trim());
         if self.kind != Kind::Paste && path.as_os_str().is_empty() {
@@ -253,7 +371,7 @@ impl SourceEditor {
             },
             Kind::Paste => SourceKind::Imported,
         };
-        let mut sources = vec![Source {
+        let sources = vec![Source {
             id,
             name,
             kind,
@@ -264,15 +382,6 @@ impl SourceEditor {
                 .map(|s| s.excluded.clone())
                 .unwrap_or_default(),
         }];
-        for path in &self.extra_files {
-            sources.push(Source {
-                id: new_id(),
-                name: file_name(path),
-                kind: SourceKind::File { path: path.clone() },
-                enabled: true,
-                excluded: BTreeSet::new(),
-            });
-        }
         Preferences {
             system_enabled: false,
             sources: sources.clone(),
@@ -481,23 +590,28 @@ impl SourceEditor {
         v_flex().gap_4()
             .child(h_flex().gap_2().children([(Kind::File,"File",IconName::FileKey),(Kind::Directory,"Folder",IconName::FolderOpen),(Kind::Paste,"Paste YAML",IconName::ClipboardPaste)].into_iter().map(|(kind,label,icon)| {
                 Button::new(SharedString::from(format!("source-type-{label}"))).small().outline().icon(icon).label(crate::i18n::text(label)).selected(self.kind == kind).disabled(self.busy || self.source.is_some() && self.kind != kind)
-                    .on_click(cx.listener(move |view, _, _, cx| { view.kind = kind; view.extra_files.clear(); view.review = None; view.message = None; cx.notify(); }))
+                    .on_click(cx.listener(move |view, _, window, cx| {
+                        if view.kind == kind { return; }
+                        view.kind = kind;
+                        view.manual_path = false;
+                        view.path.update(cx, |state, cx| state.set_value("", window, cx));
+                        view.invalidate(cx);
+                        if kind != Kind::File { view.name.read(cx).focus_handle(cx).focus(window, cx); }
+                    }))
             })))
-            .child(name)
-            .when(self.kind != Kind::Paste, |v| v.child(v_flex().gap_2()
-                .child(div().text_sm().font_weight(FontWeight::MEDIUM).child(if self.kind == Kind::Directory { "Folder" } else { "Kubeconfig file" }))
+            .when(self.kind != Kind::File, |v| v.child(name))
+            .when(self.kind == Kind::File, |v| v.child(self.file_form(cx)))
+            .when(self.kind == Kind::Directory, |v| v.child(v_flex().gap_2()
+                .child(div().text_sm().font_weight(FontWeight::MEDIUM).child(crate::i18n::text("Folder")))
                 .child(h_flex().gap_2().items_center().child(div().flex_1().min_w_0().child(Input::new(&self.path).small()))
-                    .child(Button::new("browse-kubeconfig").small().outline().label(crate::i18n::text("Browse…")).on_click(cx.listener(|view, _, window, cx| view.choose(false, window, cx)))))
-                .children(self.extra_files.iter().enumerate().map(|(index, path)| h_flex().gap_2().items_center()
-                    .child(div().flex_1().min_w_0().text_xs().child(copyable_text(("extra-source-path",index), path.display().to_string())))
-                    .child(Button::new(("remove-source-file",index)).xsmall().ghost().icon(IconName::X).tooltip(crate::i18n::text("Remove this file from the selection")).on_click(cx.listener(move |view, _, _, cx| { view.extra_files.remove(index); cx.notify(); })))))))
+                    .child(Button::new("browse-kubeconfig").small().outline().label(crate::i18n::text("Browse…")).on_click(cx.listener(|view, _, window, cx| view.choose(false, window, cx)))))))
             .when(self.kind == Kind::Directory, |v| v.child(Self::field("File names", &self.patterns))
                 .child(checkbox("recursive-kubeconfig-scan").label(crate::i18n::text("Include subfolders")).checked(self.recursive).on_click(cx.listener(|view, value, _, cx| { view.recursive = *value; cx.notify(); }))))
             .when(self.kind == Kind::Paste, |v| v.child(v_flex().gap_2().child(div().text_sm().font_weight(FontWeight::MEDIUM).child(crate::i18n::text("Kubeconfig YAML")))
                 .child(div().h(px(190.)).border_1().border_color(cx.theme().border).rounded(cx.theme().radius).child(Editor::new(&self.yaml).h_full())))
                 .child(Self::field("Base folder (only for relative file references)", &self.base))
                 .child(Button::new("browse-kubeconfig-base").small().ghost().icon(IconName::FolderOpen).label(crate::i18n::text("Choose base folder…")).on_click(cx.listener(|view, _, window, cx| view.choose(true, window, cx)))))
-            .child(div().text_xs().text_color(cx.theme().muted_foreground).child(crate::i18n::text(match self.kind { Kind::File => "Choose one or more files. Each file becomes a separate source and the originals stay in place.", Kind::Directory => "Only matching kubeconfig files are loaded. Invalid files do not block the rest of the folder.", Kind::Paste => "Beacon keeps an owner-only copy locally. Credentials and exec helpers are not used during this preview." })))
+            .when(self.kind != Kind::File, |v| v.child(div().text_xs().text_color(cx.theme().muted_foreground).child(crate::i18n::text(match self.kind { Kind::Directory => "Only matching kubeconfig files are loaded. Invalid files do not block the rest of the folder.", _ => "Beacon keeps an owner-only copy locally. Credentials and exec helpers are not used during this preview." }))))
             .into_any_element()
     }
     fn review_form(&self, cx: &mut Context<Self>) -> AnyElement {
@@ -599,7 +713,7 @@ impl Render for SourceEditor {
                         Button::new("confirm-source-editor")
                             .small()
                             .primary()
-                            .label(if self.busy {
+                            .label(crate::i18n::text(if self.busy {
                                 "Working…"
                             } else if self.rename {
                                 "Save name"
@@ -611,8 +725,15 @@ impl Render for SourceEditor {
                                 }
                             } else {
                                 "Preview contexts"
-                            })
-                            .disabled(self.busy || reviewed && count == 0 && self.source.is_none())
+                            }))
+                            .disabled(
+                                self.busy
+                                    || !self.rename
+                                        && !reviewed
+                                        && self.kind == Kind::File
+                                        && self.files.is_empty()
+                                    || reviewed && count == 0 && self.source.is_none(),
+                            )
                             .on_click(cx.listener(move |view, _, window, cx| {
                                 if reviewed || view.rename {
                                     view.commit(window, cx);
@@ -641,9 +762,10 @@ mod tests {
                 editor.update(cx, |view, cx| {
                     view.name
                         .update(cx, |state, cx| state.set_value("Team", window, cx));
-                    view.path.update(cx, |state, cx| {
-                        state.set_value(path.display().to_string(), window, cx)
-                    });
+                    view.add_files(vec![path.to_owned()], window, cx);
+                    view.files[0]
+                        .name
+                        .update(cx, |state, cx| state.set_value("Team", window, cx));
                 });
                 let content = editor.clone();
                 window.open_dialog(cx, move |dialog, _, _| {
@@ -780,6 +902,208 @@ mod tests {
         })
         .unwrap();
     }
+    #[::core::prelude::v1::test]
+    fn file_rows_append_deduplicate_rename_and_remove_before_review() {
+        let cx = &mut support::context();
+        let directory = tempfile::tempdir().unwrap();
+        support::workspace(cx, directory.path());
+        let paths: Vec<_> = ["dev.yaml", "prod.yaml", "shared.yaml"]
+            .map(|name| directory.path().join(name))
+            .into_iter()
+            .collect();
+        for path in &paths {
+            std::fs::write(path, yaml()).unwrap();
+        }
+        let (window, editor) = editor(cx, &paths[0]);
+        cx.update_window(window, |_, window, cx| {
+            editor.update(cx, |view, cx| {
+                view.add_files(
+                    vec![paths[1].clone(), paths[0].clone(), paths[2].clone()],
+                    window,
+                    cx,
+                )
+            });
+            window.render_frame(cx);
+            let files = &editor.read(cx).files;
+            assert_eq!(files.len(), 3);
+            let ids: Vec<_> = files.iter().map(|file| file.name.entity_id()).collect();
+            let names: Vec<_> = ids
+                .iter()
+                .map(|id| window.find(("source-file-name", *id)).bounds())
+                .collect();
+            assert!(
+                names
+                    .iter()
+                    .all(|bounds| bounds.origin.x == names[0].origin.x
+                        && bounds.size.width == names[0].size.width)
+            );
+            window.click(("source-file-name", ids[1]), cx);
+            window.press("cmd-a", cx);
+            window.input("Production", cx);
+            window.click(("remove-source-file", ids[0]), cx);
+            assert!(window.try_find(("source-file-row", ids[0])).is_none());
+        })
+        .unwrap();
+        cx.run_until_parked();
+        cx.update_window(window, |_, window, cx| {
+            assert_eq!(
+                editor
+                    .read(cx)
+                    .drafts(cx)
+                    .unwrap()
+                    .iter()
+                    .map(|source| source.name.as_str())
+                    .collect::<Vec<_>>(),
+                ["Production", "shared"]
+            );
+            window.click("confirm-source-editor", cx);
+        })
+        .unwrap();
+        support::settle(cx, |cx| {
+            editor.read_with(cx, |view, _| view.review.is_some())
+        });
+        editor.read_with(cx, |view, _| {
+            let review = view.review.as_ref().unwrap();
+            assert_eq!(review.sources.len(), 2);
+            assert_eq!(review.sources[0].name, "Production");
+            assert_eq!(
+                review.sources[0].kind,
+                SourceKind::File {
+                    path: paths[1].clone()
+                }
+            );
+        });
+        cx.update_window(window, |_, window, cx| {
+            window.click("cancel-source-editor", cx);
+            assert_eq!(editor.read(cx).files[0].name.read(cx).value(), "Production");
+        })
+        .unwrap();
+        assert!(cx.read(|cx| {
+            settings::store(cx)
+                .read(cx)
+                .preferences
+                .kubeconfigs
+                .sources
+                .is_empty()
+        }));
+        for path in &paths {
+            assert_eq!(std::fs::read_to_string(path).unwrap(), yaml());
+        }
+    }
+
+    #[::core::prelude::v1::test]
+    fn empty_file_selection_supports_manual_paths_and_keeps_folder_drafts_separate() {
+        let cx = &mut support::context();
+        let directory = tempfile::tempdir().unwrap();
+        support::workspace(cx, directory.path());
+        let path = directory.path().join("team config.yaml");
+        let (window, editor) = editor(cx, &path);
+        cx.update_window(window, |_, window, cx| {
+            let id = editor.read(cx).files[0].name.entity_id();
+            window.render_frame(cx);
+            window.click(("remove-source-file", id), cx);
+            assert!(window.find("source-files-empty").visible());
+            window.click("confirm-source-editor", cx);
+            assert!(editor.read(cx).review.is_none());
+            window.click("enter-kubeconfig-path", cx);
+            window.input(&path.display().to_string(), cx);
+            window.press("enter", cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        cx.update_window(window, |_, window, cx| {
+            let view = editor.read(cx);
+            assert!(!view.manual_path);
+            assert_eq!(view.files.len(), 1);
+            assert_eq!(view.files[0].path, path);
+            assert_eq!(view.files[0].name.read(cx).value(), "team config");
+            assert!(view.review.is_none());
+            window.click(SharedString::from("source-type-Folder"), cx);
+            editor.update(cx, |view, cx| {
+                view.path.update(cx, |input, cx| {
+                    input.set_value(directory.path().display().to_string(), window, cx)
+                })
+            });
+        })
+        .unwrap();
+        cx.run_until_parked();
+        editor.read_with(cx, |view, cx| {
+            let drafts = view.drafts(cx).unwrap();
+            assert_eq!(drafts.len(), 1);
+            assert!(matches!(drafts[0].kind, SourceKind::Directory { .. }));
+        });
+        cx.update_window(window, |_, window, cx| {
+            window.click(SharedString::from("source-type-File"), cx);
+            assert_eq!(editor.read(cx).files[0].path, path);
+            assert!(window.find("source-file-list").visible());
+        })
+        .unwrap();
+    }
+
+    #[::core::prelude::v1::test]
+    fn many_file_rows_scroll_inside_a_bounded_list_and_replacement_keeps_identity() {
+        let cx = &mut support::context();
+        let directory = tempfile::tempdir().unwrap();
+        support::workspace(cx, directory.path());
+        let (window, editor) = editor(cx, &directory.path().join("first.yaml"));
+        cx.update_window(window, |_, window, cx| {
+            editor.update(cx, |view, cx| {
+                view.add_files(
+                    (1..12)
+                        .map(|n| directory.path().join(format!("team-{n}.yaml")))
+                        .collect(),
+                    window,
+                    cx,
+                )
+            });
+            window.render_frame(cx);
+            let id = editor.read(cx).files[0].name.entity_id();
+            let initial = window.find(("source-file-row", id)).bounds();
+            let footer = window.find("confirm-source-editor").bounds();
+            assert!(window.find("source-file-list").bounds().size.height <= px(264.));
+            window.scroll(
+                "source-file-list",
+                ScrollDelta::Pixels(point(px(0.), px(-150.))),
+                cx,
+            );
+            assert!(window.find(("source-file-row", id)).bounds().origin.y < initial.origin.y);
+            assert_eq!(window.find("confirm-source-editor").bounds(), footer);
+
+            let source = Source {
+                id: "saved-file".into(),
+                name: "Team alias".into(),
+                kind: SourceKind::File {
+                    path: directory.path().join("old.yaml"),
+                },
+                enabled: false,
+                excluded: ["excluded-context".into()].into_iter().collect(),
+            };
+            let edit = cx.new(|cx| SourceEditor::new(Some(source.clone()), false, window, cx));
+            edit.update(cx, |view, cx| {
+                view.add_files(
+                    vec![
+                        directory.path().join("replacement.yaml"),
+                        directory.path().join("ignored.yaml"),
+                    ],
+                    window,
+                    cx,
+                );
+                let drafts = view.drafts(cx).unwrap();
+                assert_eq!(drafts.len(), 1);
+                assert_eq!(drafts[0].id, source.id);
+                assert_eq!(drafts[0].name, source.name);
+                assert_eq!(drafts[0].excluded, source.excluded);
+                assert_eq!(
+                    drafts[0].kind,
+                    SourceKind::File {
+                        path: directory.path().join("replacement.yaml")
+                    }
+                );
+            });
+        })
+        .unwrap();
+    }
+
     #[::core::prelude::v1::test]
     fn pasted_credentials_are_stored_only_after_confirmation() {
         let cx = &mut support::context();

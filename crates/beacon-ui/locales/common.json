@@ -628,6 +628,10 @@
     "en": "Close tab",
     "zh-CN": "关闭标签页"
   },
+  "common.duplicate_tab": {
+    "en": "Duplicate tab",
+    "zh-CN": "复制标签页"
+  },
   "common.close_the_details_panel": {
     "en": "Close the details panel",
     "zh-CN": "关闭详情面板"

@@ -1244,36 +1244,26 @@ impl BeaconApp {
         window.activate_window();
     }
 
-    fn split_tab(
+    /// Build an independent view while keeping the source tab's navigation.
+    /// Connections are shared; duplicating never starts or retries one.
+    fn duplicate_tab(
         &mut self,
         id: u64,
-        direction: Direction,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) {
-        let Some(index) = self.index_of(id) else {
-            return;
-        };
-        self.activate(index, window, cx);
-        let pane = self.layout.focused;
-        if let TabState::Files(files) = &self.tabs[index].state {
-            let files = files.read(cx);
-            let session = files.session.clone();
-            let object = files.object.clone();
-            let (container, directory, file) = files.navigation(cx);
-            self.new_files_tab(session, object, window, cx);
-            if let TabState::Files(files) = &self.tabs[self.active].state {
-                files.update(cx, |view, cx| {
-                    view.restore_navigation(container, directory, file, window, cx)
-                });
-            }
-            let id = self.tabs[self.active].id;
-            self.layout.move_tab(id, pane, None, Some(direction));
-            self.sync_layout(window, cx);
-            return;
-        }
+    ) -> Option<u64> {
+        let index = self.index_of(id)?;
+        let pane = self.layout.owner(id)?;
+        let tabs = &self.layout.pane(pane)?.tabs;
+        let before = tabs
+            .iter()
+            .position(|tab| *tab == id)
+            .and_then(|index| tabs.get(index + 1))
+            .copied();
         let tab = &self.tabs[index];
         let cluster = tab.cluster.clone();
+        let namespace = tab.namespace.clone();
+        let files_object = tab.files_object.clone();
         let (kind, scope, mode, filters) = match &tab.state {
             TabState::Connected(view) => {
                 let view = view.read(cx);
@@ -1287,23 +1277,76 @@ impl BeaconApp {
                 None,
             ),
         };
-        self.open_kind(cluster, kind, scope, window, cx);
-        let new_index = self.active;
-        let new_id = self.tabs[new_index].id;
-        self.tabs[new_index].initial_mode = mode;
+        let (session, file_navigation) = match &tab.state {
+            TabState::Files(files) => {
+                let files = files.read(cx);
+                (Some(files.session.clone()), Some(files.navigation(cx)))
+            }
+            _ => (
+                self.connections.read(cx).sessions.get(&cluster).cloned(),
+                None,
+            ),
+        };
+        let state = match &tab.state {
+            TabState::Disconnected => TabState::Disconnected,
+            TabState::Failed(error) => TabState::Failed(error.clone()),
+            _ => TabState::Connecting,
+        };
+        let new_id = cx.global::<WorkspaceWindows>().next_tab;
+        cx.global_mut::<WorkspaceWindows>().next_tab += 1;
+        self.tabs.push(Tab {
+            id: new_id,
+            cluster,
+            namespace: namespace.clone(),
+            initial_kind: kind,
+            initial_scope: scope,
+            initial_mode: mode,
+            state,
+            _navigation: None,
+            _resource_requests: None,
+            _files_requests: None,
+            _overview_requests: None,
+            files_object,
+        });
+        let new_index = self.tabs.len() - 1;
+        self.layout.insert(new_id, pane, before);
+        if let Some(session) = session {
+            self.show(new_index, session, namespace, window, cx);
+        }
         if let Some(view) = self.view(new_index) {
             view.update(cx, |view, cx| {
-                if mode != Mode::Objects {
-                    view.show_mode(mode, window, cx);
-                }
                 if let Some(filters) = filters {
                     view.restore_filters(filters, window, cx);
                 }
             });
         }
+        if let (TabState::Files(files), Some((container, directory, file))) =
+            (&self.tabs[new_index].state, file_navigation)
+        {
+            files.update(cx, |view, cx| {
+                view.restore_navigation(container, directory, file, window, cx)
+            });
+        }
+        self.activate(new_index, window, cx);
+        self.focus.focus(window, cx);
+        Some(new_id)
+    }
+
+    fn split_tab(
+        &mut self,
+        id: u64,
+        direction: Direction,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(pane) = self.layout.owner(id) else {
+            return;
+        };
+        let Some(new_id) = self.duplicate_tab(id, window, cx) else {
+            return;
+        };
         self.layout.move_tab(new_id, pane, None, Some(direction));
         self.sync_layout(window, cx);
-        self.focus.focus(window, cx);
     }
 
     fn detach_tab(
@@ -2590,12 +2633,23 @@ impl BeaconApp {
                     .flex_shrink_0()
                     .child(item)
                     .context_menu(move |menu, _, _| {
+                        let duplicate = menu_view.clone();
                         let right = menu_view.clone();
                         let down = menu_view.clone();
                         let detach = menu_view.clone();
                         let merge = menu_view.clone();
                         let close = menu_view.clone();
                         menu.item(
+                            PopupMenuItem::new(crate::i18n::text("Duplicate tab"))
+                                .icon(IconName::Copy)
+                                .on_click(move |_, window, cx| {
+                                    let _ = duplicate.update(cx, |app, cx| {
+                                        app.duplicate_tab(id, window, cx);
+                                    });
+                                }),
+                        )
+                        .separator()
+                        .item(
                             PopupMenuItem::new(crate::i18n::text("Split right — side by side"))
                                 .on_click(move |_, window, cx| {
                                     let _ = right.update(cx, |app, cx| {
@@ -3328,6 +3382,9 @@ impl Render for BeaconApp {
 }
 
 #[cfg(all(test, feature = "ui-tests"))]
+mod tab_duplication_tests;
+
+#[cfg(all(test, feature = "ui-tests"))]
 mod rendering_tests {
     use super::*;
     use crate::feature_test_support as support;
@@ -3924,12 +3981,64 @@ mod file_workspace_tests {
                         state.sessions.insert(session.id().clone(), session.clone());
                     });
                     app.open_files(session.clone(), object.clone(), window, cx);
+                    if let TabState::Files(view) = &app.tabs[0].state {
+                        view.update(cx, |view, cx| {
+                            view.restore_navigation(
+                                Some("sidecar".into()),
+                                "/".into(),
+                                Some("/fixture.txt".into()),
+                                window,
+                                cx,
+                            );
+                        });
+                    }
                     app
                 })
             })
             .unwrap()
         });
         let first_id = app.read_with(cx, |a, _| a.tabs[0].id);
+        support::settle(cx, |cx| {
+            app.read_with(cx, |a, cx| {
+            matches!(&a.tabs[0].state, TabState::Files(view) if view.read(cx).navigation(cx).2.is_some())
+        })
+        });
+        let navigation = app.read_with(cx, |a, cx| {
+            let TabState::Files(view) = &a.tabs[0].state else {
+                unreachable!()
+            };
+            view.read(cx).navigation(cx)
+        });
+        let duplicate = cx
+            .update_window(window, |_, window, cx| {
+                app.update(cx, |a, cx| {
+                    let id = a.duplicate_tab(first_id, window, cx).unwrap();
+                    let (TabState::Files(source), TabState::Files(copy)) =
+                        (&a.tabs[0].state, &a.tabs[1].state)
+                    else {
+                        panic!("duplicate lost Files")
+                    };
+                    assert_ne!(source.entity_id(), copy.entity_id());
+                    assert_eq!(a.layout.panes().len(), 1);
+                    assert_eq!(
+                        a.layout.pane(a.layout.focused).unwrap().tabs,
+                        vec![first_id, id]
+                    );
+                    id
+                })
+            })
+            .unwrap();
+        support::settle(cx, |cx| {
+            app.read_with(cx, |a, cx| {
+            matches!(&a.tabs[a.index_of(duplicate).unwrap()].state, TabState::Files(view) if view.read(cx).navigation(cx) == navigation)
+        })
+        });
+        cx.update_window(window, |_, window, cx| {
+            app.update(cx, |a, cx| {
+                a.close(a.index_of(duplicate).unwrap(), window, cx)
+            })
+        })
+        .unwrap();
         cx.update_window(window, |_, w, cx| {
             app.update(cx, |a, cx| {
                 a.open_files(session.clone(), object.clone(), w, cx);

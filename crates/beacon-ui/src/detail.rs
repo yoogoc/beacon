@@ -39,6 +39,7 @@ use crate::tls::{self, CertificateInfo};
 
 mod data_editors;
 mod data_presentation;
+mod header;
 mod service_account_data;
 
 #[cfg(all(test, feature = "ui-tests"))]
@@ -199,6 +200,7 @@ pub struct DetailView {
     /// private key.
     certificates: Option<Result<Vec<CertificateInfo>, String>>,
 
+    header: header::HeaderState,
     tabs: Vec<DetailTab>,
     tab: DetailTab,
     labels_expanded: bool,
@@ -298,6 +300,7 @@ impl DetailView {
         let mut this = Self {
             target: ObjectRef::of(&object),
             session,
+            header: header::HeaderState::default(),
             tabs: DetailTab::for_kind(&kind),
             kind,
             object,
@@ -369,6 +372,10 @@ impl DetailView {
             )
             .detach();
         }
+        cx.observe_global::<crate::i18n::LocaleState>(|view, cx| {
+            view.defer_header_refresh(cx);
+        })
+        .detach();
         this.resolve_pod_owners(cx);
         this.load_argo(cx);
         this.watch_argo_runs(window, cx);
@@ -452,6 +459,7 @@ impl DetailView {
             crate::overview::project(&self.kind.resource.group, &self.kind.resource.kind, &object);
         let changed = !Arc::ptr_eq(&self.object, &object);
         self.object = object;
+        self.defer_header_refresh(cx);
         if let Some(network) = &self.network {
             network.update(cx, |view, cx| view.refresh(self.object.clone(), cx));
         }
@@ -1260,87 +1268,6 @@ impl DetailView {
         }
         view.when_some(self.argo_canvas.clone(), |view, canvas| view.child(canvas))
             .into_any_element()
-    }
-
-    fn render_header(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let subtitle = match &self.target.namespace {
-            Some(namespace) => format!("{} · {namespace}", self.kind.display_name()),
-            None => self.kind.display_name(),
-        };
-
-        v_flex()
-            .w_full()
-            .flex_shrink_0()
-            .border_b_1()
-            .border_color(cx.theme().border)
-            .child(
-                h_flex()
-                    .w_full()
-                    .px_3()
-                    .py_2()
-                    .gap_2()
-                    .items_start()
-                    .child(
-                        div()
-                            .p_2()
-                            .rounded_md()
-                            .bg(cx.theme().muted.opacity(0.5))
-                            .child(
-                                crate::icons::resource(
-                                    &self.kind.resource.group,
-                                    &self.kind.resource.kind,
-                                )
-                                .size_4()
-                                .text_color(cx.theme().muted_foreground),
-                            ),
-                    )
-                    .child(
-                        v_flex()
-                            .flex_1()
-                            .min_w_0()
-                            .gap_1()
-                            .child(div().text_sm().font_weight(FontWeight::SEMIBOLD).child(
-                                SelectableText::new("detail-name", self.target.name.clone()),
-                            ))
-                            .child(
-                                div()
-                                    .text_xs()
-                                    .text_color(cx.theme().muted_foreground)
-                                    .child(SelectableText::new("detail-subtitle", subtitle)),
-                            ),
-                    )
-                    .child(
-                        Button::new("close-detail")
-                            .xsmall()
-                            .ghost()
-                            .label("×")
-                            .tooltip(crate::i18n::text("Close the details panel"))
-                            .on_click(cx.listener(|_, _, _, cx| cx.emit(DetailClosed))),
-                    ),
-            )
-            .child(
-                TabBar::new("detail-tabs")
-                    .segmented()
-                    .w_full()
-                    .small()
-                    .selected_index(
-                        self.tabs
-                            .iter()
-                            .position(|tab| *tab == self.tab)
-                            .unwrap_or(0),
-                    )
-                    .children(
-                        self.tabs
-                            .iter()
-                            .map(|tab| Tab::new().child(crate::i18n::text(tab.label())))
-                            .collect::<Vec<_>>(),
-                    )
-                    .on_click(cx.listener(|view, index: &usize, window, cx| {
-                        if let Some(tab) = view.tabs.get(*index).copied() {
-                            view.select(tab, window, cx);
-                        }
-                    })),
-            )
     }
 
     fn render_overview(&self, cx: &mut Context<Self>) -> AnyElement {

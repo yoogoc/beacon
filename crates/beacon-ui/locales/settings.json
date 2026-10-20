@@ -1067,5 +1067,37 @@
   "updates.last_checked_ago": {
     "en": "Last checked %{count} %{unit} ago",
     "zh-CN": "上次检查：%{count} %{unit}前"
+  },
+  "settings.kubeconfig_files": {
+    "en": "Kubeconfig files",
+    "zh-CN": "kubeconfig 文件"
+  },
+  "settings.replace_file_prompt": {
+    "en": "Replace file…",
+    "zh-CN": "更换文件…"
+  },
+  "settings.add_files_prompt": {
+    "en": "Add files…",
+    "zh-CN": "添加文件…"
+  },
+  "settings.each_file_is_a_source": {
+    "en": "Each file becomes a separate source.",
+    "zh-CN": "每个文件将成为一个独立来源。"
+  },
+  "settings.original_files_stay": {
+    "en": "Original files stay in place.",
+    "zh-CN": "原文件保留在原位置。"
+  },
+  "settings.enter_path_prompt": {
+    "en": "Enter a path…",
+    "zh-CN": "输入路径…"
+  },
+  "settings.replace_file": {
+    "en": "Replace file",
+    "zh-CN": "更换文件"
+  },
+  "settings.add_file": {
+    "en": "Add file",
+    "zh-CN": "添加文件"
   }
 }

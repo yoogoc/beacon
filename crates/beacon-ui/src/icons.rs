@@ -48,6 +48,10 @@ gpui_kit::assets::icon_assets!(
         Box,
         Cpu,
         MemoryStick,
+        Terminal,
+        TextCursorInput,
+        Circle,
+        Workflow,
     ]
 );
 
@@ -157,19 +161,48 @@ mod tests {
     use super::*;
 
     #[test]
-    fn list_customization_icons_are_available_from_the_application_bundle() {
+    fn referenced_icons_are_available_from_the_application_bundle() {
         use gpui_kit::assets::IconName as Glyph;
+        use std::{
+            collections::{BTreeMap, BTreeSet},
+            path::Path,
+        };
+
+        fn sources(directory: &Path, output: &mut String) {
+            for entry in std::fs::read_dir(directory).unwrap() {
+                let path = entry.unwrap().path();
+                if path.is_dir() {
+                    sources(&path, output);
+                } else if path.extension().is_some_and(|extension| extension == "rs") {
+                    output.push_str(&std::fs::read_to_string(path).unwrap());
+                    output.push('\n');
+                }
+            }
+        }
+
+        // The enum includes the full upstream catalog, while Assets embeds a
+        // smaller selection. Compilation alone cannot detect a missing SVG.
+        let mut source = String::new();
+        sources(
+            &Path::new(env!("CARGO_MANIFEST_DIR")).join("src"),
+            &mut source,
+        );
+        let used: BTreeSet<_> = regex::Regex::new(r"\bIconName::(\w+)")
+            .unwrap()
+            .captures_iter(&source)
+            .map(|capture| capture[1].to_owned())
+            .collect();
+        assert!(!used.is_empty());
+        let icons: BTreeMap<_, _> = Glyph::ALL
+            .iter()
+            .map(|icon| (format!("{icon:?}"), *icon))
+            .collect();
 
         let paths = Assets.list("icons/").unwrap();
-        for icon in [
-            Glyph::Columns3,
-            Glyph::GripVertical,
-            Glyph::Bookmark,
-            Glyph::Search,
-            Glyph::Check,
-            Glyph::Info,
-            Glyph::Trash,
-        ] {
+        for name in used {
+            let icon = icons
+                .get(&name)
+                .unwrap_or_else(|| panic!("unknown referenced icon: {name}"));
             let path = icon.path();
             let data = Assets.load(&path).unwrap().unwrap_or_else(|| {
                 panic!("missing application icon: {path}");

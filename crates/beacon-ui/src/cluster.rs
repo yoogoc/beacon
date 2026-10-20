@@ -1651,7 +1651,12 @@ impl ClusterView {
 
         let session = self.session.clone();
         let rules = self.rules.clone();
-        let detail = cx.new(|cx| DetailView::new(session, kind, object, rules, window, cx));
+        let table = self.table.clone();
+        let detail = cx.new(|cx| {
+            let mut view = DetailView::new(session, kind, object, rules, window, cx);
+            view.attach_resource_table(table);
+            view
+        });
         cx.subscribe(&detail, |view, _, _: &DetailClosed, cx| {
             view.detail = None;
             cx.notify();
@@ -3573,3 +3578,6 @@ mod integration_tests {
         );
     }
 }
+
+#[cfg(all(test, feature = "ui-tests"))]
+mod detail_header_tests;
