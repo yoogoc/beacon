@@ -456,7 +456,7 @@ impl ResourceTable {
             for (label, port) in choices {
                 let forward_view = view.clone();
                 let forward_target = target.clone();
-                menu = menu.item(
+                menu = menu.grouped_item(
                     PopupMenuItem::new(crate::i18n::text(label))
                         .icon(IconName::RadioTower)
                         .on_click(move |_, window, cx| {
@@ -464,6 +464,7 @@ impl ResourceTable {
                                 cluster.start_forward_for(forward_target.clone(), port, window, cx)
                             });
                         }),
+                    crate::resource_menu::HeaderGroup::PortForward,
                 );
             }
         }
@@ -541,12 +542,13 @@ impl ResourceTable {
         }
 
         let copy_name = target.name.clone();
-        menu = menu.separator().item(
+        menu = menu.separator().grouped_item(
             PopupMenuItem::new(crate::i18n::text("Copy name"))
                 .icon(IconName::Copy)
                 .on_click(move |_, _, cx| {
                     cx.write_to_clipboard(ClipboardItem::new_string(copy_name.clone()));
                 }),
+            crate::resource_menu::HeaderGroup::Copy,
         );
         if let Some(row) = self.rows.iter().position(|key| key == &target)
             && let Some(index) = self
@@ -557,18 +559,20 @@ impl ResourceTable {
             && let Some((_, value)) = self.cell(row, index)
             && !value.is_missing()
         {
-            menu = menu.item(
+            menu = menu.grouped_item(
                 crate::copyable_text::copy_item("Copy status", value.display().to_string())
                     .icon(IconName::Copy),
+                crate::resource_menu::HeaderGroup::Copy,
             );
         }
         if is_pod {
-            menu = menu.item(
+            menu = menu.grouped_item(
                 crate::copyable_text::copy_item(
                     "Copy container states",
                     beacon_columns::containers::description(&object.data),
                 )
                 .icon(IconName::Copy),
+                crate::resource_menu::HeaderGroup::Copy,
             );
         }
         menu

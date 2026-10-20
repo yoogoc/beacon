@@ -81,9 +81,54 @@ fn actions(view: &Entity<ClusterView>, target: &ObjectRef, cx: &App) -> Vec<(usi
             HeaderItem::Action {
                 label, disabled, ..
             } => Some((index, label.to_string(), disabled)),
+            HeaderItem::Menu { label, items, .. } => Some((
+                index,
+                label.to_string(),
+                items
+                    .iter()
+                    .all(|item| matches!(item, HeaderItem::Action { disabled: true, .. })),
+            )),
             _ => None,
         })
         .collect()
+}
+
+fn leaf_actions(items: Vec<HeaderItem>) -> Vec<(String, bool)> {
+    items
+        .into_iter()
+        .flat_map(|item| match item {
+            HeaderItem::Action {
+                label, disabled, ..
+            } => vec![(label.to_string(), disabled)],
+            HeaderItem::Menu { items, .. } => leaf_actions(items),
+            HeaderItem::Separator => vec![],
+        })
+        .collect()
+}
+
+fn click_menu(cx: &mut TestAppContext, window: AnyWindowHandle, label: &str) {
+    cx.run_until_parked();
+    support::render_until(cx, window, |window| {
+        gpui_kit::base::test_support::snapshots(window)
+            .iter()
+            .any(|item| item.role() == Some(Role::MenuItem) && item.label() == Some(label))
+    });
+    cx.update_window(window, |_, window, cx| {
+        let item = gpui_kit::base::test_support::snapshots(window)
+            .into_iter()
+            .find(|item| item.role() == Some(Role::MenuItem) && item.label() == Some(label))
+            .unwrap();
+        let id = item.path().last().unwrap().clone();
+        window.within("popup-menu").hover(id.clone(), cx);
+        window.render_frame(cx);
+        assert!(
+            window.find("detail-header-actions").visible(),
+            "the toolbar must remain open while reaching its menu"
+        );
+        window.within("popup-menu").click(id, cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
 }
 
 fn pod() -> Value {
@@ -290,10 +335,14 @@ fn hover_keeps_header_actions_reachable_and_restores_the_resource_identity() {
             assert!(menu.iter().any(|(item, _)| item == label));
         }
         menu.retain(|(label, _)| !matches!(label.as_str(), "Open details" | "View configuration"));
-        let mut expected_menu = expected
-            .iter()
-            .map(|(_, label, disabled)| (label.clone(), *disabled))
-            .collect::<Vec<_>>();
+        let mut expected_menu = leaf_actions(
+            view.read(cx)
+                .table
+                .read(cx)
+                .delegate()
+                .resource_menu(target.clone(), cx)
+                .header(),
+        );
         menu.sort();
         expected_menu.sort();
         assert_eq!(menu, expected_menu);
@@ -316,10 +365,10 @@ fn header_actions_dispatch_on_the_current_resource_and_keep_delete_confirmation(
             ScrollDelta::Pixels(point(px(-10000.), px(0.))),
             cx,
         );
-        window.click(("detail-resource-action", index("Copy name")), cx);
+        window.click(("detail-resource-action", index("Copy")), cx);
     })
     .unwrap();
-    cx.run_until_parked();
+    click_menu(cx, window, "Copy name");
     cx.update(|cx| {
         assert_eq!(
             cx.read_from_clipboard().unwrap().text().unwrap(),
@@ -352,6 +401,175 @@ fn header_actions_dispatch_on_the_current_resource_and_keep_delete_confirmation(
     .unwrap();
     cx.run_until_parked();
     assert!(view.read_with(cx, |view, _| view.prompt.is_none()));
+}
+
+#[::core::prelude::v1::test]
+fn hovering_opens_and_switches_menus_and_leaving_or_escape_dismisses_them() {
+    let cx = &mut support::context();
+    let (_directory, _fixture, window, view, target) =
+        open(cx, pod(), support::kind("", "Pod", "pods"), 1500.);
+    let items = cx.read(|cx| actions(&view, &target, cx));
+    let index = |label: &str| items.iter().find(|(_, name, _)| name == label).unwrap().0;
+    let menu_has = |window: &Window, label: &str| {
+        gpui_kit::base::test_support::snapshots(window)
+            .iter()
+            .any(|item| item.role() == Some(Role::MenuItem) && item.label() == Some(label))
+    };
+    cx.update_window(window, |_, window, cx| {
+        window.hover("detail-resource-icon", cx);
+        window.scroll(
+            "detail-header-actions",
+            ScrollDelta::Pixels(point(px(-10000.), px(0.))),
+            cx,
+        );
+        window.hover(("detail-resource-action", index("Copy")), cx);
+    })
+    .unwrap();
+    support::render_until(cx, window, |window| menu_has(window, "Copy name"));
+    header_is_open(cx, window, true);
+    cx.update_window(window, |_, window, cx| {
+        let item = gpui_kit::base::test_support::snapshots(window)
+            .into_iter()
+            .find(|item| {
+                item.role() == Some(Role::MenuItem) && item.label() == Some("Copy container states")
+            })
+            .unwrap();
+        window
+            .within("popup-menu")
+            .hover(item.path().last().unwrap().clone(), cx);
+        window.render_frame(cx);
+        assert!(menu_has(window, "Copy name"));
+        assert!(window.find("detail-header-actions").visible());
+        window.scroll(
+            "detail-header-actions",
+            ScrollDelta::Pixels(point(px(10000.), px(0.))),
+            cx,
+        );
+        window.hover(("detail-resource-action", index("Port forward…")), cx);
+    })
+    .unwrap();
+    support::render_until(cx, window, |window| menu_has(window, "Forward port 8080…"));
+    cx.update_window(window, |_, window, cx| {
+        assert!(!menu_has(window, "Copy name"));
+        window.hover("resource-search", cx);
+    })
+    .unwrap();
+    header_is_open(cx, window, false);
+    cx.update_window(window, |_, window, cx| {
+        assert!(window.try_find("popup-menu").is_none());
+        window.hover("detail-resource-icon", cx);
+        window.scroll(
+            "detail-header-actions",
+            ScrollDelta::Pixels(point(px(-10000.), px(0.))),
+            cx,
+        );
+        window.hover(("detail-resource-action", index("Copy")), cx);
+    })
+    .unwrap();
+    support::render_until(cx, window, |window| menu_has(window, "Copy name"));
+    cx.update_window(window, |_, window, cx| window.press("escape", cx))
+        .unwrap();
+    header_is_open(cx, window, true);
+    cx.update_window(window, |_, window, cx| {
+        assert!(window.try_find("popup-menu").is_none());
+        assert!(window.find("detail-resource-icon").visible());
+        window.hover("resource-search", cx);
+    })
+    .unwrap();
+    header_is_open(cx, window, false);
+}
+
+#[::core::prelude::v1::test]
+fn copy_and_port_options_have_one_menu_each_and_preserve_each_operation() {
+    let cx = &mut support::context();
+    let mut object = pod();
+    object["spec"]["containers"][0]["ports"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({"containerPort":9090}));
+    let (_directory, fixture, window, view, target) =
+        open(cx, object, support::kind("", "Pod", "pods"), 1500.);
+    let items = cx.read(|cx| actions(&view, &target, cx));
+    assert_eq!(
+        items.iter().filter(|(_, label, _)| label == "Copy").count(),
+        1
+    );
+    assert_eq!(
+        items
+            .iter()
+            .filter(|(_, label, _)| label == "Port forward…")
+            .count(),
+        1
+    );
+    assert!(
+        !items
+            .iter()
+            .any(|(_, label, _)| label.starts_with("Copy ") || label.starts_with("Forward port "))
+    );
+    let index = |name: &str| items.iter().find(|(_, label, _)| label == name).unwrap().0;
+    for label in ["Copy status", "Copy container states"] {
+        cx.update_window(window, |_, window, cx| {
+            window.hover("detail-resource-icon", cx);
+            window.scroll(
+                "detail-header-actions",
+                ScrollDelta::Pixels(point(px(-10000.), px(0.))),
+                cx,
+            );
+            window.click(("detail-resource-action", index("Copy")), cx);
+        })
+        .unwrap();
+        click_menu(cx, window, label);
+        let copied = cx.update(|cx| cx.read_from_clipboard().unwrap().text().unwrap());
+        if label == "Copy status" {
+            assert_eq!(copied, "Running");
+        } else {
+            assert!(copied.contains("app"));
+        }
+    }
+    for (label, port) in [
+        ("Forward port 8080…", Some("8080")),
+        ("Forward port 9090…", Some("9090")),
+        ("Port forward…", None),
+    ] {
+        cx.update_window(window, |_, window, cx| {
+            window.hover("detail-resource-icon", cx);
+            window.scroll(
+                "detail-header-actions",
+                ScrollDelta::Pixels(point(px(10000.), px(0.))),
+                cx,
+            );
+            window.click(("detail-resource-action", index("Port forward…")), cx);
+        })
+        .unwrap();
+        click_menu(cx, window, label);
+        support::render_until(cx, window, |window| {
+            window
+                .try_find("forward-dialog")
+                .is_some_and(|item| item.visible())
+        });
+        cx.update_window(window, |_, window, cx| {
+            let snapshots = gpui_kit::base::test_support::snapshots(window);
+            assert!(
+                snapshots
+                    .iter()
+                    .filter(|item| item.path().contains(&ElementId::from("forward-dialog")))
+                    .any(|item| item.value() == Some(port.unwrap_or_default())),
+                "the selected remote port must be retained"
+            );
+            window.click("forward-cancel", cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+    }
+    assert!(view.read_with(cx, |view, _| view.session().forwards().is_empty()));
+    assert!(
+        !fixture
+            .requests
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|(request, _)| request.contains("portforward"))
+    );
 }
 
 #[::core::prelude::v1::test]

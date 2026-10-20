@@ -1,15 +1,32 @@
 //! Hovering the resource icon reveals the same actions as the row menu.
 use super::*;
-use crate::{resource_menu::HeaderItem, table::ResourceTable};
+use crate::{
+    resource_menu::{HeaderGroup, HeaderItem},
+    table::ResourceTable,
+};
 use gpui_kit::component::scroll::ScrollableElement as _;
-use gpui_kit::component::{menu::ContextMenuExt as _, table::TableState};
-use std::time::{Duration, Instant};
+use gpui_kit::component::{
+    Icon,
+    menu::{ContextMenuExt as _, PopupMenu, PopupMenuItem},
+    popover::Popover,
+    table::TableState,
+};
+use std::{
+    cell::Cell,
+    rc::Rc,
+    time::{Duration, Instant},
+};
 
 #[derive(Default)]
 pub(super) struct HeaderState {
     source: Option<Entity<TableState<ResourceTable>>>,
     items: Vec<HeaderItem>,
     open: bool,
+    menu_open: Option<HeaderGroup>,
+    menu: Option<Entity<PopupMenu>>,
+    bounds: Rc<Cell<Option<Bounds<Pixels>>>>,
+    menu_bounds: Rc<Cell<Option<Bounds<Pixels>>>>,
+    _menu_dismiss: Option<Subscription>,
     transition: u64,
     from: f32,
     started: Option<Instant>,
@@ -32,7 +49,7 @@ impl DetailView {
     }
 
     fn set_header_open(&mut self, open: bool, cx: &mut Context<Self>) {
-        if self.header.open == open {
+        if self.header.open == open || (!open && self.header.menu_open.is_some()) {
             return;
         }
         if open {
@@ -56,6 +73,103 @@ impl DetailView {
         cx.notify();
     }
 
+    fn hide_header_menu(&mut self, cx: &mut Context<Self>) {
+        if self.header.menu_open.take().is_some() {
+            self.header.menu_bounds.set(None);
+            cx.notify();
+        }
+    }
+
+    fn close_header(&mut self, cx: &mut Context<Self>) {
+        self.hide_header_menu(cx);
+        self.set_header_open(false, cx);
+    }
+
+    fn dismiss_header_menu(&mut self, window: &Window, cx: &mut Context<Self>) {
+        self.hide_header_menu(cx);
+        // Clicking a trigger or the scrollbar dismisses the popup first.
+        // Keep the toolbar mounted so its click/drag can still finish.
+        if !self
+            .header
+            .bounds
+            .get()
+            .is_some_and(|bounds| bounds.contains(&window.mouse_position()))
+        {
+            self.set_header_open(false, cx);
+        }
+    }
+
+    fn open_header_menu(
+        &mut self,
+        group: HeaderGroup,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.header.open || self.header.menu_open == Some(group) {
+            return;
+        }
+        let Some(items) = self.header.items.iter().find_map(|item| match item {
+            HeaderItem::Menu {
+                group: candidate,
+                items,
+                ..
+            } if *candidate == group => Some(items.clone()),
+            _ => None,
+        }) else {
+            return;
+        };
+        if items
+            .iter()
+            .all(|item| matches!(item, HeaderItem::Action { disabled: true, .. }))
+        {
+            return;
+        }
+        let menu = PopupMenu::build(window, cx, move |menu, _, _| {
+            items.iter().fold(menu, |menu, item| {
+                let HeaderItem::Action {
+                    label,
+                    icon,
+                    disabled,
+                    handler,
+                    ..
+                } = item
+                else {
+                    return menu;
+                };
+                let handler = handler.clone();
+                menu.item(
+                    PopupMenuItem::new(label.clone())
+                        .icon(icon.as_ref().clone())
+                        .disabled(*disabled)
+                        .on_click(move |event, window, cx| {
+                            let handler = handler.clone();
+                            let event = event.clone();
+                            window.defer(cx, move |window, cx| handler(&event, window, cx));
+                        }),
+                )
+            })
+        });
+        self.header._menu_dismiss = Some(cx.subscribe_in(
+            &menu,
+            window,
+            move |view, source, _: &DismissEvent, window, cx| {
+                if view.header.menu_open == Some(group)
+                    && view
+                        .header
+                        .menu
+                        .as_ref()
+                        .is_some_and(|menu| menu.entity_id() == source.entity_id())
+                {
+                    view.dismiss_header_menu(window, cx);
+                }
+            },
+        ));
+        self.header.menu = Some(menu);
+        self.header.menu_open = Some(group);
+        self.header.menu_bounds.set(None);
+        cx.notify();
+    }
+
     pub(super) fn defer_header_refresh(&self, cx: &mut Context<Self>) {
         if !self.header.open {
             return;
@@ -75,37 +189,56 @@ impl DetailView {
 
     fn header_pointer_listener(&self, cx: &Context<Self>) -> impl IntoElement {
         let view = cx.weak_entity();
+        let header_bounds = self.header.bounds.clone();
+        let menu_bounds = self.header.menu_bounds.clone();
         canvas(
             |_, _, _| (),
             move |bounds, _, window, _| {
+                header_bounds.set(Some(bounds));
                 // Hover can turn false while a child captures the pointer or
                 // a scrollbar/tooltip changes hit testing. Only the stationary
                 // header's geometry determines whether the pointer left it.
                 let moving = view.clone();
+                let menu = menu_bounds.clone();
                 window.on_mouse_event(move |event: &MouseMoveEvent, phase, _, cx| {
                     if phase.capture()
                         && event.pressed_button != Some(MouseButton::Left)
                         && !bounds.contains(&event.position)
+                        && !menu
+                            .get()
+                            .is_some_and(|bounds| bounds.contains(&event.position))
                     {
-                        let _ = moving.update(cx, |view, cx| view.set_header_open(false, cx));
+                        let _ = moving.update(cx, |view, cx| view.close_header(cx));
                     }
                 });
                 let released = view.clone();
+                let menu = menu_bounds.clone();
                 window.on_mouse_event(move |event: &MouseUpEvent, phase, _, cx| {
-                    if phase.capture() && !bounds.contains(&event.position) {
-                        let _ = released.update(cx, |view, cx| view.set_header_open(false, cx));
+                    if phase.capture()
+                        && !bounds.contains(&event.position)
+                        && !menu
+                            .get()
+                            .is_some_and(|bounds| bounds.contains(&event.position))
+                    {
+                        let _ = released.update(cx, |view, cx| view.close_header(cx));
                     }
                 });
                 let pressed = view.clone();
+                let menu = menu_bounds.clone();
                 window.on_mouse_event(move |event: &MouseDownEvent, phase, _, cx| {
-                    if phase.capture() && !bounds.contains(&event.position) {
-                        let _ = pressed.update(cx, |view, cx| view.set_header_open(false, cx));
+                    if phase.capture()
+                        && !bounds.contains(&event.position)
+                        && !menu
+                            .get()
+                            .is_some_and(|bounds| bounds.contains(&event.position))
+                    {
+                        let _ = pressed.update(cx, |view, cx| view.close_header(cx));
                     }
                 });
                 let exited = view.clone();
                 window.on_mouse_event(move |_: &MouseExitEvent, phase, _, cx| {
                     if phase.capture() {
-                        let _ = exited.update(cx, |view, cx| view.set_header_open(false, cx));
+                        let _ = exited.update(cx, |view, cx| view.close_header(cx));
                     }
                 });
             },
@@ -156,6 +289,11 @@ impl DetailView {
                             .tooltip(label.clone())
                             .disabled(*disabled)
                             .when(*destructive, |button| button.text_color(cx.theme().danger))
+                            .on_mouse_move(cx.listener(|view, event: &MouseMoveEvent, _, cx| {
+                                if event.pressed_button.is_none() {
+                                    view.hide_header_menu(cx);
+                                }
+                            }))
                             .on_click(move |event, window, cx| {
                                 let handler = handler.clone();
                                 let event = event.clone();
@@ -170,6 +308,76 @@ impl DetailView {
                                             cx.notify();
                                         }
                                     });
+                                });
+                            })
+                            .into_any_element()
+                    }
+                    HeaderItem::Menu {
+                        group,
+                        label,
+                        icon,
+                        items,
+                    } => {
+                        let group = *group;
+                        let open = self.header.menu_open == Some(group);
+                        let menu = open.then(|| self.header.menu.clone()).flatten();
+                        let bounds = self.header.menu_bounds.clone();
+                        let view = cx.weak_entity();
+                        let trigger = Button::new(("detail-resource-action", index))
+                            .small()
+                            .ghost()
+                            .size(px(30.))
+                            .w(px(44.))
+                            .flex_shrink_0()
+                            .icon(icon.as_ref().clone().size_4())
+                            .child(Icon::new(IconName::ChevronDown).size(px(10.)))
+                            .accessibility_label(label.clone())
+                            .disabled(items.iter().all(|item| {
+                                matches!(item, HeaderItem::Action { disabled: true, .. })
+                            }))
+                            .on_mouse_move(cx.listener(
+                                move |view, event: &MouseMoveEvent, window, cx| {
+                                    if event.pressed_button.is_none() {
+                                        view.open_header_menu(group, window, cx);
+                                    }
+                                },
+                            ))
+                            .on_click(cx.listener(move |_, _, window, cx| {
+                                let view = cx.weak_entity();
+                                // The popup's outside-click dismissal runs first.
+                                // Reopen afterward if the user also clicks its trigger.
+                                window.defer(cx, move |window, cx| {
+                                    let _ = view.update(cx, |view, cx| {
+                                        view.open_header_menu(group, window, cx)
+                                    });
+                                });
+                            }));
+                        Popover::new(("detail-resource-menu", index))
+                            .open(open)
+                            .appearance(false)
+                            .overlay_closable(false)
+                            .when_some(menu.as_ref(), |popover, menu| {
+                                popover.track_focus(&menu.focus_handle(cx))
+                            })
+                            .trigger(trigger)
+                            .content(move |_, _, _| {
+                                let bounds = bounds.clone();
+                                div().relative().children(menu.clone()).child(
+                                    canvas(
+                                        |_, _, _| (),
+                                        move |rect, _, _, _| bounds.set(Some(rect)),
+                                    )
+                                    .absolute()
+                                    .inset_0(),
+                                )
+                            })
+                            .on_open_change(move |open, window, cx| {
+                                let _ = view.update(cx, |view, cx| {
+                                    if *open {
+                                        view.open_header_menu(group, window, cx);
+                                    } else if view.header.menu_open == Some(group) {
+                                        view.dismiss_header_menu(window, cx);
+                                    }
                                 });
                             })
                             .into_any_element()

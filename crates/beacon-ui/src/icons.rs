@@ -52,6 +52,9 @@ gpui_kit::assets::icon_assets!(
         TextCursorInput,
         Circle,
         Workflow,
+        CalendarCheck,
+        LockOpen,
+        Send,
     ]
 );
 

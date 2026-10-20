@@ -20,8 +20,32 @@ struct MenuEntry {
     item: PopupMenuItem,
     destructive: bool,
     show_in_header: bool,
+    group: Option<HeaderGroup>,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum HeaderGroup {
+    Copy,
+    PortForward,
+}
+
+impl HeaderGroup {
+    fn label(self) -> SharedString {
+        crate::i18n::text(match self {
+            Self::Copy => "Copy",
+            Self::PortForward => "Port forward…",
+        })
+    }
+
+    fn icon(self) -> Icon {
+        Icon::new(match self {
+            Self::Copy => IconName::Copy,
+            Self::PortForward => IconName::RadioTower,
+        })
+    }
+}
+
+#[derive(Clone)]
 pub(crate) enum HeaderItem {
     Separator,
     Action {
@@ -30,6 +54,12 @@ pub(crate) enum HeaderItem {
         disabled: bool,
         destructive: bool,
         handler: Handler,
+    },
+    Menu {
+        group: HeaderGroup,
+        label: SharedString,
+        icon: Box<Icon>,
+        items: Vec<HeaderItem>,
     },
 }
 
@@ -42,6 +72,17 @@ impl ResourceMenu {
         self.push(item, false, true)
     }
 
+    /// Keep the row menu explicit while grouping related toolbar actions.
+    pub fn grouped_item(mut self, item: PopupMenuItem, group: HeaderGroup) -> Self {
+        self.items.push(MenuEntry {
+            item,
+            destructive: false,
+            show_in_header: true,
+            group: Some(group),
+        });
+        self
+    }
+
     pub fn popup_only_item(self, item: PopupMenuItem) -> Self {
         self.push(item, false, false)
     }
@@ -51,6 +92,7 @@ impl ResourceMenu {
             item,
             destructive,
             show_in_header,
+            group: None,
         });
         self
     }
@@ -67,7 +109,7 @@ impl ResourceMenu {
                 if *suspend {
                     IconName::Pause
                 } else {
-                    IconName::Play
+                    IconName::CalendarCheck
                 },
                 false,
             ),
@@ -75,7 +117,7 @@ impl ResourceMenu {
                 if *unschedulable {
                     IconName::Lock
                 } else {
-                    IconName::Play
+                    IconName::LockOpen
                 },
                 false,
             ),
@@ -84,8 +126,10 @@ impl ResourceMenu {
                 Action::Suspend => (IconName::Pause, false),
                 Action::Stop => (IconName::CircleX, true),
                 Action::Terminate => (IconName::X, true),
-                Action::Retry | Action::Resubmit => (IconName::RefreshCw, false),
-                _ => (IconName::Play, false),
+                Action::Retry => (IconName::RotateCcw, false),
+                Action::Resubmit => (IconName::Redo2, false),
+                Action::Submit => (IconName::Send, false),
+                Action::Resume => (IconName::Play, false),
             },
         };
         self.push(item.icon(icon), destructive, true)
@@ -102,42 +146,54 @@ impl ResourceMenu {
     }
 
     pub fn header(self) -> Vec<HeaderItem> {
-        self.items
-            .into_iter()
-            .filter(|entry| entry.show_in_header)
-            .filter_map(
-                |MenuEntry {
-                     item, destructive, ..
-                 }| match item {
-                    PopupMenuItem::Separator => Some(HeaderItem::Separator),
-                    PopupMenuItem::Item {
-                        label,
-                        icon,
-                        disabled,
-                        handler,
-                        action,
-                        ..
-                    } => {
-                        let handler = handler.or_else(|| {
-                            action.map(|action| {
-                                Rc::new(move |_: &ClickEvent, window: &mut Window, cx: &mut App| {
-                                    window.dispatch_action(action.boxed_clone(), cx)
-                                }) as Handler
-                            })
-                        })?;
-                        Some(HeaderItem::Action {
-                            label,
-                            icon: Box::new(icon.unwrap_or_else(|| Icon::new(IconName::Info))),
-                            disabled,
-                            destructive,
-                            handler,
+        let mut header = Vec::new();
+        for entry in self.items.into_iter().filter(|entry| entry.show_in_header) {
+            let item = match entry.item {
+                PopupMenuItem::Separator => Some(HeaderItem::Separator),
+                PopupMenuItem::Item {
+                    label,
+                    icon,
+                    disabled,
+                    handler,
+                    action,
+                    ..
+                } => {
+                    let handler = handler.or_else(|| {
+                        action.map(|action| {
+                            Rc::new(move |_: &ClickEvent, window: &mut Window, cx: &mut App| {
+                                window.dispatch_action(action.boxed_clone(), cx)
+                            }) as Handler
                         })
-                    }
-                    // Resource menus have no custom elements or submenus. The label is
-                    // the identity already displayed by the detail header.
-                    _ => None,
-                },
-            )
-            .collect()
+                    });
+                    handler.map(|handler| HeaderItem::Action {
+                        label,
+                        icon: Box::new(icon.unwrap_or_else(|| Icon::new(IconName::Info))),
+                        disabled,
+                        destructive: entry.destructive,
+                        handler,
+                    })
+                }
+                // The identity is already displayed by the detail header.
+                _ => None,
+            };
+            let Some(item) = item else { continue };
+            if let Some(group) = entry.group {
+                if let Some(HeaderItem::Menu { items, .. }) = header.iter_mut().find(|item| {
+                    matches!(item, HeaderItem::Menu { group: existing, .. } if *existing == group)
+                }) {
+                    items.push(item);
+                } else {
+                    header.push(HeaderItem::Menu {
+                        group,
+                        label: group.label(),
+                        icon: Box::new(group.icon()),
+                        items: vec![item],
+                    });
+                }
+            } else {
+                header.push(item);
+            }
+        }
+        header
     }
 }
