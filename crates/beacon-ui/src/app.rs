@@ -2035,12 +2035,7 @@ impl BeaconApp {
             .ok()
             .and_then(|contexts| contexts.entries().iter().position(|entry| &entry.id == id))
             .unwrap_or(0);
-        match index % 4 {
-            0 => cx.theme().danger,
-            1 => cx.theme().success,
-            2 => cx.theme().warning,
-            _ => cx.theme().primary,
-        }
+        crate::theme::cluster_color(index, cx.theme().is_dark())
     }
 
     fn reveal_source(&mut self, id: &ClusterId, cx: &mut Context<Self>) {

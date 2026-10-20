@@ -82,6 +82,34 @@ impl BeaconTheme for Theme {
     }
 }
 
+/// Cluster identity colours are independent of health/status colours. Golden
+/// angle spacing spreads successive clusters across the hue wheel without a
+/// short repeating palette; equal luminance keeps every hue readable.
+pub(crate) fn cluster_color(index: usize, dark: bool) -> Hsla {
+    let hue = ((7. / 12. + index as f64 * 0.381_966_011_250_105_1).fract()) as f32;
+    let target = if dark { 0.45 } else { 0.17 };
+    let (mut low, mut high) = (0., 1.);
+    for _ in 0..14 {
+        let lightness = (low + high) / 2.;
+        let color = hsla(hue, 0.66, lightness, 1.).to_rgb();
+        let linear = |channel: f32| {
+            if channel <= 0.04045 {
+                channel / 12.92
+            } else {
+                ((channel + 0.055) / 1.055).powf(2.4)
+            }
+        };
+        let luminance =
+            0.2126 * linear(color.r) + 0.7152 * linear(color.g) + 0.0722 * linear(color.b);
+        if luminance < target {
+            low = lightness;
+        } else {
+            high = lightness;
+        }
+    }
+    hsla(hue, 0.66, (low + high) / 2., 1.)
+}
+
 /// Flips between light and dark, following whatever the window currently uses.
 pub fn toggle_mode(window: &mut Window, cx: &mut App) {
     crate::settings::toggle(window, cx);
