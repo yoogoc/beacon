@@ -57,6 +57,7 @@ fn main() -> anyhow::Result<()> {
 
             cx.spawn(async move |cx| {
                 let window = cx.open_window(options, |window, cx| {
+                    beacon_ui::window_state::restore_main_window(window, cx);
                     let view = cx.new(|cx| BeaconApp::new(window, cx));
                     cx.new(|cx| Root::new(view, window, cx))
                 });

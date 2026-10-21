@@ -1,5 +1,9 @@
 {
   "_version": 2,
+  "shortcuts.paste_into_shell": {
+    "en": "Paste clipboard text into the focused shell.",
+    "zh-CN": "将剪贴板文本粘贴到当前 Shell。"
+  },
   "shortcuts.search_shortcuts_or_functions": {
     "en": "Search shortcuts or functions",
     "zh-CN": "搜索快捷键或功能"

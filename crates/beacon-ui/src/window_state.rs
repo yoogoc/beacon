@@ -1,4 +1,6 @@
 //! Main-window placement, kept separate from editable application preferences.
+#[cfg(target_os = "macos")]
+use base64::{Engine as _, engine::general_purpose::STANDARD};
 use gpui_kit::{component::TitleBar, *};
 use serde::{Deserialize, Serialize};
 use std::{cell::RefCell, path::Path, rc::Rc};
@@ -12,12 +14,16 @@ enum Mode {
     Fullscreen,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 struct Placement {
     mode: Mode,
     /// Keep the ordinary window's size even while maximized or fullscreen.
     width: f32,
     height: f32,
+    /// AppKit distinguishes Zoom, Fill, and their restore frames. A size and
+    /// a boolean cannot represent all of those states reliably.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    native_state: Option<String>,
 }
 
 impl Default for Placement {
@@ -26,6 +32,7 @@ impl Default for Placement {
             mode: Mode::Windowed,
             width: 1280.,
             height: 800.,
+            native_state: None,
         }
     }
 }
@@ -70,19 +77,58 @@ impl Placement {
     fn bounds(&self, cx: &App) -> WindowBounds {
         let display_size = cx
             .primary_display()
-            .map(|display| display.bounds().size)
+            .map(|display| display.visible_bounds().size)
             .unwrap_or(size(px(1280.), px(800.)));
         // A previously attached, larger monitor may no longer be available.
         let restored_size = size(
             px(self.width.max(720.)).min(display_size.width),
             px(self.height.max(480.)).min(display_size.height),
         );
+        #[cfg(target_os = "macos")]
+        let restored_size = {
+            if self.native_state().is_some() {
+                // Restoring the AppKit archive below already restores its
+                // maximized frame. Calling zoom as well would toggle it back.
+                return WindowBounds::Windowed(Bounds::centered(None, restored_size, cx));
+            }
+            if self.mode == Mode::Maximized
+                && restored_size.width >= display_size.width - px(32.)
+                && restored_size.height >= display_size.height - px(48.)
+            {
+                // Migrate old records whose "ordinary" size was nearly the
+                // screen size. AppKit can consider such a new window zoomed
+                // already, so zoom: would shrink it instead of maximizing it.
+                size(
+                    (display_size.width * 0.8)
+                        .max(px(720.))
+                        .min(display_size.width),
+                    (display_size.height * 0.8)
+                        .max(px(480.))
+                        .min(display_size.height),
+                )
+            } else {
+                restored_size
+            }
+        };
         let bounds = Bounds::centered(None, restored_size, cx);
         match self.mode {
             Mode::Windowed => WindowBounds::Windowed(bounds),
             Mode::Maximized => WindowBounds::Maximized(bounds),
             Mode::Fullscreen => WindowBounds::Fullscreen(bounds),
         }
+    }
+
+    #[cfg(target_os = "macos")]
+    fn native_state(&self) -> Option<Vec<u8>> {
+        if self.mode == Mode::Fullscreen {
+            return None;
+        }
+        let encoded = self.native_state.as_ref()?;
+        if encoded.len() > 1024 * 1024 {
+            return None;
+        }
+        let bytes = STANDARD.decode(encoded).ok()?;
+        bytes.starts_with(b"bplist00").then_some(bytes)
     }
 
     fn save(&self, path: &Path) -> Result<(), String> {
@@ -104,6 +150,22 @@ pub fn main_window_options(cx: &App) -> WindowOptions {
         window_min_size: Some(size(px(720.), px(480.))),
         ..TitleBar::window_options()
     }
+}
+
+/// Apply AppKit's saved Zoom/Fill state once, without a second zoom toggle.
+pub fn restore_main_window(window: &mut Window, cx: &App) {
+    #[cfg(target_os = "macos")]
+    {
+        let path = crate::settings::store(cx)
+            .read(cx)
+            .directory
+            .join("window-state.json");
+        if let Some(state) = Placement::load(&path).native_state() {
+            window.restore_native_window_state(&state);
+        }
+    }
+    #[cfg(not(target_os = "macos"))]
+    let _ = (window, cx);
 }
 
 /// Only the main workspace registers these observers. Detached resource and
@@ -132,8 +194,14 @@ pub(crate) fn track<T: 'static>(window: &mut Window, cx: &mut Context<T>) -> Vec
                 window.is_maximized(),
                 window.is_fullscreen(),
             );
+            #[cfg(target_os = "macos")]
+            {
+                placement.borrow_mut().native_state = window
+                    .native_window_state()
+                    .map(|bytes| STANDARD.encode(bytes));
+            }
         });
-        let placement = *placement.borrow();
+        let placement = placement.borrow().clone();
         let path = path.clone();
         cx.background_executor().spawn(async move {
             if let Err(error) = placement.save(&path) {
@@ -174,6 +242,44 @@ mod tests {
         assert_eq!(state.mode, Mode::Maximized);
     }
 
+    #[cfg(all(target_os = "macos", feature = "ui-tests"))]
+    #[::core::prelude::v1::test]
+    fn native_archive_restoration_does_not_schedule_a_second_zoom() {
+        let cx = crate::feature_test_support::context();
+        let state = Placement {
+            mode: Mode::Maximized,
+            native_state: Some(STANDARD.encode(b"bplist00native-window-state")),
+            ..Default::default()
+        };
+        cx.read(|cx| assert!(matches!(state.bounds(cx), WindowBounds::Windowed(_))));
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("window-state.json");
+        state.save(&path).unwrap();
+        assert_eq!(Placement::load(&path), state);
+    }
+
+    #[cfg(all(target_os = "macos", feature = "ui-tests"))]
+    #[::core::prelude::v1::test]
+    fn legacy_near_maximized_records_start_unzoomed_before_the_native_zoom() {
+        let cx = crate::feature_test_support::context();
+        cx.read(|cx| {
+            let available = cx.primary_display().unwrap().visible_bounds().size;
+            for native_state in [None, Some("broken archive".to_owned())] {
+                let state = Placement {
+                    mode: Mode::Maximized,
+                    width: available.width.as_f32() - 2.,
+                    height: available.height.as_f32() - 10.,
+                    native_state,
+                };
+                let WindowBounds::Maximized(bounds) = state.bounds(cx) else {
+                    panic!("legacy records must still request native maximization");
+                };
+                assert!(bounds.size.width < available.width - px(32.));
+                assert!(bounds.size.height < available.height - px(48.));
+            }
+        });
+    }
+
     #[::core::prelude::v1::test]
     fn placement_round_trips_and_invalid_files_fall_back() {
         let directory = tempfile::tempdir().unwrap();
@@ -183,6 +289,7 @@ mod tests {
             mode: Mode::Maximized,
             width: 1100.,
             height: 750.,
+            native_state: None,
         };
         state.save(&path).unwrap();
         assert_eq!(Placement::load(&path), state);

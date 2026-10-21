@@ -74,6 +74,14 @@ pub struct Terminal {
 }
 
 impl Terminal {
+    /// An in-memory stdin for foreground terminal interaction tests.
+    #[cfg(feature = "test-support")]
+    pub fn for_testing() -> (Self, mpsc::UnboundedReceiver<Vec<u8>>) {
+        let (input, receiver) = mpsc::unbounded();
+        let (resize, _) = mpsc::unbounded();
+        (Self { input, resize }, receiver)
+    }
+
     /// Sends keystrokes, already encoded.
     ///
     /// Encoding is the UI's job: what a key means depends on the terminal's

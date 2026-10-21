@@ -29,9 +29,10 @@ use alacritty_terminal::{
     vte::ansi::{Color as VtColor, NamedColor, Processor, Rgb},
 };
 use beacon_kube::{ClusterSession, Terminal as Session, TerminalEvent};
+use gpui_kit::base::TestSupportExt as _;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::input::{Input, InputState};
-use gpui_kit::component::menu::ContextMenuExt as _;
+use gpui_kit::component::input::{Input, InputState, Paste};
+use gpui_kit::component::menu::{ContextMenuExt as _, PopupMenuItem};
 use gpui_kit::component::{ActiveTheme as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
@@ -54,6 +55,18 @@ const HISTORY: usize = 10_000;
 const CELL_WIDTH: f32 = 7.8;
 const CELL_HEIGHT: f32 = 17.0;
 const FONT_SIZE: f32 = 13.0;
+
+pub(crate) fn init(cx: &mut App) {
+    // Ctrl-V belongs to the remote shell (quoted insert). Use the terminal
+    // convention on Windows/Linux, leaving ordinary child inputs alone.
+    const CONTEXT: &str = "BeaconTerminal && !Input && !PopupMenu";
+    cx.bind_keys([
+        #[cfg(target_os = "macos")]
+        KeyBinding::new("cmd-v", Paste, Some(CONTEXT)),
+        KeyBinding::new("ctrl-shift-v", Paste, Some(CONTEXT)),
+        KeyBinding::new("shift-insert", Paste, Some(CONTEXT)),
+    ]);
+}
 
 /// What the pane is doing.
 enum State {
@@ -326,6 +339,26 @@ impl TerminalView {
         }
     }
 
+    fn paste(&mut self, cx: &mut Context<Self>) {
+        if !matches!(self.state, State::Running) {
+            return;
+        }
+        let Some(shell) = &self.shell else { return };
+        let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) else {
+            return;
+        };
+        let bytes = encode_paste(
+            &text,
+            self.term
+                .mode()
+                .contains(alacritty_terminal::term::TermMode::BRACKETED_PASTE),
+        );
+        if !bytes.is_empty() {
+            shell.send(bytes);
+            cx.notify();
+        }
+    }
+
     /// Tells the grid and the container how big the pane is.
     ///
     /// Returns whether anything changed: this runs on every prepaint, and a
@@ -565,6 +598,25 @@ fn rgb_to_hsla(rgb: Rgb) -> Hsla {
     gpui_kit::rgb(((rgb.r as u32) << 16) | ((rgb.g as u32) << 8) | rgb.b as u32).into()
 }
 
+/// Readline/vim opt in to bracketed paste so embedded newlines are inserted
+/// as text. Older programs expect the same CR bytes as pressing Enter.
+fn encode_paste(text: &str, bracketed: bool) -> Vec<u8> {
+    if text.is_empty() {
+        return Vec::new();
+    }
+    let text = text.replace("\r\n", "\n");
+    if bracketed {
+        // Clipboard content must not terminate the bracketed paste itself.
+        let text = text.replace(['\x1b', '\x03'], "");
+        if text.is_empty() {
+            return Vec::new();
+        }
+        format!("\x1b[200~{text}\x1b[201~").into_bytes()
+    } else {
+        text.replace('\n', "\r").into_bytes()
+    }
+}
+
 /// Turns a keystroke into the bytes a terminal expects.
 ///
 /// `application_cursors` is the mode a full-screen program switches on, and it
@@ -574,6 +626,11 @@ fn rgb_to_hsla(rgb: Rgb) -> Hsla {
 pub fn encode(keystroke: &Keystroke, application_cursors: bool) -> Option<Vec<u8>> {
     let modifiers = &keystroke.modifiers;
     let key = keystroke.key.as_str();
+
+    // Application shortcuts such as Cmd-V must never type a literal "v".
+    if modifiers.platform {
+        return None;
+    }
 
     // Control characters. `ctrl-c` is 0x03, and the rest of the letters follow
     // the same rule: the low five bits of the letter.
@@ -707,11 +764,21 @@ impl Render for TerminalView {
             State::Ended => Some((Tone::Unknown, "The shell exited.".to_string())),
             _ => None,
         };
+        let can_paste = matches!(self.state, State::Running) && self.shell.is_some();
+        let paste_focus = self.focus.clone();
 
         v_flex()
             .size_full()
             .track_focus(&self.focus)
             .key_context("BeaconTerminal")
+            .on_action(cx.listener(|view, _: &Paste, window, cx| {
+                if view.focus.is_focused(window) {
+                    view.paste(cx);
+                    cx.stop_propagation();
+                } else {
+                    cx.propagate();
+                }
+            }))
             .on_action(
                 cx.listener(|view, _: &gpui_kit::base::actions::Confirm, window, cx| {
                     if view.focus.is_focused(window) {
@@ -744,12 +811,19 @@ impl Render for TerminalView {
             .child(
                 div()
                     .id("terminal-grid")
+                    .test_support()
                     .relative()
                     .flex_1()
                     .min_h_0()
                     .overflow_hidden()
                     .p_2()
                     .bg(cx.theme().background)
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|view, _, window, cx| {
+                            view.focus.focus(window, cx);
+                        }),
+                    )
                     // A zero-size probe that reports the pane's real size, so
                     // the grid can be told how wide it is. Without it the
                     // shell wraps at whatever the grid was created with and
@@ -792,11 +866,23 @@ impl Render for TerminalView {
                                 }))
                             })),
                     )
-                    .context_menu(move |menu, _, _| {
-                        menu.item(crate::copyable_text::copy_item(
-                            "Copy terminal output",
-                            output.clone(),
-                        ))
+                    .context_menu(move |menu, _, cx| {
+                        menu.action_context(paste_focus.clone())
+                            .item(
+                                PopupMenuItem::new(crate::i18n::text("Paste"))
+                                    .action(Box::new(Paste))
+                                    .disabled(
+                                        !can_paste
+                                            || cx
+                                                .read_from_clipboard()
+                                                .and_then(|item| item.text())
+                                                .is_none_or(|text| text.is_empty()),
+                                    ),
+                            )
+                            .item(crate::copyable_text::copy_item(
+                                "Copy terminal output",
+                                output.clone(),
+                            ))
                     }),
             )
             .children(status.map(|(tone, message)| {
@@ -830,7 +916,9 @@ impl Render for TerminalView {
 
 #[cfg(test)]
 mod tests {
-    use super::{CELL_HEIGHT, CELL_WIDTH, DARK_PALETTE, LIGHT_PALETTE, encode, indexed_colour};
+    use super::{
+        CELL_HEIGHT, CELL_WIDTH, DARK_PALETTE, LIGHT_PALETTE, encode, encode_paste, indexed_colour,
+    };
     use gpui_kit::Keystroke;
 
     #[test]
@@ -897,6 +985,28 @@ mod tests {
         assert_eq!(press("space"), Some(b" ".to_vec()));
     }
 
+    #[test]
+    fn paste_preserves_unicode_and_normalizes_multiline_input() {
+        assert_eq!(
+            encode_paste("printf '中文'\r\nnext\n", false),
+            "printf '中文'\rnext\r".as_bytes()
+        );
+        assert_eq!(
+            encode_paste("printf '中文'\r\nnext\n", true),
+            "\x1b[200~printf '中文'\nnext\n\x1b[201~".as_bytes()
+        );
+        assert!(encode_paste("", false).is_empty());
+        assert!(encode_paste("", true).is_empty());
+    }
+
+    #[test]
+    fn clipboard_content_cannot_end_bracketed_paste() {
+        assert_eq!(
+            encode_paste("text\x1b[201~\x03more", true),
+            b"\x1b[200~text[201~more\x1b[201~"
+        );
+    }
+
     /// A terminal's backspace is DEL, not BS. Sending 0x08 gives you a shell
     /// that moves the cursor left instead of deleting.
     #[test]
@@ -947,6 +1057,8 @@ mod tests {
     fn keys_with_no_terminal_meaning_send_nothing() {
         assert_eq!(press("ctrl-1"), None);
         assert_eq!(press("f13"), None);
+        assert_eq!(press("cmd-v"), None);
+        assert_eq!(press("cmd-x"), None);
     }
 
     /// Red and bright red were the same colour when these came from the

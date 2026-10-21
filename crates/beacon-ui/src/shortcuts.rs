@@ -91,6 +91,8 @@ impl Shortcuts {
                 "Resource table"
             } else if context == "Command" {
                 "Command palette"
+            } else if context.contains("BeaconTerminal") {
+                "Pod shell"
             } else if context.contains("PopupMenu") {
                 "Menus"
             } else {
@@ -254,6 +256,7 @@ fn describe(name: &str, scope: &str) -> (String, String) {
         "Escape" => "Dismiss search or clear a search field configured to clear on Escape.",
         "Copy" => "Copy the selected text to the clipboard.",
         "Cut" => "Copy and remove the selected text.",
+        "Paste" if scope == "Pod shell" => "Paste clipboard text into the focused shell.",
         "Paste" => "Insert the clipboard text into the focused field.",
         "SelectAll" => "Select all text in the focused field.",
         "Undo" => "Undo the last text edit.",

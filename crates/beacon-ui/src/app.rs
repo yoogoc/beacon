@@ -158,6 +158,7 @@ pub fn init(log_directory: PathBuf, cx: &mut App) {
         crate::updates::store(cx).update(cx, |view, cx| view.check(cx));
     });
     crate::shortcuts::init(cx);
+    crate::terminal::init(cx);
     cx.on_action(|_: &OpenShortcuts, cx| crate::shortcuts::open(cx));
     cx.on_action(|_: &OpenAppLogs, cx| app_logs::open(cx));
     cx.on_action(|_: &Quit, cx| cx.defer(request_app_quit));
