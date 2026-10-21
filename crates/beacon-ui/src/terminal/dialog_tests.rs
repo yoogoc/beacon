@@ -112,9 +112,7 @@ fn terminal_enter_and_escape_stay_in_the_dialog_and_ansi_colors_are_preserved() 
         assert!(input.try_recv().is_err());
 
         // A child input keeps normal paste and never sends it to the shell.
-        terminal.update(cx, |view, cx| {
-            view.command.focus_handle(cx).focus(window, cx)
-        });
+        window.click("terminal-shell-options", cx);
         window.render_frame(cx);
         cx.write_to_clipboard(ClipboardItem::new_string("/bin/bash".into()));
         window.press(

@@ -1,5 +1,21 @@
 {
   "_version": 2,
+  "terminal.session_ended": {
+    "en": "Session ended",
+    "zh-CN": "会话已结束"
+  },
+  "terminal.connection_failed": {
+    "en": "Connection failed",
+    "zh-CN": "连接失败"
+  },
+  "terminal.shell_options": {
+    "en": "Shell options",
+    "zh-CN": "Shell 选项"
+  },
+  "terminal.shell_command": {
+    "en": "Shell command",
+    "zh-CN": "Shell 命令"
+  },
   "terminal.find_in_terminal": {
     "en": "Find in terminal",
     "zh-CN": "在终端中查找"

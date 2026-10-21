@@ -159,7 +159,8 @@ impl TerminalView {
     }
 
     pub(super) fn mouse_mode(&self, modifiers: Modifiers) -> bool {
-        !modifiers.shift
+        matches!(self.state, State::Running)
+            && !modifiers.shift
             && self.term.grid().display_offset() == 0
             && self.term.mode().intersects(TermMode::MOUSE_MODE)
     }

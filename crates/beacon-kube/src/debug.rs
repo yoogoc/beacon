@@ -8,6 +8,9 @@ use kube::{
 use serde_json::{Value, json};
 use std::sync::Arc;
 
+mod stop;
+pub use stop::{StopOutcome, stop, supports_stop};
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Profile {
     Baseline,
@@ -107,7 +110,7 @@ pub fn patch(pod: &Pod, options: &Options) -> Result<Value> {
             json!({"privileged":false,"allowPrivilegeEscalation":false,"runAsNonRoot":true,"runAsUser":1000,"capabilities":{"drop":["ALL"]},"seccompProfile":{"type":"RuntimeDefault"}})
         }
     };
-    let mut container = json!({"name":options.name,"image":options.image,"imagePullPolicy":"IfNotPresent","command":[options.shell,"-c","while true; do sleep 3600; done"],"securityContext":security});
+    let mut container = json!({"name":options.name,"image":options.image,"imagePullPolicy":"IfNotPresent","command":stop::command(&options.shell, &options.name),"securityContext":security});
     if let Some(target) = &options.target {
         container["targetContainerName"] = json!(target);
     }

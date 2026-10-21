@@ -32,6 +32,9 @@ pub(crate) struct DebugView {
     advanced: bool,
     message: Option<String>,
     terminal: Option<Entity<crate::terminal::TerminalView>>,
+    stopped: bool,
+    _stop_dialog: Option<Entity<crate::debug_stop::StopDebug>>,
+    _stop_subscription: Option<Subscription>,
     _task: Option<Task<()>>,
     _progress: Option<Task<()>>,
 }
@@ -77,6 +80,9 @@ pub(crate) fn open(
             advanced: false,
             message: None,
             terminal: None,
+            stopped: false,
+            _stop_dialog: None,
+            _stop_subscription: None,
             _task: None,
             _progress: None,
         }
@@ -106,7 +112,7 @@ impl DebugView {
             .is_some_and(|terminal| terminal.read(cx).is_active())
     }
     fn start(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.busy {
+        if self.busy || self.stopped {
             return;
         }
         let options = self.created.clone().unwrap_or_else(|| Options {
@@ -261,6 +267,35 @@ impl DebugView {
         );
         cx.notify();
     }
+
+    fn request_stop(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(created) = &self.created else {
+            return;
+        };
+        if self.busy || self.stopped {
+            return;
+        }
+        let dialog = crate::debug_stop::open(
+            self.session.clone(),
+            self.object.clone(),
+            created.name.clone(),
+            window,
+            cx,
+        );
+        self._stop_subscription = Some(cx.subscribe(
+            &dialog,
+            |view, _, _: &crate::debug_stop::Stopped, cx| {
+                view.stopped = true;
+                view.failed = false;
+                view.message = Some("Debug container stopped".into());
+                if let Some(terminal) = &view.terminal {
+                    terminal.update(cx, |terminal, cx| terminal.debug_container_stopped(cx));
+                }
+                cx.notify();
+            },
+        ));
+        self._stop_dialog = Some(dialog);
+    }
 }
 
 impl Render for DebugView {
@@ -316,6 +351,36 @@ impl Render for DebugView {
             .overflow_y_scroll()
             .gap_4()
             .child(header);
+        if let Some(created) = &self.created {
+            view =
+                view.child(
+                    h_flex()
+                        .gap_2()
+                        .items_center()
+                        .min_w_0()
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w_0()
+                                .text_xs()
+                                .text_color(cx.theme().muted_foreground)
+                                .child(created.name.clone()),
+                        )
+                        .when(!self.stopped, |view| {
+                            view.child(
+                                Button::new("stop-debug-container")
+                                    .small()
+                                    .ghost()
+                                    .icon(IconName::CircleX)
+                                    .label(crate::i18n::text("Stop debug container"))
+                                    .disabled(self.busy)
+                                    .on_click(cx.listener(|view, _, window, cx| {
+                                        view.request_stop(window, cx)
+                                    })),
+                            )
+                        }),
+                );
+        }
         if let Some(terminal) = &self.terminal {
             return view.child(div().h(px(400.)).min_h_0().child(terminal.clone()));
         }
@@ -482,14 +547,16 @@ impl Render for DebugView {
                         .small()
                         .primary()
                         .icon(IconName::Terminal)
-                        .label(crate::i18n::text(if self.busy {
+                        .label(crate::i18n::text(if self.stopped {
+                            "Debug container stopped"
+                        } else if self.busy {
                             "Waiting for the debug container…"
                         } else if self.created.is_some() {
                             "Open debug terminal"
                         } else {
                             "Create and open terminal"
                         }))
-                        .disabled(self.busy)
+                        .disabled(self.busy || self.stopped)
                         .on_click(cx.listener(|view, _, window, cx| view.start(window, cx))),
                 ),
         )
@@ -556,5 +623,67 @@ mod integration_tests {
                 .count(),
             1
         );
+        let terminal = view.read_with(cx, |view, _| view.terminal.clone().unwrap());
+        cx.update_window(window, |_, window, cx| {
+            terminal.update(cx, |terminal, cx| terminal.feed(b"saved debug output", cx));
+            window.render_frame(cx);
+            window.click("stop-debug-container", cx);
+            window.render_frame(cx);
+            window.click("debug-stop-cancel", cx);
+        })
+        .unwrap();
+        assert!(!view.read_with(cx, |view, _| view.stopped));
+        let mut terminated = fixture.object("Pod", "web");
+        terminated["status"]["ephemeralContainerStatuses"][0]["state"] =
+            json!({"terminated":{"exitCode":0}});
+        fixture.put(terminated);
+        cx.update_window(window, |_, window, cx| {
+            window.render_frame(cx);
+            window.click("stop-debug-container", cx);
+            window.render_frame(cx);
+            window.click("debug-stop-confirm", cx);
+        })
+        .unwrap();
+        support::settle(cx, |cx| view.read_with(cx, |view, _| view.stopped));
+        cx.update_window(window, |_, window, cx| {
+            window.render_frame(cx);
+            window.click("debug-stop-cancel", cx);
+            window.render_frame(cx);
+            assert!(window.try_find("stop-debug-container").is_none());
+            assert!(window.try_find("start-shell").is_none());
+            assert!(window.find("terminal-grid").visible());
+            assert!(!view.read(cx).has_active_terminal(cx));
+            window.right_click("terminal-grid", cx);
+        })
+        .unwrap();
+        support::render_until(cx, window, |window| {
+            gpui_kit::base::test_support::snapshots(window)
+                .iter()
+                .any(|item| {
+                    item.role() == Some(Role::MenuItem)
+                        && item.label() == Some("Copy terminal output")
+                })
+        });
+        cx.update_window(window, |_, window, cx| {
+            window.render_frame(cx);
+            let copy = gpui_kit::base::test_support::snapshots(window)
+                .into_iter()
+                .find(|item| {
+                    item.role() == Some(Role::MenuItem)
+                        && item.label() == Some("Copy terminal output")
+                })
+                .unwrap();
+            window.click(copy.path().last().unwrap().clone(), cx);
+            window.render_frame(cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        assert!(cx.read(|cx| {
+            cx.read_from_clipboard()
+                .unwrap()
+                .text()
+                .unwrap()
+                .contains("saved debug output")
+        }));
     }
 }

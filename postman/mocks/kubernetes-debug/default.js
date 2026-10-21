@@ -7,7 +7,7 @@ const send = (res, code, body) => {
   res.end(JSON.stringify(body));
 };
 const status = (reason, message, code) => ({apiVersion:'v1', kind:'Status', status:'Failure', reason, message, code});
-http.createServer(async (req, res) => {
+const server = http.createServer(async (req, res) => {
   // Register stream readers before the first await; simulation routing may
   // forward raw IncomingMessages even with interception enabled.
   const incoming = req.body !== undefined ? Promise.resolve(req.body) : new Promise((resolve, reject) => {
@@ -17,7 +17,20 @@ http.createServer(async (req, res) => {
     req.on('error', reject);
   });
   const path = new URL(req.url, 'http://localhost').pathname;
-  const match = path.match(/^\/api\/v1\/namespaces\/default\/pods\/(ready|runtime-error)(\/ephemeralcontainers)?$/);
+  const stopped = path.match(/^\/__fixture\/stop\/(stop-ready|stop-denied|stop-stuck)$/);
+  if (stopped && req.method === 'POST') {
+    const key = `kubernetes-debug:${stopped[1]}`;
+    const pod = await pm.state.get(key);
+    const body = await incoming;
+    const container = pod?.status?.ephemeralContainerStatuses?.find(item => item.name === body.container);
+    if (!container) return send(res, 422, status('Invalid', 'No debug container', 422));
+    if (stopped[1] !== 'stop-stuck') {
+      container.state = {terminated:{exitCode:0,reason:'Completed'}};
+      await pm.state.set(key, pod);
+    }
+    return send(res, 200, {status:'Success'});
+  }
+  const match = path.match(/^\/api\/v1\/namespaces\/default\/pods\/(ready|runtime-error|stop-ready|stop-denied|stop-stuck)(\/ephemeralcontainers)?$/);
   if (!match) return send(res, 501, status('NotImplemented', 'Outside this debug fixture contract', 501));
   const name = match[1];
   const key = `kubernetes-debug:${name}`;
@@ -42,4 +55,6 @@ http.createServer(async (req, res) => {
   }
   if (req.method === 'GET' && !match[2]) return send(res, 200, pod);
   return send(res, 501, status('NotImplemented', 'Outside this debug fixture contract', 501));
-}).listen(process.env.PORT || 4917);
+});
+
+server.listen(process.env.PORT || 4917);

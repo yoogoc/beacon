@@ -147,6 +147,8 @@ pub struct TerminalView {
     /// is not a shell at all.
     command: Entity<InputState>,
     interactive_shell: bool,
+    launcher_options: bool,
+    container_stopped: bool,
     focus: FocusHandle,
     /// The pane size measured during the last prepaint, applied at the start
     /// of the next render.
@@ -270,6 +272,8 @@ impl TerminalView {
             state: State::Idle,
             command: cx.new(|cx| crate::i18n::input("bash, falling back to sh", window, cx)),
             interactive_shell: false,
+            launcher_options: false,
+            container_stopped: false,
             focus,
             measured: Rc::new(StdCell::new(None)),
             metrics: Metrics::default(),
@@ -321,6 +325,9 @@ impl TerminalView {
     /// WebSocket -- so this doubles as "try a different shell", which is the
     /// whole reason the command is editable.
     pub fn start(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.container_stopped {
+            return;
+        }
         let size = Size {
             columns: self.term.columns(),
             rows: self.term.screen_lines(),
@@ -341,6 +348,7 @@ impl TerminalView {
         self.selecting = false;
         self.scrollbar_drag = None;
         self.mouse_button = None;
+        self.launcher_options = false;
         self.search.dirty = true;
         self.state = State::Connecting;
 
@@ -365,14 +373,10 @@ impl TerminalView {
                 match event {
                     TerminalEvent::Connected => view.state = State::Running,
                     TerminalEvent::Output(bytes) => view.feed(&bytes, cx),
-                    TerminalEvent::Closed => {
-                        view.shell = None;
-                        view.state = State::Ended;
-                    }
+                    TerminalEvent::Closed => view.finish(State::Ended),
                     TerminalEvent::Failed(error) => {
                         tracing::warn!(pod = %view.pod, %error, "shell failed");
-                        view.shell = None;
-                        view.state = State::Failed(error);
+                        view.finish(State::Failed(error));
                     }
                 }
                 cx.notify();
@@ -382,6 +386,26 @@ impl TerminalView {
 
         self.focus.focus(window, cx);
 
+        cx.notify();
+    }
+
+    /// Keep the transcript available, but stop presenting a live input target.
+    fn finish(&mut self, state: State) {
+        self.shell = None;
+        self.state = state;
+        self.composition.clear();
+        self.selecting = false;
+        self.scrollbar_drag = None;
+        self.mouse_button = None;
+        self.last_mouse = None;
+        self.wheel_remainder = 0.;
+    }
+
+    pub(crate) fn debug_container_stopped(&mut self, cx: &mut Context<Self>) {
+        self._output = None;
+        self.finish(State::Ended);
+        self.container_stopped = true;
+        self.launcher_options = false;
         cx.notify();
     }
 
@@ -530,7 +554,8 @@ impl TerminalView {
                     }) {
                         bg = Some(cx.theme().selection);
                     }
-                    let cursor = offset == 0
+                    let cursor = matches!(self.state, State::Running)
+                        && offset == 0
                         && content.cursor.point == point
                         && content.cursor.shape
                             == alacritty_terminal::vte::ansi::CursorShape::Block;

@@ -1,9 +1,160 @@
 //! A cell-aligned GPUI view over Alacritty's screen and history.
 use super::*;
 use alacritty_terminal::{grid::Scroll, vte::ansi::CursorShape};
-use gpui_kit::component::{Disableable as _, IconName, input::Escape};
+use gpui_kit::assets::IconName;
+use gpui_kit::base::Selectable as _;
+use gpui_kit::component::{Disableable as _, Icon, input::Escape, spinner::Spinner};
 
 impl TerminalView {
+    fn session_status(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let (title, icon, tone) = match &self.state {
+            State::Connecting => ("Connecting…", IconName::LoaderCircle, Tone::Progressing),
+            State::Ended => (
+                if self.container_stopped {
+                    "Debug container stopped"
+                } else {
+                    "Session ended"
+                },
+                IconName::Terminal,
+                Tone::Unknown,
+            ),
+            State::Failed(_) => ("Connection failed", IconName::CircleX, Tone::Critical),
+            _ => return None,
+        };
+        let stopped = !self.is_active() && !self.container_stopped;
+        Some(
+            v_flex()
+                .id("terminal-session-status")
+                .aria_label(crate::i18n::text(title))
+                .test_support()
+                .w_full()
+                .flex_shrink_0()
+                .border_t_1()
+                .border_color(cx.theme().border)
+                .bg(cx.theme().muted.opacity(0.3))
+                .child(
+                    h_flex()
+                        .w_full()
+                        .min_w_0()
+                        .px_3()
+                        .py_2()
+                        .gap_3()
+                        .items_center()
+                        .child(
+                            div()
+                                .size(px(28.))
+                                .flex_shrink_0()
+                                .rounded_md()
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .bg(cx.theme().muted)
+                                .child(if self.is_active() {
+                                    Spinner::new()
+                                        .small()
+                                        .color(cx.theme().tone(tone))
+                                        .into_any_element()
+                                } else {
+                                    Icon::new(icon)
+                                        .size_4()
+                                        .text_color(cx.theme().tone(tone))
+                                        .into_any_element()
+                                }),
+                        )
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w_0()
+                                .truncate()
+                                .text_xs()
+                                .font_weight(FontWeight::MEDIUM)
+                                .when(matches!(self.state, State::Failed(_)), |this| {
+                                    this.text_color(cx.theme().tone(tone))
+                                })
+                                .child(crate::i18n::text(title)),
+                        )
+                        .when(stopped, |this| {
+                            this.child(
+                                Button::new("terminal-shell-options")
+                                    .small()
+                                    .ghost()
+                                    .icon(IconName::SlidersHorizontal)
+                                    .selected(self.launcher_options)
+                                    .accessibility_label(crate::i18n::text("Shell options"))
+                                    .tooltip(crate::i18n::text("Shell options"))
+                                    .on_click(cx.listener(|view, _, window, cx| {
+                                        view.launcher_options = !view.launcher_options;
+                                        if view.launcher_options {
+                                            view.command.focus_handle(cx).focus(window, cx);
+                                        } else {
+                                            view.focus.focus(window, cx);
+                                        }
+                                        cx.notify();
+                                    })),
+                            )
+                            .child(
+                                Button::new("start-shell")
+                                    .small()
+                                    .primary()
+                                    .icon(IconName::RefreshCw)
+                                    .label(crate::i18n::text("Reconnect"))
+                                    .on_click(
+                                        cx.listener(|view, _, window, cx| view.start(window, cx)),
+                                    ),
+                            )
+                        }),
+                )
+                .when_some(
+                    match &self.state {
+                        State::Failed(error) => Some(error.clone()),
+                        _ => None,
+                    },
+                    |this, error| {
+                        this.child(
+                            div()
+                                .id("terminal-session-error")
+                                .test_support()
+                                .px_3()
+                                .pb_2()
+                                .max_h(px(96.))
+                                .overflow_y_scroll()
+                                .on_scroll_wheel(|_, _, cx| cx.stop_propagation())
+                                .text_xs()
+                                .text_color(cx.theme().muted_foreground)
+                                .child(crate::copyable_text::copyable_text("shell-status", error)),
+                        )
+                    },
+                )
+                .when(stopped && self.launcher_options, |this| {
+                    this.child(
+                        h_flex()
+                            .id("terminal-shell-command")
+                            .test_support()
+                            .w_full()
+                            .min_w_0()
+                            .gap_3()
+                            .px_3()
+                            .pb_2()
+                            .items_center()
+                            .child(
+                                div()
+                                    .flex_shrink_0()
+                                    .text_xs()
+                                    .text_color(cx.theme().muted_foreground)
+                                    .child(crate::i18n::text("Shell command")),
+                            )
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .child(Input::new(&self.command).small()),
+                            ),
+                    )
+                })
+                .into_any_element(),
+        )
+    }
+
     fn measure_font(&mut self, window: &mut Window, cx: &App) -> (SharedString, f32) {
         let family = cx.theme().mono_font_family.clone();
         let font_size = (cx.theme().mono_font_size.as_f32() + self.font_zoom).clamp(8., 32.);
@@ -277,17 +428,10 @@ impl Render for TerminalView {
         let metrics = self.metrics;
         let cursor = self.term.renderable_content().cursor;
         let offset = self.term.grid().display_offset();
-        let show_cursor =
-            offset == 0 && self.focus.is_focused(window) && cursor.shape != CursorShape::Hidden;
-        let status = match &self.state {
-            State::Connecting => Some((
-                Tone::Progressing,
-                "Connecting to the container…".to_string(),
-            )),
-            State::Failed(error) => Some((Tone::Critical, error.clone())),
-            State::Ended => Some((Tone::Unknown, "The shell exited.".to_string())),
-            _ => None,
-        };
+        let show_cursor = matches!(self.state, State::Running)
+            && offset == 0
+            && self.focus.is_focused(window)
+            && cursor.shape != CursorShape::Hidden;
 
         v_flex()
             .size_full()
@@ -575,27 +719,7 @@ impl Render for TerminalView {
                         )
                     }),
             )
-            .children(status.map(|(tone, message)| {
-                h_flex()
-                    .w_full()
-                    .flex_shrink_0()
-                    .px_3()
-                    .py_1p5()
-                    .gap_3()
-                    .items_center()
-                    .justify_between()
-                    .border_t_1()
-                    .border_color(cx.theme().border)
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .text_xs()
-                            .text_color(cx.theme().tone(tone))
-                            .child(crate::copyable_text::copyable_text("shell-status", message)),
-                    )
-                    .child(self.render_launcher("Restart", cx))
-            }))
+            .children(self.session_status(cx))
             .into_any_element()
     }
 }

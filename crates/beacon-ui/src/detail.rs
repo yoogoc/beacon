@@ -2265,6 +2265,30 @@ impl DetailView {
                                                     .to_string(),
                                                 )),
                                         )
+                                    })
+                                    .when(container.stop_debug, |this| {
+                                        let name = container.name.clone();
+                                        this.child(
+                                            Button::new("stop-debug-container")
+                                                .xsmall()
+                                                .ghost()
+                                                .icon(IconName::CircleX)
+                                                .label(crate::i18n::text("Stop debug container"))
+                                                .disabled(!crate::actions::may_exec(
+                                                    self.rules.as_deref(),
+                                                ))
+                                                .on_click(cx.listener(
+                                                    move |view, _, window, cx| {
+                                                        crate::debug_stop::open(
+                                                            view.session.clone(),
+                                                            view.object.clone(),
+                                                            name.clone(),
+                                                            window,
+                                                            cx,
+                                                        );
+                                                    },
+                                                )),
+                                        )
                                     }),
                             )
                             .when(expanded, |this| this.child(body))
@@ -2964,6 +2988,11 @@ impl DetailView {
                     fields.remove("image");
                 }
                 containers.push(ContainerLine {
+                    stop_debug: self.kind.resource.kind == "Pod"
+                        && self.kind.resource.group.is_empty()
+                        && spec_key == "ephemeralContainers"
+                        && beacon_kube::debug::supports_stop(container)
+                        && status.is_some_and(|status| status.pointer("/state/running").is_some()),
                     name: name.to_string(),
                     category,
                     image: container["image"]
@@ -3085,6 +3114,7 @@ impl DetailView {
 }
 
 struct ContainerLine {
+    stop_debug: bool,
     name: String,
     category: &'static str,
     fields: Vec<(String, Option<String>)>,
@@ -3267,6 +3297,63 @@ mod integration_tests {
     use crate::feature_test_support as support;
     use gpui_kit::test::TestWindowExt as _;
     use serde_json::json;
+
+    #[::core::prelude::v1::test]
+    fn a_managed_debug_container_can_be_stopped_from_the_pod_overview() {
+        let cx = &mut support::context();
+        let original = json!({"apiVersion":"v1","kind":"Pod","metadata":{"name":"web","namespace":"default","uid":"one","resourceVersion":"42"},"spec":{"containers":[{"name":"app","image":"fixture"}]},"status":{"phase":"Running"}});
+        let (fixture, session) =
+            support::fixture(cx, "debug-stop-overview", vec![original.clone()]);
+        let runtime = cx.read(|cx| Bridge::global(cx).handle());
+        runtime
+            .block_on(beacon_kube::debug::create(
+                session.clone(),
+                Arc::new(serde_json::from_value(original).unwrap()),
+                beacon_kube::debug::Options {
+                    name: "debugger".into(),
+                    image: "busybox:stable".into(),
+                    target: Some("app".into()),
+                    shell: "/bin/sh".into(),
+                    profile: beacon_kube::debug::Profile::Restricted,
+                },
+            ))
+            .unwrap();
+        let object = Arc::new(serde_json::from_value(fixture.object("Pod", "web")).unwrap());
+        let (window, _) = cx.update(|cx| {
+            gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
+                cx.new(|cx| {
+                    DetailView::new(
+                        session,
+                        Arc::new(support::kind("", "Pod", "pods")),
+                        object,
+                        None,
+                        window,
+                        cx,
+                    )
+                })
+            })
+            .unwrap()
+        });
+        support::render_until(cx, window, |window| {
+            window.try_find("stop-debug-container").is_some()
+        });
+        cx.update_window(window, |_, window, cx| {
+            window.render_frame(cx);
+            window.click("stop-debug-container", cx);
+            window.render_frame(cx);
+            assert!(window.find("debug-stop-confirm").visible());
+            window.click("debug-stop-cancel", cx);
+        })
+        .unwrap();
+        assert!(
+            fixture
+                .requests
+                .lock()
+                .unwrap()
+                .iter()
+                .all(|(line, _)| !line.contains("/exec") && !line.starts_with("DELETE"))
+        );
+    }
 
     #[::core::prelude::v1::test]
     fn workflow_graph_scroll_stays_inside_its_viewport() {

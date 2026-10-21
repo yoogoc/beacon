@@ -14,6 +14,19 @@ fn open(
     Entity<TerminalView>,
     UnboundedReceiver<Vec<u8>>,
 ) {
+    open_sized(cx, output, size(px(800.), px(460.)))
+}
+
+fn open_sized(
+    cx: &mut TestAppContext,
+    output: &[u8],
+    viewport: gpui_kit::Size<Pixels>,
+) -> (
+    beacon_kube::test_support::Fixture,
+    AnyWindowHandle,
+    Entity<TerminalView>,
+    UnboundedReceiver<Vec<u8>>,
+) {
     cx.update(super::init);
     let (fixture, session) = support::fixture(cx, "terminal-interactions", vec![]);
     let (shell, input) = Session::for_testing();
@@ -22,7 +35,7 @@ fn open(
             WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(Bounds::new(
                     gpui_kit::Point::default(),
-                    size(px(800.), px(460.)),
+                    viewport,
                 ))),
                 ..Default::default()
             },
@@ -66,6 +79,126 @@ fn position(view: &TerminalView, column: f32, row: f32) -> gpui_kit::Point<Pixel
             px(column * view.metrics.width),
             px(row * view.metrics.height),
         )
+}
+
+#[::core::prelude::v1::test]
+fn ended_sessions_keep_the_transcript_selectable_and_hide_input_until_requested() {
+    let cx = &mut support::context();
+    let (_fixture, window, terminal, mut input) = open(
+        cx,
+        b"alpha beta\r\n$ exit\r\nexit\r\n\x1b[?1000h\x1b[?1006h",
+    );
+    cx.update_window(window, |_, window, cx| {
+        terminal.update(cx, |view, cx| {
+            view.composition.text = "uncommitted".into();
+            view.finish(State::Ended);
+            assert!(view.composition.text.is_empty());
+            assert!(!view.rows(cx).iter().flatten().any(|run| run.cursor));
+            cx.notify();
+        });
+        window.render_frame(cx);
+        let status = window.find("terminal-session-status");
+        assert_eq!(status.label(), Some("Session ended"));
+        assert!(status.bounds().size.height < px(56.));
+        assert!(window.try_find("terminal-shell-command").is_none());
+        assert!(window.find("start-shell").visible());
+
+        // A program's mouse-capture mode must not survive the stopped session.
+        let start = position(terminal.read(cx), 0.1, 0.5);
+        let end = position(terminal.read(cx), 5.1, 0.5);
+        window.drag(start, end, cx);
+        assert_eq!(
+            terminal.read(cx).term.selection_to_string().as_deref(),
+            Some("alpha")
+        );
+        window.click("terminal-copy", cx);
+        assert_eq!(
+            cx.read_from_clipboard().unwrap().text().as_deref(),
+            Some("alpha")
+        );
+        window.input("ignored", cx);
+        assert!(input.try_recv().is_err());
+
+        window.click("terminal-find", cx);
+        window.render_frame(cx);
+        window.input("alpha", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(window, |_, window, cx| {
+        window.render_frame(cx);
+        assert_eq!(terminal.read(cx).search.matches.len(), 1);
+        window.click("terminal-search-close", cx);
+        window.render_frame(cx);
+        window.click("terminal-shell-options", cx);
+        window.render_frame(cx);
+        assert!(window.find("terminal-shell-command").visible());
+        assert!(
+            terminal
+                .read(cx)
+                .command
+                .focus_handle(cx)
+                .is_focused(window)
+        );
+        window.input("/bin/sh", cx);
+        assert_eq!(terminal.read(cx).command(cx), ["/bin/sh"]);
+        window.click("terminal-shell-options", cx);
+        window.render_frame(cx);
+        assert!(window.try_find("terminal-shell-command").is_none());
+        assert!(terminal.read(cx).focus.is_focused(window));
+        window.click("terminal-shell-options", cx);
+        window.render_frame(cx);
+        assert_eq!(
+            terminal.read(cx).command.read(cx).value().as_str(),
+            "/bin/sh"
+        );
+        window.click("start-shell", cx);
+        assert!(matches!(terminal.read(cx).state, State::Connecting));
+        assert!(!terminal.read(cx).launcher_options);
+        window.render_frame(cx);
+        assert!(window.try_find("start-shell").is_none());
+        assert!(window.try_find("terminal-shell-command").is_none());
+    })
+    .unwrap();
+}
+
+#[::core::prelude::v1::test]
+fn failed_sessions_show_the_error_and_keep_retry_available_in_a_narrow_pane() {
+    let cx = &mut support::context();
+    let (_fixture, window, terminal, _) =
+        open_sized(cx, b"previous output", size(px(360.), px(300.)));
+    cx.update_window(window, |_, window, cx| {
+        terminal.update(cx, |view, cx| {
+            view.finish(State::Failed(
+                "Unable to open /bin/bash in this container".into(),
+            ));
+            cx.notify();
+        });
+        window.render_frame(cx);
+        window.render_frame(cx);
+        assert_eq!(window.viewport_size().width, px(360.));
+        assert_eq!(
+            window.find("terminal-session-status").label(),
+            Some("Connection failed")
+        );
+        let reconnect = window.find("start-shell");
+        assert!(reconnect.visible());
+        assert!(reconnect.bounds().right() <= window.viewport_size().width);
+        assert!(window.find("terminal-session-error").visible());
+        window.click("terminal-shell-options", cx);
+        window.render_frame(cx);
+        assert!(window.find("terminal-shell-command").visible());
+        assert!(window.find("start-shell").visible());
+        crate::i18n::init(crate::i18n::Language::SimplifiedChinese, cx);
+        window.render_frame(cx);
+        assert_eq!(
+            window.find("terminal-session-status").label(),
+            Some("连接失败")
+        );
+        assert!(window.find("start-shell").bounds().right() <= px(360.));
+        crate::i18n::init(crate::i18n::Language::English, cx);
+    })
+    .unwrap();
 }
 
 #[::core::prelude::v1::test]

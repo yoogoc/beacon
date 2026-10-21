@@ -23,6 +23,7 @@ mod copyable_text;
 mod create;
 mod data_syntax;
 mod debug_container;
+mod debug_stop;
 pub mod detail;
 #[cfg(all(test, feature = "ui-tests"))]
 mod feature_test_support;
