@@ -255,6 +255,18 @@ fn describe(name: &str, scope: &str) -> (String, String) {
         "Enter" => "Confirm a single-line input or insert a line break in a multiline editor.",
         "Escape" => "Dismiss search or clear a search field configured to clear on Escape.",
         "Copy" => "Copy the selected text to the clipboard.",
+        "Find" if scope == "Pod shell" => {
+            "Search terminal output and scrollback. Enter finds the next match; Shift+Enter finds the previous match."
+        }
+        "ZoomIn" if scope == "Pod shell" => "Increase the terminal font size.",
+        "ZoomOut" if scope == "Pod shell" => "Decrease the terminal font size.",
+        "ResetZoom" if scope == "Pod shell" => {
+            "Restore the terminal font size from application settings."
+        }
+        "HistoryUp" => "Scroll up through the terminal history.",
+        "HistoryDown" => "Scroll down through the terminal history.",
+        "HistoryBottom" => "Return to live terminal output.",
+        "F1" if scope == "Pod shell" => "Send F1 to the focused terminal.",
         "Cut" => "Copy and remove the selected text.",
         "Paste" if scope == "Pod shell" => "Paste clipboard text into the focused shell.",
         "Paste" => "Insert the clipboard text into the focused field.",

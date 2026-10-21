@@ -25,13 +25,13 @@ use alacritty_terminal::{
     event::{Event, EventListener, WindowSize},
     grid::Dimensions,
     index::{Column, Line, Point},
-    term::{Config, cell::Flags},
+    term::{Config, TermMode, cell::Flags},
     vte::ansi::{Color as VtColor, NamedColor, Processor, Rgb},
 };
 use beacon_kube::{ClusterSession, Terminal as Session, TerminalEvent};
 use gpui_kit::base::TestSupportExt as _;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::input::{Input, InputState, Paste};
+use gpui_kit::component::input::{Copy, Input, InputEvent, InputState, Paste};
 use gpui_kit::component::menu::{ContextMenuExt as _, PopupMenuItem};
 use gpui_kit::component::{ActiveTheme as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
@@ -49,22 +49,54 @@ const ROWS: usize = 28;
 /// How much scrollback the grid keeps.
 const HISTORY: usize = 10_000;
 
-/// Fixed-width metrics. A terminal grid is only a grid if every cell is the
-/// same size, so the font size and the cell size are decided here rather than
-/// measured per glyph.
-const CELL_WIDTH: f32 = 7.8;
-const CELL_HEIGHT: f32 = 17.0;
-const FONT_SIZE: f32 = 13.0;
+mod input;
+mod interaction;
+mod render;
+use interaction::{Metrics, SearchState};
+
+gpui_kit::actions!(
+    beacon_terminal,
+    [
+        Find,
+        ZoomIn,
+        ZoomOut,
+        ResetZoom,
+        HistoryUp,
+        HistoryDown,
+        HistoryBottom,
+        F1
+    ]
+);
 
 pub(crate) fn init(cx: &mut App) {
     // Ctrl-V belongs to the remote shell (quoted insert). Use the terminal
     // convention on Windows/Linux, leaving ordinary child inputs alone.
     const CONTEXT: &str = "BeaconTerminal && !Input && !PopupMenu";
+    let modifier = if cfg!(target_os = "macos") {
+        "cmd"
+    } else {
+        "ctrl-shift"
+    };
     cx.bind_keys([
         #[cfg(target_os = "macos")]
         KeyBinding::new("cmd-v", Paste, Some(CONTEXT)),
         KeyBinding::new("ctrl-shift-v", Paste, Some(CONTEXT)),
         KeyBinding::new("shift-insert", Paste, Some(CONTEXT)),
+        #[cfg(target_os = "macos")]
+        KeyBinding::new("cmd-c", Copy, Some(CONTEXT)),
+        KeyBinding::new("ctrl-shift-c", Copy, Some(CONTEXT)),
+        KeyBinding::new("ctrl-insert", Copy, Some(CONTEXT)),
+        #[cfg(target_os = "macos")]
+        KeyBinding::new("cmd-f", Find, Some(CONTEXT)),
+        KeyBinding::new("ctrl-shift-f", Find, Some(CONTEXT)),
+        KeyBinding::new("shift-pageup", HistoryUp, Some(CONTEXT)),
+        KeyBinding::new("shift-pagedown", HistoryDown, Some(CONTEXT)),
+        KeyBinding::new("shift-end", HistoryBottom, Some(CONTEXT)),
+        KeyBinding::new("f1", F1, Some(CONTEXT)),
+        KeyBinding::new(&format!("{modifier}-="), ZoomIn, Some(CONTEXT)),
+        KeyBinding::new(&format!("{modifier}-+"), ZoomIn, Some(CONTEXT)),
+        KeyBinding::new(&format!("{modifier}--"), ZoomOut, Some(CONTEXT)),
+        KeyBinding::new(&format!("{modifier}-0"), ResetZoom, Some(CONTEXT)),
     ]);
 }
 
@@ -125,6 +157,18 @@ pub struct TerminalView {
     /// width while looking like it should have resized.
     measured: Rc<StdCell<Option<(usize, usize)>>>,
 
+    metrics: Metrics,
+    grid_bounds: Rc<StdCell<Bounds<Pixels>>>,
+    font_zoom: f32,
+    composition: input::Composition,
+    selecting: bool,
+    scrollbar_drag: Option<(f32, usize)>,
+    mouse_button: Option<u8>,
+    last_mouse: Option<(u8, Point)>,
+    wheel_remainder: f32,
+    search: SearchState,
+    search_input: Entity<InputState>,
+    _subscriptions: Vec<Subscription>,
     _output: Option<Task<()>>,
 }
 
@@ -177,6 +221,43 @@ impl TerminalView {
         };
         let replies = Replies::default();
 
+        let search_input = cx.new(|cx| crate::i18n::input("Find in terminal", window, cx));
+        let search_subscription = cx.subscribe_in(
+            &search_input,
+            window,
+            |view, input, event: &InputEvent, _, cx| {
+                match event {
+                    InputEvent::Change => {
+                        view.search.query = input.read(cx).value().to_string();
+                        view.search.current = None;
+                        view.search.matches.clear();
+                        view.search.dirty = true;
+                    }
+                    InputEvent::PressEnter { shift, .. } => view.find(*shift, cx),
+                    _ => return,
+                }
+                cx.notify();
+            },
+        );
+        let focus = cx.focus_handle();
+        let focused = cx.on_focus(&focus, window, |view, _, _| {
+            if view.term.mode().contains(TermMode::FOCUS_IN_OUT)
+                && let Some(shell) = &view.shell
+            {
+                shell.send(b"\x1b[I".to_vec());
+            }
+        });
+        let blurred = cx.on_blur(&focus, window, |view, _, cx| {
+            view.selecting = false;
+            view.scrollbar_drag = None;
+            view.composition.clear();
+            if view.term.mode().contains(TermMode::FOCUS_IN_OUT)
+                && let Some(shell) = &view.shell
+            {
+                shell.send(b"\x1b[O".to_vec());
+            }
+            cx.notify();
+        });
         let this = Self {
             session,
             namespace,
@@ -189,8 +270,20 @@ impl TerminalView {
             state: State::Idle,
             command: cx.new(|cx| crate::i18n::input("bash, falling back to sh", window, cx)),
             interactive_shell: false,
-            focus: cx.focus_handle(),
+            focus,
             measured: Rc::new(StdCell::new(None)),
+            metrics: Metrics::default(),
+            grid_bounds: Rc::new(StdCell::new(Bounds::default())),
+            font_zoom: 0.,
+            composition: Default::default(),
+            selecting: false,
+            scrollbar_drag: None,
+            mouse_button: None,
+            last_mouse: None,
+            wheel_remainder: 0.,
+            search: Default::default(),
+            search_input,
+            _subscriptions: vec![search_subscription, focused, blurred],
             _output: None,
         };
         this.focus.focus(window, cx);
@@ -244,6 +337,11 @@ impl TerminalView {
             self.replies.clone(),
         );
         self.parser = Processor::new();
+        self.composition.clear();
+        self.selecting = false;
+        self.scrollbar_drag = None;
+        self.mouse_button = None;
+        self.search.dirty = true;
         self.state = State::Connecting;
 
         let command = self.command(cx);
@@ -290,6 +388,7 @@ impl TerminalView {
     /// Pushes container output through the VT parser and into the grid.
     pub fn feed(&mut self, bytes: &[u8], cx: &App) {
         self.parser.advance(&mut self.term, bytes);
+        self.search.dirty = true;
         for event in self.replies.0.borrow_mut().drain(..) {
             let reply = match event {
                 Event::PtyWrite(reply) => reply,
@@ -313,8 +412,8 @@ impl TerminalView {
                 Event::TextAreaSizeRequest(format) => format(WindowSize {
                     num_cols: self.term.columns() as u16,
                     num_lines: self.term.screen_lines() as u16,
-                    cell_width: CELL_WIDTH as u16,
-                    cell_height: CELL_HEIGHT as u16,
+                    cell_width: self.metrics.width.round() as u16,
+                    cell_height: self.metrics.height.round() as u16,
                 }),
                 _ => continue,
             };
@@ -331,11 +430,8 @@ impl TerminalView {
             .mode()
             .contains(alacritty_terminal::term::TermMode::APP_CURSOR);
 
-        if let (Some(shell), Some(bytes)) =
-            (self.shell.as_ref(), encode(keystroke, application_cursors))
-        {
-            shell.send(bytes);
-            cx.notify();
+        if let Some(bytes) = encode(keystroke, application_cursors) {
+            self.send_input(bytes, cx);
         }
     }
 
@@ -343,7 +439,6 @@ impl TerminalView {
         if !matches!(self.state, State::Running) {
             return;
         }
-        let Some(shell) = &self.shell else { return };
         let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) else {
             return;
         };
@@ -353,10 +448,8 @@ impl TerminalView {
                 .mode()
                 .contains(alacritty_terminal::term::TermMode::BRACKETED_PASTE),
         );
-        if !bytes.is_empty() {
-            shell.send(bytes);
-            cx.notify();
-        }
+        self.composition.clear();
+        self.send_input(bytes, cx);
     }
 
     /// Tells the grid and the container how big the pane is.
@@ -372,31 +465,33 @@ impl TerminalView {
 
         tracing::info!(columns, rows, "terminal resized");
         self.term.resize(Size { columns, rows });
+        self.search.dirty = true;
         if let Some(shell) = &self.shell {
             shell.resize(columns as u16, rows as u16);
         }
         true
     }
 
-    /// The visible grid, as rows of coloured runs.
+    /// Runs retain their physical columns, even when fallback glyphs are wide.
     fn rows(&self, cx: &App) -> Vec<Vec<Run>> {
         let grid = self.term.grid();
         let offset = grid.display_offset();
-        let cursor = self.term.grid().cursor.point;
-
+        let content = self.term.renderable_content();
         (0..grid.screen_lines())
             .map(|row| {
                 let line = Line(row as i32 - offset as i32);
                 let mut runs: Vec<Run> = Vec::new();
-
                 for column in 0..grid.columns() {
-                    let cell = &grid[Point::new(line, Column(column))];
-                    if cell.flags.contains(Flags::WIDE_CHAR_SPACER) {
+                    let point = Point::new(line, Column(column));
+                    let cell = &grid[point];
+                    if cell
+                        .flags
+                        .intersects(Flags::WIDE_CHAR_SPACER | Flags::LEADING_WIDE_CHAR_SPACER)
+                    {
                         continue;
                     }
-
                     let inverse = cell.flags.contains(Flags::INVERSE);
-                    let (fg, bg) = if inverse {
+                    let (mut fg, mut bg) = if inverse {
                         (colour(cell.bg, cx, true), Some(colour(cell.fg, cx, false)))
                     } else {
                         (
@@ -407,45 +502,88 @@ impl TerminalView {
                             },
                         )
                     };
-
-                    let is_cursor = offset == 0 && line == cursor.line && column == cursor.column.0;
+                    if self.search.open {
+                        let index = self
+                            .search
+                            .matches
+                            .partition_point(|item| *item.end() < point);
+                        if let Some(found) = self
+                            .search
+                            .matches
+                            .get(index)
+                            .filter(|item| item.contains(&point))
+                        {
+                            let _ = found;
+                            bg = Some(cx.theme().tone(Tone::Warning).opacity(
+                                if self.search.current == Some(index) {
+                                    0.4
+                                } else {
+                                    0.18
+                                },
+                            ));
+                        }
+                    }
+                    if content.selection.is_some_and(|selection| {
+                        selection.contains(point)
+                            || (cell.flags.contains(Flags::WIDE_CHAR)
+                                && selection.contains(Point::new(line, Column(column + 1))))
+                    }) {
+                        bg = Some(cx.theme().selection);
+                    }
+                    let cursor = offset == 0
+                        && content.cursor.point == point
+                        && content.cursor.shape
+                            == alacritty_terminal::vte::ansi::CursorShape::Block;
+                    if cursor {
+                        bg = Some(cx.theme().foreground);
+                        fg = cx.theme().background;
+                    }
                     let bold = cell.flags.contains(Flags::BOLD);
-
+                    let wide = cell.flags.contains(Flags::WIDE_CHAR);
+                    let cells = if wide { 2 } else { 1 };
+                    let mut text = cell.c.to_string();
+                    if let Some(extra) = cell.zerowidth() {
+                        text.extend(extra);
+                    }
                     match runs.last_mut() {
                         Some(last)
-                            if last.fg == fg
+                            if !wide
+                                && !last.wide
+                                && last.fg == fg
                                 && last.bg == bg
                                 && last.bold == bold
-                                && last.cursor == is_cursor =>
+                                && last.cursor == cursor =>
                         {
-                            last.text.push(cell.c);
+                            last.text.push_str(&text);
+                            last.cells += cells;
                         }
                         _ => runs.push(Run {
-                            text: cell.c.to_string(),
+                            text,
                             fg,
                             bg,
                             bold,
-                            cursor: is_cursor,
+                            cursor,
+                            column,
+                            cells,
+                            wide,
                         }),
                     }
                 }
-
                 runs
             })
             .collect()
     }
 }
 
-/// A stretch of cells that look the same, drawn as one element.
-///
-/// Without this a hundred-column row is a hundred elements; with it a shell
-/// prompt is three or four.
 struct Run {
     text: String,
     fg: Hsla,
     bg: Option<Hsla>,
     bold: bool,
     cursor: bool,
+    column: usize,
+    cells: usize,
+    wide: bool,
 }
 
 /// Maps a terminal colour onto the theme.
@@ -624,71 +762,7 @@ fn encode_paste(text: &str, bracketed: bool) -> Vec<u8> {
 /// that wrong means arrow keys work in a shell and do nothing in `vim`, which
 /// is the classic symptom of a hand-rolled terminal.
 pub fn encode(keystroke: &Keystroke, application_cursors: bool) -> Option<Vec<u8>> {
-    let modifiers = &keystroke.modifiers;
-    let key = keystroke.key.as_str();
-
-    // Application shortcuts such as Cmd-V must never type a literal "v".
-    if modifiers.platform {
-        return None;
-    }
-
-    // Control characters. `ctrl-c` is 0x03, and the rest of the letters follow
-    // the same rule: the low five bits of the letter.
-    if modifiers.control
-        && !modifiers.alt
-        && let Some(character) = key.chars().next()
-        && key.chars().count() == 1
-    {
-        {
-            let code = match character {
-                'a'..='z' => character as u8 - b'a' + 1,
-                '[' => 0x1b,
-                '\\' => 0x1c,
-                ']' => 0x1d,
-                ' ' | '@' => 0x00,
-                _ => return None,
-            };
-            return Some(vec![code]);
-        }
-    }
-
-    let cursor = |letter: u8| {
-        let introducer = if application_cursors { b'O' } else { b'[' };
-        Some(vec![0x1b, introducer, letter])
-    };
-
-    let bytes = match key {
-        "enter" => vec![b'\r'],
-        "tab" => vec![b'\t'],
-        "backspace" => vec![0x7f],
-        "escape" => vec![0x1b],
-        "up" => return cursor(b'A'),
-        "down" => return cursor(b'B'),
-        "right" => return cursor(b'C'),
-        "left" => return cursor(b'D'),
-        "home" => return cursor(b'H'),
-        "end" => return cursor(b'F'),
-        "delete" => b"\x1b[3~".to_vec(),
-        "pageup" => b"\x1b[5~".to_vec(),
-        "pagedown" => b"\x1b[6~".to_vec(),
-        "space" => vec![b' '],
-        _ => {
-            // Anything the platform already turned into text -- including
-            // everything an input method produced.
-            let text = keystroke.key_char.as_deref().unwrap_or(key);
-            if text.chars().count() != 1 && keystroke.key_char.is_none() {
-                return None;
-            }
-            let mut bytes = text.as_bytes().to_vec();
-            // Alt is the meta prefix: ESC then the character.
-            if modifiers.alt {
-                bytes.insert(0, 0x1b);
-            }
-            bytes
-        }
-    };
-
-    Some(bytes)
+    input::key_bytes(keystroke, application_cursors)
 }
 
 impl Focusable for TerminalView {
@@ -717,208 +791,9 @@ impl TerminalView {
     }
 }
 
-impl Render for TerminalView {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        // Apply whatever the last prepaint measured. One more frame at the old
-        // size is imperceptible; getting the width wrong is not.
-        if let Some((columns, rows)) = self.measured.take()
-            && self.fit(columns, rows)
-        {
-            cx.notify();
-        }
-
-        if matches!(self.state, State::Idle) {
-            return v_flex()
-                .size_full()
-                .items_center()
-                .justify_center()
-                .gap_3()
-                .child(
-                    div()
-                        .text_sm()
-                        .text_color(cx.theme().muted_foreground)
-                        .child(crate::i18n::text("An interactive shell in this container.")),
-                )
-                .child(self.render_launcher("Open a shell", cx))
-                .into_any_element();
-        }
-
-        let rows = self.rows(cx);
-        let output = rows
-            .iter()
-            .map(|runs| {
-                runs.iter()
-                    .map(|run| run.text.as_str())
-                    .collect::<String>()
-                    .trim_end()
-                    .to_string()
-            })
-            .collect::<Vec<_>>()
-            .join("\n");
-        let status = match &self.state {
-            State::Connecting => Some((
-                Tone::Progressing,
-                "Connecting to the container…".to_string(),
-            )),
-            State::Failed(error) => Some((Tone::Critical, error.clone())),
-            State::Ended => Some((Tone::Unknown, "The shell exited.".to_string())),
-            _ => None,
-        };
-        let can_paste = matches!(self.state, State::Running) && self.shell.is_some();
-        let paste_focus = self.focus.clone();
-
-        v_flex()
-            .size_full()
-            .track_focus(&self.focus)
-            .key_context("BeaconTerminal")
-            .on_action(cx.listener(|view, _: &Paste, window, cx| {
-                if view.focus.is_focused(window) {
-                    view.paste(cx);
-                    cx.stop_propagation();
-                } else {
-                    cx.propagate();
-                }
-            }))
-            .on_action(
-                cx.listener(|view, _: &gpui_kit::base::actions::Confirm, window, cx| {
-                    if view.focus.is_focused(window) {
-                        view.key(&Keystroke::parse("enter").expect("valid terminal key"), cx);
-                        cx.stop_propagation();
-                    } else {
-                        cx.propagate();
-                    }
-                }),
-            )
-            .on_action(
-                cx.listener(|view, _: &gpui_kit::base::actions::Cancel, window, cx| {
-                    if view.focus.is_focused(window) {
-                        view.key(&Keystroke::parse("escape").expect("valid terminal key"), cx);
-                        cx.stop_propagation();
-                    } else {
-                        cx.propagate();
-                    }
-                }),
-            )
-            .on_key_down(cx.listener(|view, event: &KeyDownEvent, window, cx| {
-                // Only the grid's focus sends keys to the shell. Child inputs,
-                // selectable errors and menus keep their normal shortcuts.
-                if !view.focus.is_focused(window) {
-                    return;
-                }
-                view.key(&event.keystroke, cx);
-                cx.stop_propagation();
-            }))
-            .child(
-                div()
-                    .id("terminal-grid")
-                    .test_support()
-                    .relative()
-                    .flex_1()
-                    .min_h_0()
-                    .overflow_hidden()
-                    .p_2()
-                    .bg(cx.theme().background)
-                    .on_mouse_down(
-                        MouseButton::Left,
-                        cx.listener(|view, _, window, cx| {
-                            view.focus.focus(window, cx);
-                        }),
-                    )
-                    // A zero-size probe that reports the pane's real size, so
-                    // the grid can be told how wide it is. Without it the
-                    // shell wraps at whatever the grid was created with and
-                    // the wrap lands in the middle of a visible line.
-                    .child({
-                        let measured = self.measured.clone();
-                        let entity_id = cx.entity_id();
-                        let current = (self.term.columns(), self.term.screen_lines());
-                        canvas(
-                            move |bounds, _, cx| {
-                                let columns = (f32::from(bounds.size.width) / CELL_WIDTH) as usize;
-                                let rows = (f32::from(bounds.size.height) / CELL_HEIGHT) as usize;
-                                let size = (columns.max(2), rows.max(2));
-                                if size != current {
-                                    measured.set(Some(size));
-                                    cx.notify(entity_id);
-                                }
-                            },
-                            |_, _, _, _| {},
-                        )
-                        .absolute()
-                        .size_full()
-                    })
-                    .child(
-                        v_flex()
-                            .font_family("monospace")
-                            .text_size(px(FONT_SIZE))
-                            .line_height(px(CELL_HEIGHT))
-                            .children(rows.into_iter().map(|runs| {
-                                h_flex().children(runs.into_iter().map(|run| {
-                                    div()
-                                        .text_color(run.fg)
-                                        .when_some(run.bg, |this, bg| this.bg(bg))
-                                        .when(run.bold, |this| this.font_weight(FontWeight::BOLD))
-                                        .when(run.cursor, |this| {
-                                            this.bg(cx.theme().foreground)
-                                                .text_color(cx.theme().background)
-                                        })
-                                        .child(run.text)
-                                }))
-                            })),
-                    )
-                    .context_menu(move |menu, _, cx| {
-                        menu.action_context(paste_focus.clone())
-                            .item(
-                                PopupMenuItem::new(crate::i18n::text("Paste"))
-                                    .action(Box::new(Paste))
-                                    .disabled(
-                                        !can_paste
-                                            || cx
-                                                .read_from_clipboard()
-                                                .and_then(|item| item.text())
-                                                .is_none_or(|text| text.is_empty()),
-                                    ),
-                            )
-                            .item(crate::copyable_text::copy_item(
-                                "Copy terminal output",
-                                output.clone(),
-                            ))
-                    }),
-            )
-            .children(status.map(|(tone, message)| {
-                h_flex()
-                    .w_full()
-                    .flex_shrink_0()
-                    .px_3()
-                    .py_1p5()
-                    .gap_3()
-                    .items_center()
-                    .justify_between()
-                    .border_t_1()
-                    .border_color(cx.theme().border)
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .text_xs()
-                            .text_color(cx.theme().tone(tone))
-                            .child(crate::copyable_text::copyable_text("shell-status", message)),
-                    )
-                    // "No such file or directory" is the commonest way a shell
-                    // ends, and the answer to it is a different shell. Putting
-                    // the box here means trying one is where the failure is,
-                    // rather than somewhere else.
-                    .child(self.render_launcher("Restart", cx))
-            }))
-            .into_any_element()
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{
-        CELL_HEIGHT, CELL_WIDTH, DARK_PALETTE, LIGHT_PALETTE, encode, encode_paste, indexed_colour,
-    };
+    use super::{DARK_PALETTE, LIGHT_PALETTE, encode, encode_paste, indexed_colour};
     use gpui_kit::Keystroke;
 
     #[test]
@@ -1102,17 +977,11 @@ mod tests {
         // The greyscale ramp runs from near-black to near-white.
         assert!(indexed_colour(232).l < indexed_colour(255).l);
     }
-
-    /// The pane measures itself in cells, so a wrong cell size is a wrong
-    /// column count and a shell that wraps in the wrong place. This pins the
-    /// ratio a monospace face at this size actually has.
-    #[test]
-    fn a_cell_is_taller_than_it_is_wide() {
-        let ratio = CELL_HEIGHT / CELL_WIDTH;
-        assert!((1.9..2.4).contains(&ratio), "ratio {ratio}");
-    }
 }
 
 #[cfg(all(test, feature = "ui-tests"))]
 #[path = "terminal/dialog_tests.rs"]
 mod dialog_tests;
+
+#[cfg(all(test, feature = "ui-tests"))]
+mod interaction_tests;

@@ -1,0 +1,99 @@
+{
+  "_version": 2,
+  "terminal.find_in_terminal": {
+    "en": "Find in terminal",
+    "zh-CN": "在终端中查找"
+  },
+  "terminal.copy_selection": {
+    "en": "Copy selection",
+    "zh-CN": "复制选区"
+  },
+  "terminal.back_to_bottom": {
+    "en": "Back to bottom",
+    "zh-CN": "回到底部"
+  },
+  "terminal.decrease_terminal_font_size": {
+    "en": "Decrease terminal font size",
+    "zh-CN": "缩小终端字号"
+  },
+  "terminal.increase_terminal_font_size": {
+    "en": "Increase terminal font size",
+    "zh-CN": "放大终端字号"
+  },
+  "terminal.reset_terminal_font_size": {
+    "en": "Reset terminal font size",
+    "zh-CN": "重置终端字号"
+  },
+  "terminal.previous_match": {
+    "en": "Previous match",
+    "zh-CN": "上一个匹配项"
+  },
+  "terminal.next_match": {
+    "en": "Next match",
+    "zh-CN": "下一个匹配项"
+  },
+  "terminal.close_search": {
+    "en": "Close search",
+    "zh-CN": "关闭搜索"
+  },
+  "terminal.find_help": {
+    "en": "Search terminal output and scrollback. Enter finds the next match; Shift+Enter finds the previous match.",
+    "zh-CN": "搜索终端输出及历史记录。Enter 查找下一个，Shift+Enter 查找上一个。"
+  },
+  "terminal.zoom_in_help": {
+    "en": "Increase the terminal font size.",
+    "zh-CN": "放大终端字号。"
+  },
+  "terminal.zoom_out_help": {
+    "en": "Decrease the terminal font size.",
+    "zh-CN": "缩小终端字号。"
+  },
+  "terminal.zoom_reset_help": {
+    "en": "Restore the terminal font size from application settings.",
+    "zh-CN": "恢复应用设置中的终端字号。"
+  },
+  "terminal.history_up_help": {
+    "en": "Scroll up through the terminal history.",
+    "zh-CN": "向上滚动终端历史记录。"
+  },
+  "terminal.history_down_help": {
+    "en": "Scroll down through the terminal history.",
+    "zh-CN": "向下滚动终端历史记录。"
+  },
+  "terminal.history_bottom_help": {
+    "en": "Return to live terminal output.",
+    "zh-CN": "返回实时终端输出。"
+  },
+  "terminal.find": {
+    "en": "Find",
+    "zh-CN": "查找"
+  },
+  "terminal.zoom_in": {
+    "en": "Zoom In",
+    "zh-CN": "放大字号"
+  },
+  "terminal.zoom_out": {
+    "en": "Zoom Out",
+    "zh-CN": "缩小字号"
+  },
+  "terminal.reset_zoom": {
+    "en": "Reset Zoom",
+    "zh-CN": "重置字号"
+  },
+  "terminal.history_up": {
+    "en": "History Up",
+    "zh-CN": "向上翻页"
+  },
+  "terminal.history_down": {
+    "en": "History Down",
+    "zh-CN": "向下翻页"
+  },
+  "terminal.history_bottom": {
+    "en": "History Bottom",
+    "zh-CN": "回到底部"
+  },
+  "terminal.f1_help": {
+    "en": "Send F1 to the focused terminal.",
+    "zh-CN": "将 F1 按键发送到当前终端。"
+  }
+}

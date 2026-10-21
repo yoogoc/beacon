@@ -158,7 +158,6 @@ pub fn init(log_directory: PathBuf, cx: &mut App) {
         crate::updates::store(cx).update(cx, |view, cx| view.check(cx));
     });
     crate::shortcuts::init(cx);
-    crate::terminal::init(cx);
     cx.on_action(|_: &OpenShortcuts, cx| crate::shortcuts::open(cx));
     cx.on_action(|_: &OpenAppLogs, cx| app_logs::open(cx));
     cx.on_action(|_: &Quit, cx| cx.defer(request_app_quit));
@@ -196,6 +195,9 @@ pub fn init(log_directory: PathBuf, cx: &mut App) {
             Some("BeaconWorkspace && !Sheet && !PopupMenu"),
         ),
     ]);
+    // Contextual terminal bindings must follow globals: GPUI resolves the
+    // newest matching binding first (notably F1 and Ctrl+Shift+F).
+    crate::terminal::init(cx);
 }
 
 /// Menu and global shortcut requests also confirm in the main workspace,
