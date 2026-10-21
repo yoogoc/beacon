@@ -570,6 +570,11 @@ impl BeaconApp {
             ],
         };
 
+        if main_window {
+            this._subscriptions
+                .extend(crate::window_state::track(window, cx));
+        }
+
         if let Some(updater) = crate::updates::maybe_store(cx) {
             let mut previous = updater.read(cx).status.has_update();
             this._subscriptions
@@ -3378,6 +3383,10 @@ impl Render for BeaconApp {
 
 #[cfg(all(test, feature = "ui-tests"))]
 mod tab_duplication_tests;
+
+#[cfg(all(test, feature = "ui-tests"))]
+#[path = "app/window_state_tests.rs"]
+mod window_state_tests;
 
 #[cfg(all(test, feature = "ui-tests"))]
 mod rendering_tests {

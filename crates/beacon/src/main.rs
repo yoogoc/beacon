@@ -4,7 +4,7 @@
 mod logging;
 
 use beacon_ui::{BeaconApp, Bridge};
-use gpui_kit::component::{Root, TitleBar};
+use gpui_kit::component::Root;
 use gpui_kit::*;
 
 fn main() -> anyhow::Result<()> {
@@ -53,15 +53,7 @@ fn main() -> anyhow::Result<()> {
             }
             beacon_ui::updates::init(cx);
 
-            let options = WindowOptions {
-                window_bounds: Some(WindowBounds::Windowed(Bounds::centered(
-                    None,
-                    size(px(1280.), px(800.)),
-                    cx,
-                ))),
-                window_min_size: Some(size(px(720.), px(480.))),
-                ..TitleBar::window_options()
-            };
+            let options = beacon_ui::window_state::main_window_options(cx);
 
             cx.spawn(async move |cx| {
                 let window = cx.open_window(options, |window, cx| {

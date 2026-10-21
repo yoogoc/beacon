@@ -323,7 +323,7 @@ fn write(directory: &Path, preferences: &Preferences) -> Result<(), String> {
     atomic_write(&directory.join("settings.json"), &data)?;
     Ok(())
 }
-fn atomic_write(path: &Path, data: &[u8]) -> Result<(), String> {
+pub(crate) fn atomic_write(path: &Path, data: &[u8]) -> Result<(), String> {
     use std::io::Write;
     let mut temp = tempfile::NamedTempFile::new_in(path.parent().ok_or("No settings directory.")?)
         .map_err(|e| e.to_string())?;

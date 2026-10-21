@@ -64,6 +64,7 @@ pub mod theme;
 mod tls;
 pub mod updates;
 mod web_links;
+pub mod window_state;
 mod workflow_actions;
 mod workspace;
 mod yaml_assistance;
