@@ -101,6 +101,7 @@ pub struct TerminalView {
     /// busybox one has `/bin/ash`, and sometimes the thing worth attaching to
     /// is not a shell at all.
     command: Entity<InputState>,
+    interactive_shell: bool,
     focus: FocusHandle,
     /// The pane size measured during the last prepaint, applied at the start
     /// of the next render.
@@ -136,12 +137,8 @@ impl Dimensions for Size {
 }
 
 impl TerminalView {
-    pub(crate) fn set_command(
-        &mut self,
-        command: &str,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    pub(crate) fn set_shell(&mut self, command: &str, window: &mut Window, cx: &mut Context<Self>) {
+        self.interactive_shell = true;
         self.command
             .update(cx, |input, cx| input.set_value(command, window, cx));
     }
@@ -178,6 +175,7 @@ impl TerminalView {
             shell: None,
             state: State::Idle,
             command: cx.new(|cx| crate::i18n::input("bash, falling back to sh", window, cx)),
+            interactive_shell: false,
             focus: cx.focus_handle(),
             measured: Rc::new(StdCell::new(None)),
             _output: None,
@@ -197,16 +195,10 @@ impl TerminalView {
         let typed = self.command.read(cx).value();
         let typed = typed.trim();
         if typed.is_empty() {
-            return vec![
-                "/bin/sh".to_string(),
-                "-c".to_string(),
-                // `TERM` is the whole reason anything in here has colour.
-                // Kubernetes `exec` has no way to pass an environment, and
-                // with `TERM` unset a shell's rc file takes the no-colour
-                // branch and `ls` gives up too -- so it is exported by the
-                // command itself, before the shell it hands over to.
-                "TERM=xterm-256color; export TERM; if command -v bash >/dev/null 2>&1; then exec bash; else exec /bin/sh; fi".to_string(),
-            ];
+            return beacon_kube::terminal::shell_command(None);
+        }
+        if self.interactive_shell {
+            return beacon_kube::terminal::shell_command(Some(typed));
         }
 
         let split = beacon_kube::exec::split(typed);
@@ -720,6 +712,26 @@ impl Render for TerminalView {
             .size_full()
             .track_focus(&self.focus)
             .key_context("BeaconTerminal")
+            .on_action(
+                cx.listener(|view, _: &gpui_kit::base::actions::Confirm, window, cx| {
+                    if view.focus.is_focused(window) {
+                        view.key(&Keystroke::parse("enter").expect("valid terminal key"), cx);
+                        cx.stop_propagation();
+                    } else {
+                        cx.propagate();
+                    }
+                }),
+            )
+            .on_action(
+                cx.listener(|view, _: &gpui_kit::base::actions::Cancel, window, cx| {
+                    if view.focus.is_focused(window) {
+                        view.key(&Keystroke::parse("escape").expect("valid terminal key"), cx);
+                        cx.stop_propagation();
+                    } else {
+                        cx.propagate();
+                    }
+                }),
+            )
             .on_key_down(cx.listener(|view, event: &KeyDownEvent, window, cx| {
                 // Only the grid's focus sends keys to the shell. Child inputs,
                 // selectable errors and menus keep their normal shortcuts.
@@ -988,3 +1000,7 @@ mod tests {
         assert!((1.9..2.4).contains(&ratio), "ratio {ratio}");
     }
 }
+
+#[cfg(all(test, feature = "ui-tests"))]
+#[path = "terminal/dialog_tests.rs"]
+mod dialog_tests;

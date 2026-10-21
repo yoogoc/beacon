@@ -1,0 +1,10 @@
+version: 1
+name: Kubernetes debug containers
+slug: kubernetes-debug
+protocol: http
+port: 4917
+interceptRequests: true
+scenarios:
+  - name: default
+    path: ./default.js
+    default: true

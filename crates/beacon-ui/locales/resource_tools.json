@@ -1,0 +1,27 @@
+{
+  "_version": 2,
+  "ui.resource_details": {
+    "en": "Resource details",
+    "zh-CN": "资源详情"
+  },
+  "ui.network_path": {
+    "en": "Network path",
+    "zh-CN": "网络路径"
+  },
+  "ui.no_network_paths": {
+    "en": "No network paths found",
+    "zh-CN": "未找到网络路径"
+  },
+  "ui.forward_info": {
+    "en": "0 chooses a free local port. Saved forwards start only when restored. Service and Deployment targets reconnect to a ready Pod after replacement.",
+    "zh-CN": "本地端口填 0 时自动分配。已保存的转发仅在手动恢复后启动。Service 和 Deployment 的 Pod 更换后会重新连接就绪的 Pod。"
+  },
+  "ui.stop_waiting": {
+    "en": "Stop waiting",
+    "zh-CN": "停止等待"
+  },
+  "ui.debug_wait_stopped": {
+    "en": "Waiting stopped. The container remains in the Pod; retry to open its terminal.",
+    "zh-CN": "已停止等待。临时容器仍保留在 Pod 中，可重试打开终端。"
+  }
+}

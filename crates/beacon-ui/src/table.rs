@@ -379,7 +379,12 @@ impl ResourceTable {
         );
 
         if data::is_keyed(group, name) {
-            menu = menu.item(detail_item("View data", &view, &target, DetailTab::Data));
+            menu = menu.item(detail_item(
+                "View data",
+                &view,
+                &target,
+                DetailTab::Overview,
+            ));
             menu = menu.item(detail_item("View usage", &view, &target, DetailTab::UsedBy));
         }
         if beacon_kube::config_refs::supported(group, name) {
@@ -1593,7 +1598,6 @@ fn detail_item(
     let target = target.clone();
     let icon = match tab {
         DetailTab::Yaml => IconName::FileCode,
-        DetailTab::Data => IconName::FileKey,
         DetailTab::UsedBy | DetailTab::Related => IconName::Link,
         DetailTab::Configuration => IconName::Settings,
         DetailTab::Network => IconName::Network,

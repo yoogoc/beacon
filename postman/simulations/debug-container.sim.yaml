@@ -1,0 +1,5 @@
+simulation: beacon-debug-container
+routing: path
+mocks:
+  - routeKey: kubernetes
+    path: ../mocks/kubernetes-debug/config.yaml

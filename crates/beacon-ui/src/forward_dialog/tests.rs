@@ -35,6 +35,9 @@ fn forward_review_checks_ports_conflicts_then_starts_and_persists_without_automa
         .unwrap()
     });
     assert!(session.forwards().is_empty());
+    // Opening the form now resolves the configured target automatically;
+    // editing a port below must invalidate that completed lookup.
+    support::settle(cx, |cx| view.read_with(cx, |view, _| view.ready()));
     cx.update_window(window, |_, window, cx| {
         view.update(cx, |view, cx| {
             view.remote

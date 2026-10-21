@@ -4,6 +4,8 @@ use beacon_kube::{
     ClusterSession,
     forward::{Resolved, Target},
 };
+use gpui_kit::assets::IconName;
+use gpui_kit::component::{Icon, spinner::Spinner};
 use gpui_kit::{
     component::{
         ActiveTheme as _, Disableable as _, Sizable as _,
@@ -76,6 +78,9 @@ impl ForwardDialog {
                 cx.notify();
             }
         });
+        if target.port > 0 {
+            cx.defer_in(window, |view, window, cx| view.resolve(window, cx));
+        }
         Self {
             session,
             target,
@@ -195,21 +200,51 @@ impl ForwardDialog {
 }
 impl Render for ForwardDialog {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        v_flex().id("forward-dialog").test_support().w(px(560.)).max_w_full().max_h_full().overflow_y_scroll().p_5().gap_4().rounded_lg().border_1().border_color(cx.theme().border).bg(cx.theme().background).text_color(cx.theme().foreground)
-            .child(div().text_lg().child(crate::i18n::text("Port forward")))
-            .child(copyable_text("forward-target",format!("{} · {}/{}",self.target.kind.label(),self.target.namespace,self.target.name)))
-            .child(h_flex().gap_4()
-                .child(v_flex().flex_1().gap_1().child(div().text_sm().child(crate::i18n::text("Local port"))).child(Input::new(&self.local).disabled(self.busy)).child(div().text_xs().text_color(cx.theme().muted_foreground).child(crate::i18n::text("127.0.0.1 · 0 chooses a free port"))))
-                .child(v_flex().flex_1().gap_1().child(div().text_sm().child(crate::i18n::text(if self.target.kind==beacon_kube::forward::TargetKind::Service {"Service port (TCP)"} else {"Container port (TCP)"}))).child(Input::new(&self.remote).disabled(self.busy))))
-            .child(Button::new("forward-resolve").small().outline().label(crate::i18n::text(if self.checking {"Finding Pod…"} else {"Check target"})).disabled(self.busy||self.checking).on_click(cx.listener(|view,_,window,cx|view.resolve(window,cx))))
-            .when_some(self.resolved.as_ref(),|view,route|view.child(div().text_sm().child(copyable_text("forward-resolved",crate::i18n::message("messages.backend", &[("value0", (route.pod).to_string()), ("value1", (route.port).to_string())]).to_string()))))
-            .child(div().text_xs().text_color(cx.theme().muted_foreground).child(crate::i18n::text("Service and Deployment forwards keep the local port and select a ready Pod after replacement. Existing TCP connections need to reconnect.")))
-            .child(crate::selection::checkbox("forward-save").label(crate::i18n::text("Save this forward for later")).checked(self.save).disabled(self.busy).on_click(cx.listener(|view,value,_,cx|{view.save = *value;cx.notify();})))
-            .child(div().text_xs().text_color(cx.theme().muted_foreground).child(crate::i18n::text("Saved forwards only start when you choose Restore in Port Forwards.")))
-            .when_some(self.error.as_ref(),|view,error|view.child(div().id("forward-error").test_support().text_sm().text_color(cx.theme().danger).child(copyable_text("forward-error-text",error.clone()))).children(crate::permissions::error_link("forward-permissions",self.session.clone(),error,beacon_kube::rbac::Query {verb:"get".into(),resource:"pods".into(),subresource:"portforward".into(),namespace:Some(self.target.namespace.clone()),..Default::default()})))
-            .child(h_flex().justify_end().gap_2()
+        v_flex().id("forward-dialog").test_support().w(px(500.)).max_w_full().max_h_full().overflow_y_scroll()
+            .rounded_xl().border_1().border_color(cx.theme().border).shadow_lg()
+            .bg(cx.theme().background).text_color(cx.theme().foreground)
+            .child(h_flex().px_4().py_3().gap_3().border_b_1().border_color(cx.theme().border)
+                .child(div().size(px(34.)).rounded_lg().bg(cx.theme().muted).flex().items_center().justify_center()
+                    .child(Icon::new(IconName::RadioTower).size(px(18.)).text_color(cx.theme().primary)))
+                .child(v_flex().flex_1().min_w_0().gap_0p5()
+                    .child(div().text_sm().font_weight(FontWeight::SEMIBOLD).child(crate::i18n::text("Port forward")))
+                    .child(div().text_xs().text_color(cx.theme().muted_foreground).child(format!("{} · {}", self.target.kind.label(), self.target.namespace))))
+                .child(Button::new("forward-close").xsmall().ghost().icon(IconName::X).tooltip(crate::i18n::text("Cancel")).disabled(self.busy)
+                    .on_click(cx.listener(|_,_,_,cx|cx.emit(Event::Closed)))))
+            .child(v_flex().p_4().gap_4()
+                .child(div().text_sm().font_weight(FontWeight::MEDIUM).child(copyable_text("forward-target", self.target.name.clone())))
+                .child(h_flex().gap_3().items_center()
+                    .child(v_flex().flex_1().min_w_0().gap_2()
+                        .child(div().text_xs().text_color(cx.theme().muted_foreground).child(crate::i18n::text("Local port")))
+                        .child(Input::new(&self.local).small().disabled(self.busy))
+                        .child(div().text_xs().text_color(cx.theme().muted_foreground).child("127.0.0.1")))
+                    .child(Icon::new(IconName::ArrowRight).size(px(18.)).text_color(cx.theme().muted_foreground))
+                    .child(v_flex().flex_1().min_w_0().gap_2()
+                        .child(div().text_xs().text_color(cx.theme().muted_foreground).child(crate::i18n::text(if self.target.kind == beacon_kube::forward::TargetKind::Service { "Service port (TCP)" } else { "Container port (TCP)" })))
+                        .child(Input::new(&self.remote).small().disabled(self.busy))
+                        .child(div().text_xs().text_color(cx.theme().muted_foreground).child(self.target.kind.label()))))
+                .child(h_flex().min_h(px(44.)).p_2().gap_2().rounded_md().bg(cx.theme().muted.opacity(0.5))
+                    .when(self.checking, |row| row.child(Spinner::new().small()))
+                    .child(div().flex_1().min_w_0().text_xs().child(if let Some(route) = &self.resolved {
+                        copyable_text("forward-resolved",format!("{}:{}",route.pod,route.port)).into_any_element()
+                    } else {
+                        div().text_color(cx.theme().muted_foreground).child(crate::i18n::text(if self.checking { "Finding Pod…" } else { "Check target" })).into_any_element()
+                    }))
+                    .child(Button::new("forward-resolve").xsmall().ghost().icon(IconName::RefreshCw).tooltip(crate::i18n::text("Check target"))
+                        .disabled(self.busy || self.checking).on_click(cx.listener(|view,_,window,cx|view.resolve(window,cx)))))
+                .child(h_flex().gap_2()
+                    .child(crate::selection::checkbox("forward-save").label(crate::i18n::text("Save this forward for later")).checked(self.save).disabled(self.busy)
+                        .on_click(cx.listener(|view,value,_,cx|{view.save = *value;cx.notify();})))
+                    .child(div().flex_1())
+                    .child(Button::new("forward-info").xsmall().ghost().icon(IconName::Info)
+                        .tooltip(crate::i18n::text("0 chooses a free local port. Saved forwards start only when restored. Service and Deployment targets reconnect to a ready Pod after replacement."))))
+                .when_some(self.error.as_ref(),|view,error|view.child(div().id("forward-error").test_support().text_sm().text_color(cx.theme().danger)
+                    .child(copyable_text("forward-error-text",error.clone())))
+                    .children(crate::permissions::error_link("forward-permissions",self.session.clone(),error,beacon_kube::rbac::Query {verb:"get".into(),resource:"pods".into(),subresource:"portforward".into(),namespace:Some(self.target.namespace.clone()),..Default::default()}))))
+            .child(h_flex().px_4().py_3().justify_end().gap_2().border_t_1().border_color(cx.theme().border)
                 .child(Button::new("forward-cancel").small().ghost().label(crate::i18n::text("Cancel")).disabled(self.busy).on_click(cx.listener(|_,_,_,cx|cx.emit(Event::Closed))))
-                .child(Button::new("forward-start").small().primary().label(crate::i18n::text(if self.busy {"Starting…"} else {"Start forwarding"})).disabled(self.busy||self.resolved.is_none()||self.checking).on_click(cx.listener(|view,_,window,cx|view.start(window,cx)))))
+                .child(Button::new("forward-start").small().primary().label(crate::i18n::text(if self.busy {"Starting…"} else {"Start forwarding"}))
+                    .disabled(self.busy||self.resolved.is_none()||self.checking).on_click(cx.listener(|view,_,window,cx|view.start(window,cx)))))
     }
 }
 

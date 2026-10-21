@@ -710,7 +710,7 @@ mod integration_tests {
                         window,
                         cx,
                     );
-                    view.select(DetailTab::Data, window, cx);
+                    view.select(DetailTab::Overview, window, cx);
                     view
                 })
             })

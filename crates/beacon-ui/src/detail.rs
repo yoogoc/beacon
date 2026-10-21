@@ -55,8 +55,6 @@ pub enum DetailTab {
     Configuration,
     History,
     Network,
-    /// A ConfigMap's or Secret's searchable keys and selected value.
-    Data,
     Yaml,
     Events,
 }
@@ -87,7 +85,6 @@ impl DetailTab {
         }
         if data::is_keyed(&kind.resource.group, &kind.resource.kind) {
             tabs.push(Self::UsedBy);
-            tabs.push(Self::Data);
         }
         if beacon_kube::config_refs::supported(&kind.resource.group, &kind.resource.kind) {
             tabs.push(Self::Configuration);
@@ -106,7 +103,6 @@ impl DetailTab {
             Self::Configuration => "Configuration",
             Self::History => "History",
             Self::Network => "Network",
-            Self::Data => "Data",
             Self::Yaml => "YAML",
             Self::Events => "Events",
         }
@@ -380,6 +376,13 @@ impl DetailView {
         this.load_argo(cx);
         this.watch_argo_runs(window, cx);
         this.watch_events(window, cx);
+        if this.data_visible() {
+            this.load_data(window, cx);
+            if this.certificates.is_some() {
+                this.expanded_sections
+                    .insert("data-resource-details".into());
+            }
+        }
         this.start_clock(cx);
         this
     }
@@ -413,9 +416,14 @@ impl DetailView {
             }
     }
 
+    fn data_visible(&self) -> bool {
+        self.tab == DetailTab::Overview
+            && data::is_keyed(&self.kind.resource.group, &self.kind.resource.kind)
+    }
+
     pub(crate) fn focus_pending_edits(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.data_changed(cx) {
-            self.select(DetailTab::Data, window, cx);
+            self.select(DetailTab::Overview, window, cx);
         } else if self.yaml_changed(cx) {
             self.select(DetailTab::Yaml, window, cx);
             self.yaml_editor.read(cx).focus_handle(cx).focus(window, cx);
@@ -437,13 +445,11 @@ impl DetailView {
         rules: Option<Arc<Rules>>,
         cx: &mut Context<Self>,
     ) {
-        // The token controller fills a service-account Secret asynchronously.
-        // Refresh clean Data views when values change, retaining active drafts.
-        if crate::service_account_secret::supported(
-            &self.kind.resource.group,
-            &self.kind.resource.kind,
-            &object,
-        ) && self.object.data.get("data") != object.data.get("data")
+        // Overview is live; refresh clean values while retaining active drafts
+        // and their pinned resource-version baseline.
+        if data::is_keyed(&self.kind.resource.group, &self.kind.resource.kind)
+            && (self.object.data.get("data") != object.data.get("data")
+                || self.object.data.get("binaryData") != object.data.get("binaryData"))
             && matches!(self.data, Data::Ready(_))
             && !self.busy()
             && !self.data_changed(cx)
@@ -494,7 +500,7 @@ impl DetailView {
             return;
         }
         self.tab = tab;
-        if tab == DetailTab::Data && !self.data_browser.deleted.is_empty() && !self.busy() {
+        if self.data_visible() && !self.data_browser.deleted.is_empty() && !self.busy() {
             self.save_method = SaveMethod::Patch;
         }
         self.data_resize = None;
@@ -542,7 +548,9 @@ impl DetailView {
                     crate::rollout::RolloutView::new(session, object, may_patch, window, cx)
                 }));
             }
-            DetailTab::Data if matches!(self.data, Data::Unopened) => self.load_data(window, cx),
+            DetailTab::Overview if self.data_visible() && matches!(self.data, Data::Unopened) => {
+                self.load_data(window, cx)
+            }
             DetailTab::Yaml if matches!(self.yaml, Yaml::Unopened) => self.load_yaml(window, cx),
             _ => {}
         }
@@ -839,7 +847,9 @@ impl DetailView {
                         view.data_browser.modified.clear();
                         view.data_browser.deleted.clear();
                         match view.tab {
-                            DetailTab::Data => view.load_data(window, cx),
+                            DetailTab::Overview if view.data_visible() => {
+                                view.load_data(window, cx)
+                            }
                             _ => view.load_yaml(window, cx),
                         }
                         Apply::Done
@@ -2281,7 +2291,7 @@ impl DetailView {
     }
 
     fn select_save_method(&mut self, method: SaveMethod, cx: &mut Context<Self>) {
-        let deleting_keys = self.tab == DetailTab::Data && !self.data_browser.deleted.is_empty();
+        let deleting_keys = self.data_visible() && !self.data_browser.deleted.is_empty();
         if self.busy()
             || (deleting_keys && method == SaveMethod::ServerSideApply)
             || !crate::actions::may_apply(&self.kind, self.rules.as_deref())
@@ -2369,7 +2379,7 @@ impl DetailView {
     }
 
     fn review_latest(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.tab == DetailTab::Data {
+        if self.data_visible() {
             self.review_data(false, true, window, cx);
         } else {
             self.review_yaml(false, true, window, cx);
@@ -2708,7 +2718,7 @@ impl DetailView {
 
     fn edited(&self, cx: &App) -> Option<Value> {
         // Not cached: this runs only while a conflict is on screen.
-        if self.tab == DetailTab::Data {
+        if self.data_visible() {
             self.data_draft(cx)
         } else {
             serde_saphyr::from_str(&self.yaml_editor.read(cx).value()).ok()
@@ -3127,10 +3137,11 @@ fn container_state(status: &Value) -> String {
 
 impl Render for DetailView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        if self.tab == DetailTab::Data && matches!(self.data, Data::Unopened) {
+        if self.data_visible() && matches!(self.data, Data::Unopened) {
             self.load_data(window, cx);
         }
         let body = match self.tab {
+            DetailTab::Overview if self.data_visible() => self.render_data_overview(cx),
             DetailTab::Overview => self.render_overview(cx),
             DetailTab::Network => self
                 .network
@@ -3154,7 +3165,6 @@ impl Render for DetailView {
                 .clone()
                 .map(|view| view.into_any_element())
                 .unwrap_or_else(|| div().into_any_element()),
-            DetailTab::Data => self.render_data(cx),
             DetailTab::Yaml => self.render_yaml(cx),
             DetailTab::Events => self.render_events(cx),
         };
@@ -3526,7 +3536,7 @@ mod integration_tests {
                         window,
                         cx,
                     );
-                    view.select(DetailTab::Data, window, cx);
+                    view.select(DetailTab::Overview, window, cx);
                     view.revealed = true;
                     view.open_selected_data(window, cx);
                     view

@@ -150,14 +150,52 @@ pub async fn wait_running(
     object: Arc<DynamicObject>,
     container: String,
 ) -> Result<()> {
+    wait_running_with_progress(session, object, container, |_, _| {}).await
+}
+
+pub async fn wait_running_with_progress(
+    session: Arc<ClusterSession>,
+    object: Arc<DynamicObject>,
+    container: String,
+    report: impl FnMut(&str, &str) + Send,
+) -> Result<()> {
+    wait_running_until(
+        session,
+        object,
+        container,
+        std::time::Duration::from_secs(120),
+        report,
+    )
+    .await
+}
+
+async fn wait_running_until(
+    session: Arc<ClusterSession>,
+    object: Arc<DynamicObject>,
+    container: String,
+    timeout: std::time::Duration,
+    mut report: impl FnMut(&str, &str) + Send,
+) -> Result<()> {
     let api: Api<Pod> = Api::namespaced(
         session.client().clone(),
         object.metadata.namespace.as_deref().unwrap_or_default(),
     );
-    for _ in 0..60 {
-        let pod = api
-            .get(object.metadata.name.as_deref().unwrap_or_default())
-            .await?;
+    let deadline = tokio::time::Instant::now() + timeout;
+    let mut last = (String::new(), String::new());
+    loop {
+        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+        if remaining.is_zero() {
+            let detail = if last.0.is_empty() {
+                "No container status was reported.".into()
+            } else {
+                format!("{}: {}", last.0, last.1)
+            };
+            return Err(Error::Manifest(format!(
+                "The debug container is still starting. {detail} Retry opening its terminal when it becomes ready."
+            )));
+        }
+        let pod = tokio::time::timeout(remaining.min(std::time::Duration::from_secs(10)), api.get(object.metadata.name.as_deref().unwrap_or_default()))
+            .await.map_err(|_| Error::Manifest("Timed out reading the debug container status. Retry when the cluster is reachable.".into()))??;
         if pod.metadata.uid != object.metadata.uid {
             return Err(Error::Manifest(
                 "The Pod was replaced while its debug container was starting.".into(),
@@ -177,35 +215,122 @@ pub async fn wait_running(
                 return Err(Error::Manifest(format!(
                     "Debug container exited with code {}: {}",
                     terminated.exit_code,
-                    terminated.message.as_deref().unwrap_or_default()
+                    terminated
+                        .message
+                        .as_deref()
+                        .or(terminated.reason.as_deref())
+                        .unwrap_or_default()
                 )));
             }
-            if let Some(waiting) = &state.waiting
-                && matches!(
+            if let Some(waiting) = &state.waiting {
+                let status = (
+                    waiting
+                        .reason
+                        .clone()
+                        .unwrap_or_else(|| "ContainerCreating".into()),
+                    waiting.message.clone().unwrap_or_default(),
+                );
+                if status != last {
+                    report(&status.0, &status.1);
+                    last = status;
+                }
+                if matches!(
                     waiting.reason.as_deref(),
                     Some(
                         "ImagePullBackOff"
                             | "ErrImagePull"
                             | "CreateContainerConfigError"
+                            | "CreateContainerError"
+                            | "InvalidImageName"
+                            | "CrashLoopBackOff"
+                            | "StartError"
                             | "RunContainerError"
                     )
-                )
-            {
-                return Err(Error::Manifest(format!(
-                    "{}: {}",
-                    waiting.reason.as_deref().unwrap_or("Waiting"),
-                    waiting.message.as_deref().unwrap_or_default()
-                )));
+                ) {
+                    return Err(Error::Manifest(format!(
+                        "{}: {}",
+                        waiting.reason.as_deref().unwrap_or("Waiting"),
+                        waiting.message.as_deref().unwrap_or_default()
+                    )));
+                }
             }
         }
-        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        tokio::time::sleep(std::time::Duration::from_millis(500).min(remaining)).await;
     }
-    Err(Error::Manifest("The debug container was created but is still starting. Retry opening its terminal when it becomes ready.".into()))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[tokio::test]
+    #[ignore = "requires the local Postman debug-container simulation"]
+    async fn postman_simulation_exercises_debug_creation_and_runtime_failure() {
+        let base = std::env::var("BEACON_DEBUG_SIMULATION_URL")
+            .expect("Set BEACON_DEBUG_SIMULATION_URL to the local /kubernetes simulation URL");
+        let session = Arc::new(ClusterSession::for_testing(
+            crate::ClusterId::new("debug-simulation"),
+            base,
+            vec![],
+        ));
+        for name in ["ready", "runtime-error"] {
+            let object: Arc<DynamicObject> = Arc::new(serde_json::from_value(json!({"apiVersion":"v1","kind":"Pod","metadata":{"name":name,"namespace":"default","uid":format!("uid-{name}")}})).unwrap());
+            create(
+                session.clone(),
+                object.clone(),
+                Options {
+                    name: "debugger".into(),
+                    image: "busybox:stable".into(),
+                    shell: "/bin/sh".into(),
+                    target: Some("app".into()),
+                    profile: Profile::Restricted,
+                },
+            )
+            .await
+            .unwrap();
+            let result = wait_running(session.clone(), object, "debugger".into()).await;
+            if name == "ready" {
+                result.unwrap();
+            } else {
+                let error = result.unwrap_err().user_message();
+                assert!(
+                    error.contains("CreateContainerError")
+                        && error.contains("target container namespaces"),
+                    "{error}"
+                );
+            }
+        }
+    }
+    #[tokio::test]
+    async fn startup_reports_runtime_errors_and_bounds_pending_waits() {
+        for reason in [
+            "CreateContainerError",
+            "InvalidImageName",
+            "CrashLoopBackOff",
+            "ContainerCreating",
+        ] {
+            let object = json!({"apiVersion":"v1","kind":"Pod","metadata":{"name":"web","namespace":"default","uid":"pod","resourceVersion":"1"},"spec":{"containers":[{"name":"app"}]},"status":{"phase":"Running","ephemeralContainerStatuses":[{"name":"debugger","state":{"waiting":{"reason":reason,"message":"runtime detail"}}}]}});
+            let fixture = crate::test_support::Fixture::start(vec![object.clone()]).await;
+            let session = Arc::new(ClusterSession::for_testing(
+                crate::ClusterId::new("debug-status"),
+                fixture.url.clone(),
+                vec![],
+            ));
+            let mut progress = Vec::new();
+            let error = wait_running_until(
+                session,
+                Arc::new(serde_json::from_value(object).unwrap()),
+                "debugger".into(),
+                std::time::Duration::from_millis(20),
+                |reason, message| progress.push((reason.to_owned(), message.to_owned())),
+            )
+            .await
+            .unwrap_err()
+            .user_message();
+            assert!(error.contains(reason), "{error}");
+            assert!(error.contains("runtime detail"));
+            assert_eq!(progress, [(reason.to_owned(), "runtime detail".to_owned())]);
+        }
+    }
     #[tokio::test]
     async fn creating_a_debug_container_uses_the_subresource_and_preserves_existing_containers() {
         let original = json!({"apiVersion":"v1","kind":"Pod","metadata":{"name":"web","namespace":"default","uid":"web-uid","resourceVersion":"42"},"spec":{"containers":[{"name":"app","image":"distroless"}],"ephemeralContainers":[{"name":"existing","image":"busybox"}]},"status":{"phase":"Running"}});

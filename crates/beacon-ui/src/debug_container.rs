@@ -4,6 +4,8 @@ use beacon_kube::{
     ClusterSession, DynamicObject,
     debug::{Options, Profile},
 };
+use futures::StreamExt as _;
+use gpui_kit::assets::IconName;
 use gpui_kit::base::Selectable as _;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::{Input, InputState};
@@ -11,6 +13,7 @@ use gpui_kit::component::select::{SearchableVec, Select, SelectState};
 use gpui_kit::component::{
     ActiveTheme as _, Disableable as _, Sizable as _, WindowExt as _, h_flex, v_flex,
 };
+use gpui_kit::component::{Icon, spinner::Spinner};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use std::sync::Arc;
@@ -25,9 +28,12 @@ pub(crate) struct DebugView {
     profile: Profile,
     created: Option<Options>,
     busy: bool,
+    failed: bool,
+    advanced: bool,
     message: Option<String>,
     terminal: Option<Entity<crate::terminal::TerminalView>>,
     _task: Option<Task<()>>,
+    _progress: Option<Task<()>>,
 }
 
 pub(crate) fn open(
@@ -36,12 +42,6 @@ pub(crate) fn open(
     window: &mut Window,
     cx: &mut App,
 ) -> Entity<DebugView> {
-    let context = format!(
-        "{} · {}/{}",
-        session.id().display_name(),
-        object.metadata.namespace.as_deref().unwrap_or(""),
-        object.metadata.name.as_deref().unwrap_or("")
-    );
     let view = cx.new(|cx| {
         let suffix = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -73,16 +73,24 @@ pub(crate) fn open(
             profile: Profile::Restricted,
             created: None,
             busy: false,
+            failed: false,
+            advanced: false,
             message: None,
             terminal: None,
             _task: None,
+            _progress: None,
         }
     });
     let content = view.clone();
-    window.open_dialog(cx, move |dialog, _, _| {
+    window.open_dialog(cx, move |dialog, _, cx| {
         dialog
-            .title(format!("Debug Pod · {context}"))
-            .width(px(1050.))
+            .title(crate::i18n::text("Debug Pod"))
+            .on_ok(|_, _, _| false)
+            .width(if content.read(cx).terminal.is_some() {
+                px(980.)
+            } else {
+                px(640.)
+            })
             .child(content.clone())
     });
     view
@@ -109,6 +117,7 @@ impl DebugView {
             profile: self.profile,
         });
         self.busy = true;
+        self.failed = false;
         self.message = Some(
             if self.created.is_some() {
                 "Waiting for the debug container…"
@@ -123,9 +132,16 @@ impl DebugView {
         let create = self.created.is_none();
         let creating = Bridge::global(cx).run(async move {
             if create {
-                beacon_kube::debug::create(session, object, request)
-                    .await
-                    .map_err(|error| error.user_message())
+                tokio::time::timeout(
+                    std::time::Duration::from_secs(20),
+                    beacon_kube::debug::create(session, object, request),
+                )
+                .await
+                .map_err(|_| {
+                    "Timed out creating the debug container. Check the Pod before retrying."
+                        .to_owned()
+                })?
+                .map_err(|error| error.user_message())
             } else {
                 Ok(())
             }
@@ -141,12 +157,14 @@ impl DebugView {
                 }
                 Ok(Err(error)) => {
                     view.busy = false;
+                    view.failed = true;
                     view.message = Some(error);
                     cx.notify();
                     None
                 }
                 Err(error) => {
                     view.busy = false;
+                    view.failed = true;
                     view.message = Some(error.to_string());
                     cx.notify();
                     None
@@ -159,13 +177,35 @@ impl DebugView {
                 Ok(object) => object,
                 Err(_) => return,
             };
+            let (progress, mut updates) = futures::channel::mpsc::unbounded::<String>();
+            let _ = this.update_in(cx, |view, window, cx| {
+                view._progress = Some(cx.spawn_in(window, async move |this, cx| {
+                    while let Some(message) = updates.next().await {
+                        let _ = this.update(cx, |view, cx| {
+                            view.message = Some(message);
+                            cx.notify();
+                        });
+                    }
+                }));
+            });
             let ready = match cx.update(|_, cx| {
                 let session = session.clone();
                 let container = options.name.clone();
                 Bridge::global(cx).run_cancellable(async move {
-                    beacon_kube::debug::wait_running(session, object, container)
-                        .await
-                        .map_err(|error| error.user_message())
+                    beacon_kube::debug::wait_running_with_progress(
+                        session,
+                        object,
+                        container,
+                        move |reason, message| {
+                            let _ = progress.unbounded_send(if message.is_empty() {
+                                reason.to_owned()
+                            } else {
+                                format!("{reason}: {message}")
+                            });
+                        },
+                    )
+                    .await
+                    .map_err(|error| error.user_message())
                 })
             }) {
                 Ok(ready) => ready,
@@ -174,6 +214,7 @@ impl DebugView {
             let result = ready.result().await;
             let _ = this.update_in(cx, |view, window, cx| {
                 view.busy = false;
+                view._progress = None;
                 match result {
                     Ok(Ok(())) => {
                         let namespace = view.object.metadata.namespace.clone().unwrap_or_default();
@@ -189,18 +230,35 @@ impl DebugView {
                             )
                         });
                         terminal.update(cx, |terminal, cx| {
-                            terminal.set_command(&options.shell, window, cx);
+                            terminal.set_shell(&options.shell, window, cx);
                             terminal.start(window, cx);
                         });
                         view.terminal = Some(terminal);
                         view.message = None;
                     }
-                    Ok(Err(error)) => view.message = Some(error),
-                    Err(error) => view.message = Some(error.to_string()),
+                    Ok(Err(error)) => {
+                        view.failed = true;
+                        view.message = Some(error);
+                    }
+                    Err(error) => {
+                        view.failed = true;
+                        view.message = Some(error.to_string());
+                    }
                 }
                 cx.notify();
             });
         }));
+        cx.notify();
+    }
+
+    fn stop_waiting(&mut self, cx: &mut Context<Self>) {
+        self._task = None;
+        self._progress = None;
+        self.busy = false;
+        self.failed = false;
+        self.message = Some(
+            "Waiting stopped. The container remains in the Pod; retry to open its terminal.".into(),
+        );
         cx.notify();
     }
 }
@@ -208,20 +266,233 @@ impl DebugView {
 impl Render for DebugView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let locked = self.busy || self.created.is_some();
-        v_flex().w_full().h((window.viewport_size().height * 0.7).min(px(620.))).gap_3()
-            .child(h_flex().gap_3()
-                .child(v_flex().flex_1().gap_1().child(crate::i18n::text("Container name")).child(Input::new(&self.name).small().disabled(locked)))
-                .child(v_flex().flex_1().gap_1().child(crate::i18n::text("Image")).child(Input::new(&self.image).small().disabled(locked))))
-            .child(h_flex().gap_3()
-                .child(v_flex().flex_1().gap_1().child(crate::i18n::text("Target container")).child(Select::new(&self.target).small().disabled(locked)))
-                .child(v_flex().flex_1().gap_1().child(crate::i18n::text("Shell executable")).child(Input::new(&self.shell).small().disabled(locked))))
-            .child(h_flex().gap_2().child(crate::i18n::text("Security profile"))
-                .child(Button::new("debug-profile-restricted").small().ghost().label(crate::i18n::text("Restricted")).selected(self.profile == Profile::Restricted).disabled(locked).on_click(cx.listener(|view, _, _, cx| { view.profile = Profile::Restricted; cx.notify(); })))
-                .child(Button::new("debug-profile-baseline").small().ghost().label(crate::i18n::text("Baseline")).selected(self.profile == Profile::Baseline).disabled(locked).on_click(cx.listener(|view, _, _, cx| { view.profile = Profile::Baseline; cx.notify(); }))))
-            .child(div().text_sm().text_color(cx.theme().muted_foreground).child(crate::i18n::text("Adds an ephemeral container to this Pod. Its entry remains until the Pod is removed. Restricted runs as user 1000 with all capabilities dropped.")))
-            .child(Button::new("start-debug-container").small().primary().label(crate::i18n::text(if self.created.is_some() { "Open debug terminal" } else { "Create and open terminal" })).disabled(self.busy).on_click(cx.listener(|view, _, window, cx| view.start(window, cx))))
-            .children(self.message.as_ref().map(|message| copyable_text("debug-message", message.clone())))
-            .when_some(self.terminal.clone(), |view, terminal| view.child(div().flex_1().min_h_0().child(terminal)))
+        let header = h_flex()
+            .gap_3()
+            .p_3()
+            .rounded_lg()
+            .bg(cx.theme().muted.opacity(0.45))
+            .child(
+                div()
+                    .size(px(34.))
+                    .rounded_md()
+                    .bg(cx.theme().background)
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .child(
+                        Icon::new(IconName::Terminal)
+                            .size(px(18.))
+                            .text_color(cx.theme().primary),
+                    ),
+            )
+            .child(
+                v_flex()
+                    .flex_1()
+                    .min_w_0()
+                    .gap_1()
+                    .child(
+                        div()
+                            .text_sm()
+                            .font_weight(FontWeight::MEDIUM)
+                            .text_ellipsis()
+                            .child(self.object.metadata.name.clone().unwrap_or_default()),
+                    )
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(cx.theme().muted_foreground)
+                            .child(format!(
+                                "{} · {}",
+                                self.session.id().display_name(),
+                                self.object.metadata.namespace.as_deref().unwrap_or("")
+                            )),
+                    ),
+            );
+        let mut view = v_flex()
+            .id("debug-container")
+            .w_full()
+            .min_h_0()
+            .max_h((window.viewport_size().height - px(180.)).max(px(240.)))
+            .overflow_y_scroll()
+            .gap_4()
+            .child(header);
+        if let Some(terminal) = &self.terminal {
+            return view.child(div().h(px(400.)).min_h_0().child(terminal.clone()));
+        }
+        let advanced = v_flex()
+            .p_3()
+            .gap_3()
+            .rounded_lg()
+            .border_1()
+            .border_color(cx.theme().border)
+            .child(
+                h_flex()
+                    .gap_3()
+                    .child(
+                        v_flex()
+                            .flex_1()
+                            .min_w_0()
+                            .gap_1()
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .text_color(cx.theme().muted_foreground)
+                                    .child(crate::i18n::text("Container name")),
+                            )
+                            .child(Input::new(&self.name).small().disabled(locked)),
+                    )
+                    .child(
+                        v_flex()
+                            .flex_1()
+                            .min_w_0()
+                            .gap_1()
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .text_color(cx.theme().muted_foreground)
+                                    .child(crate::i18n::text("Shell executable")),
+                            )
+                            .child(Input::new(&self.shell).small().disabled(locked)),
+                    ),
+            )
+            .child(
+                h_flex()
+                    .gap_2()
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(cx.theme().muted_foreground)
+                            .child(crate::i18n::text("Security profile")),
+                    )
+                    .child(
+                        h_flex()
+                            .p_0p5()
+                            .rounded_md()
+                            .bg(cx.theme().muted)
+                            .child(
+                                Button::new("debug-profile-restricted")
+                                    .xsmall()
+                                    .ghost()
+                                    .label(crate::i18n::text("Restricted"))
+                                    .selected(self.profile == Profile::Restricted)
+                                    .disabled(locked)
+                                    .on_click(cx.listener(|view, _, _, cx| {
+                                        view.profile = Profile::Restricted;
+                                        cx.notify();
+                                    })),
+                            )
+                            .child(
+                                Button::new("debug-profile-baseline")
+                                    .xsmall()
+                                    .ghost()
+                                    .label(crate::i18n::text("Baseline"))
+                                    .selected(self.profile == Profile::Baseline)
+                                    .disabled(locked)
+                                    .on_click(cx.listener(|view, _, _, cx| {
+                                        view.profile = Profile::Baseline;
+                                        cx.notify();
+                                    })),
+                            ),
+                    ),
+            );
+        view = view.child(
+            h_flex()
+                .gap_3()
+                .items_start()
+                .child(
+                    v_flex()
+                        .flex_1()
+                        .min_w_0()
+                        .gap_1p5()
+                        .child(
+                            div()
+                                .text_xs()
+                                .text_color(cx.theme().muted_foreground)
+                                .child(crate::i18n::text("Image")),
+                        )
+                        .child(Input::new(&self.image).small().disabled(locked)),
+                )
+                .child(
+                    v_flex()
+                        .flex_1()
+                        .min_w_0()
+                        .gap_1p5()
+                        .child(
+                            div()
+                                .text_xs()
+                                .text_color(cx.theme().muted_foreground)
+                                .child(crate::i18n::text("Target container")),
+                        )
+                        .child(Select::new(&self.target).small().disabled(locked)),
+                ),
+        );
+        view = view.child(h_flex().gap_2()
+            .child(Button::new("debug-advanced").xsmall().ghost().icon(if self.advanced { IconName::ChevronDown } else { IconName::ChevronRight })
+                .label(crate::i18n::text("Advanced options")).on_click(cx.listener(|view,_,_,cx|{view.advanced = !view.advanced;cx.notify();})))
+            .child(div().flex_1())
+            .child(Button::new("debug-container-info").xsmall().ghost().icon(IconName::Info)
+                .tooltip(crate::i18n::text("Adds an ephemeral container to this Pod. Its entry remains until the Pod is removed. Restricted runs as user 1000 with all capabilities dropped."))))
+            .when(self.advanced,|view|view.child(advanced));
+        if let Some(message) = &self.message {
+            view = view.child(
+                h_flex()
+                    .id("debug-startup-status")
+                    .gap_2()
+                    .p_3()
+                    .rounded_md()
+                    .min_w_0()
+                    .bg(if self.failed {
+                        cx.theme().danger.opacity(0.06)
+                    } else {
+                        cx.theme().muted.opacity(0.5)
+                    })
+                    .when(self.busy, |row| row.child(Spinner::new().small()))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .text_xs()
+                            .text_color(if self.failed {
+                                cx.theme().danger
+                            } else {
+                                cx.theme().muted_foreground
+                            })
+                            .child(copyable_text("debug-message", crate::i18n::text(message))),
+                    ),
+            );
+        }
+        view.child(
+            h_flex()
+                .pt_3()
+                .gap_2()
+                .justify_end()
+                .border_t_1()
+                .border_color(cx.theme().border)
+                .when(self.busy && self.created.is_some(), |row| {
+                    row.child(
+                        Button::new("debug-stop-waiting")
+                            .small()
+                            .ghost()
+                            .label(crate::i18n::text("Stop waiting"))
+                            .on_click(cx.listener(|view, _, _, cx| view.stop_waiting(cx))),
+                    )
+                })
+                .child(
+                    Button::new("start-debug-container")
+                        .small()
+                        .primary()
+                        .icon(IconName::Terminal)
+                        .label(crate::i18n::text(if self.busy {
+                            "Waiting for the debug container…"
+                        } else if self.created.is_some() {
+                            "Open debug terminal"
+                        } else {
+                            "Create and open terminal"
+                        }))
+                        .disabled(self.busy)
+                        .on_click(cx.listener(|view, _, window, cx| view.start(window, cx))),
+                ),
+        )
     }
 }
 

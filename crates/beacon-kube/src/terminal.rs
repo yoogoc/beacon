@@ -97,6 +97,21 @@ impl Terminal {
 /// have no shell at all, and `bash` is far from universal.
 pub const SHELLS: [&str; 3] = ["/bin/bash", "/bin/sh", "sh"];
 
+/// Kubernetes exec cannot set environment variables. Bootstrap them inside the
+/// container, then replace the bootstrap with an explicitly interactive shell.
+pub fn shell_command(shell: Option<&str>) -> Vec<String> {
+    if let Some(shell) = shell {
+        vec![
+            shell.into(),
+            "-c".into(),
+            "export TERM=xterm-256color COLORTERM=truecolor; exec \"$0\" -i".into(),
+            shell.into(),
+        ]
+    } else {
+        vec!["/bin/sh".into(), "-c".into(), "export TERM=xterm-256color COLORTERM=truecolor; if command -v bash >/dev/null 2>&1; then exec bash -i; else exec /bin/sh -i; fi".into()]
+    }
+}
+
 /// Opens an interactive session.
 ///
 /// The returned stream is a channel, safe to poll from the foreground thread;
@@ -258,18 +273,24 @@ pub(crate) fn attach_with_transport(
 
 /// The message from a failed exec, or `None` when the shell simply exited.
 ///
-/// A shell that ran and exited non-zero is an ordinary ending -- `exit 1` is
-/// not an error to report -- so only the messages about *starting* are kept.
+/// Keep non-zero exits visible too; otherwise a crashed debug shell looks like
+/// a successful close, with its only diagnostic discarded.
 fn failure_message(
     status: k8s_openapi::apimachinery::pkg::apis::meta::v1::Status,
 ) -> Option<String> {
     if status.status.as_deref() != Some("Failure") {
         return None;
     }
-    if status.reason.as_deref() == Some("NonZeroExitCode") {
-        return None;
-    }
-    status.message.filter(|message| !message.is_empty())
+    Some(
+        status
+            .message
+            .filter(|message| !message.is_empty())
+            .unwrap_or_else(|| {
+                status
+                    .reason
+                    .unwrap_or_else(|| "The shell ended with an error.".into())
+            }),
+    )
 }
 
 async fn send_size<S>(sizes: &mut S, columns: u16, rows: u16) -> Result<(), S::Error>
@@ -287,6 +308,29 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    #[cfg(unix)]
+    fn debug_shell_keeps_running_after_a_failed_command_and_exports_color_support() {
+        use std::io::Write as _;
+        let argv = shell_command(Some("/bin/sh"));
+        let mut shell = std::process::Command::new(&argv[0])
+            .args(&argv[1..])
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        shell.stdin.take().unwrap().write_all(b"false\nprintf '\\033[31m%s\\033[0m\\n' \"$TERM:$COLORTERM\"\nprintf 'still-open\\n'\nexit 0\n").unwrap();
+        let output = shell.wait_with_output().unwrap();
+        assert!(output.status.success());
+        let output = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            output.contains("\x1b[31mxterm-256color:truecolor\x1b[0m"),
+            "{output}"
+        );
+        assert!(output.contains("still-open"));
+    }
 
     #[test]
     fn only_rejected_upgrades_can_be_retried() {
@@ -381,14 +425,18 @@ mod tests {
         };
         assert!(failure_message(failed).is_some());
 
-        // A shell that ran and exited is not a failure to report.
+        // A non-zero exit must remain visible in the terminal status bar.
         let exited = Status {
             status: Some("Failure".into()),
             reason: Some("NonZeroExitCode".into()),
             message: Some("command terminated with non-zero exit code".into()),
             ..Default::default()
         };
-        assert!(failure_message(exited).is_none());
+        assert!(
+            failure_message(exited)
+                .unwrap()
+                .contains("non-zero exit code")
+        );
     }
 
     /// Distroless images have no shell at all, so the list has to be tried

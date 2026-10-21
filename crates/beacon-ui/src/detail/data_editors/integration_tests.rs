@@ -22,6 +22,16 @@ fn pick(view: &Entity<DetailView>, name: &str, window: &mut Window, cx: &mut App
     window.render_frame(cx);
 }
 
+fn delete_selected(view: &Entity<DetailView>, window: &mut Window, cx: &mut App) {
+    let state = view.read(cx);
+    let Data::Ready(keys) = &state.data else {
+        panic!("Data not loaded")
+    };
+    let key = &keys[state.data_browser.selected.unwrap()];
+    let id = SharedString::from(format!("delete-data-key-{}", super::id(&key.entry)));
+    window.click(id, cx);
+}
+
 fn edit(view: &Entity<DetailView>, name: &str, value: &str, window: &mut Window, cx: &mut App) {
     pick(view, name, window, cx);
     let editor = key(view.read(cx), name).editor.clone().unwrap();
@@ -412,7 +422,7 @@ fn deleted_text_and_binary_keys_are_restorable_and_saved_only_after_review() {
     cx.update_window(window, |_, window, cx| {
         edit(&view, "app.yaml", "after", window, cx);
         view.update(cx, |view, _| view.save_method = SaveMethod::ServerSideApply);
-        window.click("delete-data-key", cx);
+        delete_selected(&view, window, cx);
         assert_eq!(view.read(cx).save_method, SaveMethod::Patch);
         window.within("data-save-actions").click("popup", cx);
         window.within("popup-menu").click(1usize, cx);
@@ -440,14 +450,14 @@ fn deleted_text_and_binary_keys_are_restorable_and_saved_only_after_review() {
         );
         pick(&view, "archive", window, cx);
         assert!(key(view.read(cx), "archive").editor.is_none());
-        window.click("delete-data-key", cx);
+        delete_selected(&view, window, cx);
         pick(&view, "remove.txt", window, cx);
-        window.click("delete-data-key", cx);
+        delete_selected(&view, window, cx);
         // The shared save method may have changed while visiting the YAML tab.
         view.update(cx, |view, cx| {
             view.save_method = SaveMethod::ServerSideApply;
+            view.select(DetailTab::Yaml, window, cx);
             view.select(DetailTab::Overview, window, cx);
-            view.select(DetailTab::Data, window, cx);
         });
         assert_eq!(view.read(cx).save_method, SaveMethod::Patch);
         let draft = view.read(cx).data_draft(cx).unwrap();
@@ -524,12 +534,12 @@ fn last_secret_key_requires_reveal_and_can_be_deleted_without_losing_save_contro
     cx.update_window(window, |_, window, cx| {
         window.render_frame(cx);
         assert!(key(view.read(cx), "token").editor.is_none());
-        window.click("delete-data-key", cx);
+        delete_selected(&view, window, cx);
         assert!(!view.read(cx).has_pending_edits(cx));
         view.update(cx, |view, cx| view.delete_data_key(0, window, cx));
         assert!(!view.read(cx).has_pending_edits(cx));
         window.click("reveal", cx);
-        window.click("delete-data-key", cx);
+        delete_selected(&view, window, cx);
         assert_eq!(view.read(cx).data_draft(cx).unwrap()["data"], json!({}));
         assert!(window.find("save-data").visible());
         window.click("save-data", cx);
@@ -567,7 +577,7 @@ fn deletion_rejects_stale_versions_and_review_latest_preserves_live_keys() {
     let (window, view) = open(cx, session, "ConfigMap", object.clone());
     cx.update_window(window, |_, window, cx| {
         pick(&view, "remove", window, cx);
-        window.click("delete-data-key", cx);
+        delete_selected(&view, window, cx);
     })
     .unwrap();
     object["metadata"]["resourceVersion"] = json!("2");
@@ -620,7 +630,7 @@ fn read_only_and_busy_data_cannot_stage_deletions() {
             cx.notify();
         });
         window.render_frame(cx);
-        window.click("delete-data-key", cx);
+        delete_selected(&view, window, cx);
         window.click("save-data", cx);
         assert!(view.read(cx).data_browser.deleted.is_empty());
         assert!(!view.read(cx).has_pending_edits(cx));
@@ -694,7 +704,7 @@ fn open_width(
                         window,
                         cx,
                     );
-                    view.select(DetailTab::Data, window, cx);
+                    view.select(DetailTab::Overview, window, cx);
                     view
                 })
             },
@@ -895,8 +905,8 @@ fn configmap_content_highlights_and_resize_preserve_drafts_and_undo() {
         window.drag(handle, handle - point(px(0.), px(1000.)), cx);
         assert_eq!(view.read(cx).data_heights["data:settings"], px(64.));
         view.update(cx, |view, cx| {
+            view.select(DetailTab::Events, window, cx);
             view.select(DetailTab::Overview, window, cx);
-            view.select(DetailTab::Data, window, cx);
         });
         assert_eq!(view.read(cx).data_heights["data:settings"], px(64.));
         let editor = key(view.read(cx), "settings").editor.clone().unwrap();

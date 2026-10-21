@@ -7,13 +7,15 @@ use crate::{
 use beacon_kube::{
     ClusterSession, Delta, DynamicObject, Kind, ResourceStore, WatchKey, network::Path,
 };
+use gpui_kit::assets::IconName;
+use gpui_kit::base::ElementExt as _;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::popover::Popover;
-use gpui_kit::component::scroll::{Scrollbar, ScrollbarMode};
-use gpui_kit::component::{ActiveTheme as _, Disableable as _, Sizable as _, h_flex, v_flex};
+use gpui_kit::component::scroll::Scrollbar;
+use gpui_kit::component::{ActiveTheme as _, Disableable as _, Icon, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
-use std::sync::Arc;
+use std::{cell::Cell, rc::Rc, sync::Arc};
 
 const DEPENDENCIES: [(&str, &str); 4] = [
     ("networking.k8s.io", "Ingress"),
@@ -34,6 +36,7 @@ pub(crate) struct NetworkView {
     errors: [Option<String>; 4],
     paths: Arc<Vec<Path>>,
     scroll: UniformListScrollHandle,
+    width: Rc<Cell<Pixels>>,
     _lists: Vec<Task<()>>,
     _watches: Vec<Task<()>>,
 }
@@ -56,6 +59,7 @@ impl NetworkView {
             errors: std::array::from_fn(|_| None),
             paths: Arc::new(vec![]),
             scroll: UniformListScrollHandle::new(),
+            width: Rc::new(Cell::new(px(720.))),
             _lists: vec![],
             _watches: vec![],
         };
@@ -153,51 +157,110 @@ impl NetworkView {
 impl Render for NetworkView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let paths = self.paths.clone();
-        let view = cx.weak_entity();
+        let owner = cx.weak_entity();
+        let target = beacon_kube::ObjectRef::of(&self.object);
+        let width = self.width.get();
+        let columns = if width >= px(1000.) {
+            4
+        } else if width >= px(440.) {
+            2
+        } else {
+            1
+        };
+        let card_width =
+            ((width - px(32.) - px(8.) * (columns - 1) as f32) / columns as f32).max(px(100.));
+        let row_height = px(98. + 64. * (4 / columns) as f32);
+        let icons = [
+            IconName::Network,
+            IconName::RadioTower,
+            IconName::Layers,
+            IconName::Box,
+        ];
         let list = uniform_list("network-paths", paths.len(), move |range, _, cx| {
             range
                 .filter_map(|index| {
                     paths.get(index).map(|path| {
                         let notes = path.notes.clone();
                         v_flex()
-                            .h(px(168.))
-                            .min_w(px(900.))
+                            .h(row_height)
+                            .min_w_0()
+                            .w_full()
                             .p_3()
                             .gap_2()
                             .border_b_1()
                             .border_color(cx.theme().border)
-                            .child(copyable_text(("network-route", index), path.route.clone()))
-                            .child(h_flex().gap_2().children(path.hops.iter().enumerate().map(
-                                |(stage, hop)| {
+                            .child(
+                                div()
+                                    .h(px(28.))
+                                    .min_w_0()
+                                    .overflow_hidden()
+                                    .text_sm()
+                                    .font_weight(FontWeight::MEDIUM)
+                                    .child(copyable_text(
+                                        ("network-route", index),
+                                        path.route.clone(),
+                                    )),
+                            )
+                            .child(h_flex().gap_2().flex_wrap().items_start().children(
+                                path.hops.iter().enumerate().map(|(stage, hop)| {
+                                    let selected = hop
+                                        .as_ref()
+                                        .and_then(|hop| hop.object.as_ref())
+                                        .is_some_and(|object| {
+                                            beacon_kube::ObjectRef::of(object) == target
+                                        });
                                     let mut card = v_flex()
-                                        .w(px(195.))
-                                        .gap_1()
-                                        .p_2()
+                                        .w(card_width)
+                                        .h(px(56.))
+                                        .min_w_0()
+                                        .px_2()
+                                        .py_1()
+                                        .gap_0p5()
                                         .rounded_md()
+                                        .bg(cx.theme().muted.opacity(0.4))
                                         .border_1()
-                                        .border_color(cx.theme().border)
+                                        .border_color(if selected {
+                                            cx.theme().primary.opacity(0.5)
+                                        } else {
+                                            cx.theme().border.opacity(0.7)
+                                        })
                                         .child(
-                                            div()
+                                            h_flex()
+                                                .gap_1p5()
                                                 .text_xs()
                                                 .text_color(cx.theme().muted_foreground)
-                                                .child(DEPENDENCIES[stage].1),
+                                                .child(Icon::new(icons[stage]).size(px(12.)))
+                                                .child(crate::i18n::text(DEPENDENCIES[stage].1))
+                                                .child(div().flex_1())
+                                                .when(stage < 3, |row| {
+                                                    row.child(
+                                                        Icon::new(if (stage + 1) % columns == 0 {
+                                                            IconName::ArrowDown
+                                                        } else {
+                                                            IconName::ArrowRight
+                                                        })
+                                                        .size(px(12.)),
+                                                    )
+                                                }),
                                         );
                                     if let Some(hop) = hop {
                                         let object = hop.object.clone();
                                         let group = hop.group;
                                         let name = hop.kind;
-                                        let view = view.clone();
+                                        let owner = owner.clone();
                                         card = card.child(
                                             Button::new(SharedString::from(format!(
                                                 "network-hop-{index}-{stage}"
                                             )))
-                                            .small()
+                                            .xsmall()
                                             .ghost()
+                                            .w_full()
                                             .label(hop.name.clone())
                                             .disabled(object.is_none())
+                                            .tooltip(hop.name.clone())
                                             .on_click(move |_, _, cx| {
                                                 if let Some(object) = &object {
-                                                    let _ = view.update(cx, |view, cx| {
+                                                    let _ = owner.update(cx, |view, cx| {
                                                         if let Some(kind) = view
                                                             .session
                                                             .discovery()
@@ -221,24 +284,28 @@ impl Render for NetworkView {
                                             }),
                                         );
                                     } else {
-                                        card = card.child(div().text_sm().child("—"));
+                                        card = card.child(
+                                            div()
+                                                .text_sm()
+                                                .text_color(cx.theme().muted_foreground)
+                                                .child("—"),
+                                        );
                                     }
-                                    h_flex()
-                                        .gap_2()
-                                        .child(card)
-                                        .when(stage < 3, |row| row.child("→"))
-                                },
-                            )))
+                                    card
+                                }),
+                            ))
                             .child(
                                 h_flex()
+                                    .h(px(22.))
+                                    .min_w_0()
                                     .gap_2()
                                     .child(
                                         div()
                                             .flex_1()
                                             .min_w_0()
-                                            .h(px(32.))
                                             .overflow_hidden()
                                             .text_xs()
+                                            .text_color(cx.theme().muted_foreground)
                                             .child(copyable_text(
                                                 ("network-notes", index),
                                                 path.notes.join(" · "),
@@ -251,13 +318,14 @@ impl Render for NetworkView {
                                                     Button::new(("network-notes-button", index))
                                                         .xsmall()
                                                         .ghost()
-                                                        .label(crate::i18n::text("Details…")),
+                                                        .icon(IconName::Info)
+                                                        .tooltip(crate::i18n::text("Details")),
                                                 )
                                                 .content(move |_, _, _| {
                                                     div()
                                                         .id(("network-full-notes", index))
-                                                        .w(px(480.))
-                                                        .max_h(px(360.))
+                                                        .w(px(360.))
+                                                        .max_h(px(280.))
                                                         .overflow_y_scroll()
                                                         .child(v_flex().gap_2().children(
                                                             notes.iter().enumerate().map(
@@ -278,18 +346,27 @@ impl Render for NetworkView {
                 })
                 .collect()
         })
-        .with_width_from_item((!self.paths.is_empty()).then_some(0))
-        .with_horizontal_sizing_behavior(ListHorizontalSizingBehavior::Unconstrained)
         .track_scroll(&self.scroll)
-        .size_full()
-        .pb_3();
-        v_flex().size_full().gap_2()
-            .child(h_flex().p_3().gap_2().child(div().flex_1().child("Ingress → Service → EndpointSlice → Pod"))
-                .child(Button::new("refresh-network").small().ghost().label(crate::i18n::text("Refresh")).on_click(cx.listener(|view,_,window,cx|view.load(window,cx)))))
-            .child(div().px_3().text_xs().text_color(cx.theme().muted_foreground).child(crate::i18n::text("Configured resource relationships. Click a hop to inspect it; this view does not test live network connectivity.")))
-            .when(self.loading.iter().any(|loading| *loading),|view|view.child(div().px_3().child(crate::i18n::text("Loading network resources…"))))
-            .children(self.errors.iter().enumerate().filter_map(|(i,error)|error.as_ref().map(|error|div().px_3().child(copyable_text(("network-load-error",i),crate::i18n::message("messages.network_view_is_incomplete_error", &[("error", (error).to_string())]).to_string())))))
-            .child(div().flex_1().min_size_0().relative().child(list).child(Scrollbar::horizontal(&self.scroll).mode(ScrollbarMode::Always)).child(Scrollbar::vertical(&self.scroll)))
+        .size_full();
+        let measured = self.width.clone();
+        let entity = cx.entity_id();
+        v_flex().id("network-path-view").test_support().size_full().min_size_0().overflow_hidden()
+            .on_prepaint(move |bounds, _, cx| { if measured.replace(bounds.size.width) != bounds.size.width { cx.notify(entity); } })
+            .child(h_flex().px_3().py_2().gap_2().flex_shrink_0().border_b_1().border_color(cx.theme().border)
+                .child(Icon::new(IconName::Network).size(px(16.)).text_color(cx.theme().muted_foreground))
+                .child(div().text_sm().font_weight(FontWeight::MEDIUM).child(crate::i18n::text("Network path")))
+                .child(div().flex_1().text_xs().text_color(cx.theme().muted_foreground).child(self.paths.len().to_string()))
+                .child(Button::new("network-path-info").xsmall().ghost().icon(IconName::Info)
+                    .tooltip(crate::i18n::text("Configured resource relationships. Click a hop to inspect it; this view does not test live network connectivity.")))
+                .child(Button::new("refresh-network").xsmall().ghost().icon(IconName::RefreshCw).tooltip(crate::i18n::text("Refresh"))
+                    .on_click(cx.listener(|view,_,window,cx|view.load(window,cx)))))
+            .when(self.loading.iter().any(|loading| *loading), |view| view.child(h_flex().p_3().gap_2()
+                .child(gpui_kit::component::spinner::Spinner::new().small())
+                .child(div().text_sm().text_color(cx.theme().muted_foreground).child(crate::i18n::text("Loading network resources…")))))
+            .when(!self.loading.iter().any(|loading|*loading) && self.paths.is_empty() && self.errors.iter().all(Option::is_none), |view| view.child(div().p_4().text_sm().text_color(cx.theme().muted_foreground).child(crate::i18n::text("No network paths found"))))
+            .children(self.errors.iter().enumerate().filter_map(|(i,error)|error.as_ref().map(|error|div().p_3().text_sm().text_color(cx.theme().danger)
+                .child(copyable_text(("network-load-error",i),crate::i18n::message("messages.network_view_is_incomplete_error", &[("error", error.clone())]).to_string())))))
+            .child(div().flex_1().min_size_0().relative().child(list).child(Scrollbar::vertical(&self.scroll)))
     }
 }
 
@@ -342,6 +419,27 @@ mod integration_tests {
         })
         .unwrap();
         assert_eq!(selected.lock().unwrap().as_ref().unwrap().name, "web-pod");
+        for width in [400., 640., 1080.] {
+            cx.simulate_window_resize(window, size(px(width), px(800.)));
+            cx.update_window(window, |_, window, cx| {
+                window.render_frame(cx);
+            })
+            .unwrap();
+            cx.run_until_parked();
+            cx.update_window(window, |_, window, cx| {
+                window.render_frame(cx);
+                for stage in 1..4 {
+                    let hop = window.find(SharedString::from(format!("network-hop-0-{stage}")));
+                    assert!(hop.visible());
+                    assert!(
+                        hop.bounds().left() >= px(0.) && hop.bounds().right() <= px(width),
+                        "path stage {stage} should fit a {width}px panel: {:?}",
+                        hop.bounds()
+                    );
+                }
+            })
+            .unwrap();
+        }
         let mut replacement = pod;
         replacement["metadata"]["uid"] = json!("replaced");
         replacement["metadata"]["resourceVersion"] = json!("2");
