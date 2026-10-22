@@ -185,6 +185,10 @@ fn command(
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
         .kill_on_drop(true);
+    // This transport uses pipes, not a local terminal. Without CREATE_NO_WINDOW,
+    // Windows opens a console for every kubectl file operation.
+    #[cfg(windows)]
+    command.creation_flags(0x08000000);
     command
 }
 
