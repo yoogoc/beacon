@@ -269,6 +269,10 @@ diagnostics and stop the build.
 CI 先用矩阵里的 target 显式执行
 `cargo build --locked --release -p beacon --target <triple>`，再把同一个 target 传给 cargo-packager。
 打包工具固定为本机已验证的 cargo-packager 0.11.8。
+macOS 打包遇到 `hdiutil: create failed - Resource busy` 时，通过
+`scripts/retry-macos-packaging.py` 等待 5 秒、10 秒后重试，最多执行三次打包，
+保留每次日志。只有磁盘映像创建时的这一占用错误会重试；签名、权限及其他错误立即失败。
+重试仅运行打包命令，不会重新编译应用，也不会卸载其他磁盘映像。
 Linux 的 DEB 单独读取发布脚本生成的配置，以适配 Debian 的 `~dev` 排序；AppImage 仍从 Cargo 元数据读取配置。
 构建步骤**不放在 cargo-packager 的 hook 里**：hook 在 Unix 上过 `sh`、在 Windows 上过
 `cmd.exe`，没有一个 hook 字符串能在两边都正确展开 `--target`。

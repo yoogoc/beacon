@@ -202,7 +202,11 @@ jobs:
           CARGO_PACKAGER_SIGN_PRIVATE_KEY_PASSWORD: ${{ secrets.BEACON_UPDATE_PRIVATE_KEY_PASSWORD }}
         run: |
           if [ -z "$CARGO_PACKAGER_SIGN_PRIVATE_KEY" ]; then unset CARGO_PACKAGER_SIGN_PRIVATE_KEY CARGO_PACKAGER_SIGN_PRIVATE_KEY_PASSWORD; fi
-          cargo packager -p beacon --release --target ${{ matrix.target }} --formats ${{ matrix.formats }}
+          if [ "$RUNNER_OS" = "macOS" ]; then
+            python scripts/retry-macos-packaging.py -- cargo packager -p beacon --release --target ${{ matrix.target }} --formats ${{ matrix.formats }}
+          else
+            cargo packager -p beacon --release --target ${{ matrix.target }} --formats ${{ matrix.formats }}
+          fi
 
       - name: Package Linux
         if: runner.os == 'Linux'
