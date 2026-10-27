@@ -1,0 +1,6 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <title>Beacon macOS app icon</title>
+  <!-- Keep the shared artwork inside the macOS icon canvas's transparent
+       margins: an 824 px tile centered in a 1024 px canvas. -->
+  <image x="100" y="100" width="824" height="824" href="beacon-icon.svg"/>
+</svg>

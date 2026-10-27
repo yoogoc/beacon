@@ -169,3 +169,5 @@ kube 启用 `http-proxy` 与 `socks5`，支持连接配置中的代理；不要�
 打包先构建，再执行 cargo-packager，示例与平台细节见 [PACKAGING.md](PACKAGING.md)。
 应用图标源文件是 `assets/app-icon/beacon-icon.svg`，`scripts/icons.sh` 按各尺寸重新渲染；
 需要 `rsvg-convert`、`magick`，生成 macOS `.icns` 还需要 `iconutil`。
+macOS 的透明边距由 `assets/app-icon/beacon-macos.svg` 控制，可用
+`scripts/icons.sh --macos` 单独更新 ICNS。
