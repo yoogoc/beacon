@@ -88,6 +88,7 @@ enum Exec {
 #[derive(Debug, PartialEq, Eq)]
 enum LogStatus {
     Unopened,
+    Waiting,
     Following,
     /// The stream ended, which for a followed log means the container did.
     Ended,
@@ -674,7 +675,7 @@ impl PodToolsView {
     }
 
     fn download_logs(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.download_active() {
+        if self.download_active() || self.log_status == LogStatus::Waiting {
             return;
         }
         let Some(namespace) = self.target.namespace.clone() else {
@@ -862,6 +863,8 @@ impl PodToolsView {
             stream,
             |view, event, _window, cx| {
                 match event {
+                    LogEvent::Waiting => view.log_status = LogStatus::Waiting,
+                    LogEvent::Opened => view.log_status = LogStatus::Following,
                     LogEvent::Lines(lines) => {
                         // Follow the tail, but only while the reader is at it.
                         // Yanking somebody back to the bottom because a line
@@ -1022,6 +1025,9 @@ impl PodToolsView {
                 self.notice(error.clone(), Tone::Critical, cx)
             }
             LogStatus::Unopened => self.notice("Opening the stream…", Tone::Progressing, cx),
+            LogStatus::Waiting => {
+                self.notice("Waiting for container to start…", Tone::Progressing, cx)
+            }
             _ if total == 0 && count == 0 => self.notice("Nothing logged yet.", Tone::Unknown, cx),
             _ if count == 0 => self.notice("No log lines match this search.", Tone::Unknown, cx),
             _ => LogCanvas {
@@ -1117,7 +1123,7 @@ impl PodToolsView {
                             .xsmall()
                             .ghost()
                             .label(crate::i18n::text("Export all…"))
-                            .disabled(self.download_active() || self.log_options.container.is_none())
+                            .disabled(self.download_active() || self.log_options.container.is_none() || self.log_status == LogStatus::Waiting)
                             .tooltip(crate::i18n::text("Export this container's complete available logs for the time range; ignores local filters. Choose a folder and filename"))
                             .on_click(cx.listener(|view, _, window, cx| view.download_logs(window, cx))),
                     )
@@ -1346,6 +1352,10 @@ impl PodToolsView {
         );
 
         h_flex()
+            .id("pod-tools-status")
+            .test_support()
+            .role(Role::Status)
+            .aria_label(crate::i18n::text(&message))
             .size_full()
             .p_6()
             .gap_2()
@@ -1389,6 +1399,71 @@ impl Render for PodToolsView {
 mod rendering_tests {
     use super::*;
     use gpui_kit::test::TestWindowExt as _;
+
+    #[::core::prelude::v1::test]
+    fn pending_container_logs_wait_in_both_languages_and_open_automatically() {
+        use crate::{
+            feature_test_support as support,
+            i18n::{self, Language},
+        };
+        let directory = tempfile::tempdir().unwrap();
+        let cx = &mut support::context();
+        support::workspace(cx, directory.path());
+        let mut pod = serde_json::json!({"apiVersion":"v1","kind":"Pod","metadata":{"name":"starting","namespace":"default","uid":"starting-logs"},"spec":{"containers":[{"name":"app"}]},"status":{"phase":"Pending","containerStatuses":[{"name":"app","restartCount":0,"state":{"waiting":{"reason":"ContainerCreating"}}}]}});
+        let (fixture, session) = support::fixture(cx, "waiting-logs", vec![pod.clone()]);
+        let object = Arc::new(serde_json::from_value(pod.clone()).unwrap());
+        let (window, view) = cx.update(|cx| {
+            let options = WindowOptions {
+                window_bounds: Some(WindowBounds::Windowed(Bounds::new(
+                    point(px(0.), px(0.)),
+                    size(px(1400.), px(900.)),
+                ))),
+                ..Default::default()
+            };
+            gpui_kit::open_window(options, cx, |window, cx| {
+                window.set_view_retention(false);
+                cx.new(|cx| PodToolsView::new(session, object, None, PodToolTab::Logs, window, cx))
+            })
+            .unwrap()
+        });
+        support::settle(cx, |cx| {
+            view.read_with(cx, |view, _| view.log_status == LogStatus::Waiting)
+        });
+        for (language, label) in [
+            (Language::English, "Waiting for container to start…"),
+            (Language::SimplifiedChinese, "正在等待容器启动…"),
+        ] {
+            cx.update(|cx| i18n::apply(language, cx));
+            cx.update_window(window, |_, window, cx| {
+                window.render_frame(cx);
+                assert_eq!(window.find("pod-tools-status").label(), Some(label));
+                window.click("download-logs", cx);
+                assert!(matches!(view.read(cx).download, Download::Idle));
+            })
+            .unwrap();
+        }
+        pod["status"]["phase"] = serde_json::json!("Running");
+        pod["status"]["containerStatuses"][0]["state"] = serde_json::json!({"running":{}});
+        fixture.put(pod);
+        // The network runtime owns the retry timer; pump foreground work until
+        // it succeeds, without requiring a manual refresh or another tab.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(6);
+        while std::time::Instant::now() < deadline
+            && view.read_with(cx, |view, _| view.log_status != LogStatus::Ended)
+        {
+            cx.run_until_parked();
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        assert!(view.read_with(cx, |view, _| view.log_status == LogStatus::Ended));
+        assert!(view.read_with(cx, |view, _| view.logs.to_text().contains("fixture log")));
+        cx.update_window(window, |_, window, cx| {
+            window.render_frame(cx);
+            window.click("download-logs", cx);
+            assert!(matches!(view.read(cx).download, Download::Choosing));
+        })
+        .unwrap();
+        cx.update(|cx| i18n::apply(Language::English, cx));
+    }
 
     #[::core::prelude::v1::test]
     fn language_switch_updates_log_controls_without_changing_container_or_log_options() {

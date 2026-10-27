@@ -10,7 +10,13 @@
 //! end is the one being read. How many were dropped is kept, so the pane can
 //! say so rather than silently showing a window into the middle of something.
 
-use std::{collections::VecDeque, path::PathBuf};
+use std::{
+    collections::VecDeque,
+    path::PathBuf,
+    pin::Pin,
+    task::{Context, Poll},
+    time::Duration,
+};
 
 use futures::{
     AsyncBufReadExt as _, AsyncRead, AsyncReadExt as _, Stream, StreamExt as _, TryStreamExt as _,
@@ -32,6 +38,10 @@ const BATCH_WINDOW: std::time::Duration = std::time::Duration::from_millis(16);
 
 /// Flush early once this many lines are waiting.
 const BATCH_LIMIT: usize = 2_000;
+
+/// Pending containers can take minutes to start; keep the pane open without
+/// flooding pods/log, or adding a pods/get permission requirement.
+const START_RETRY: Duration = Duration::from_secs(2);
 
 /// What to follow.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -150,10 +160,45 @@ async fn save_stream(mut stream: impl AsyncRead + Unpin, path: PathBuf) -> Resul
 /// What a subscriber receives.
 #[derive(Debug)]
 pub enum LogEvent {
+    /// Kubernetes has no logs yet because this container has not started.
+    Waiting,
+    /// The log request succeeded, even if the container has not logged a line.
+    Opened,
     Lines(Vec<String>),
     /// The stream ended. A followed stream ends when the container does.
     Closed,
     Failed(String),
+}
+
+struct Events {
+    receiver: mpsc::UnboundedReceiver<LogEvent>,
+    task: tokio::task::JoinHandle<()>,
+}
+
+impl Stream for Events {
+    type Item = LogEvent;
+
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        Pin::new(&mut self.receiver).poll_next(cx)
+    }
+}
+
+impl Drop for Events {
+    fn drop(&mut self) {
+        // Closing the pane or changing containers also cancels a pending
+        // retry/request, including an idle stream that never sends a line.
+        self.task.abort();
+    }
+}
+
+fn waiting_to_start(error: &kube::Error) -> bool {
+    // Kubelet uses these messages for ContainerCreating, PodInitializing,
+    // image pull waits and missing status. Other 400s (e.g. a bad container
+    // name), authorization failures and missing Pods must remain errors.
+    matches!(error, kube::Error::Api(error)
+        if error.code == 400
+            && error.message.starts_with("container ")
+            && error.message.contains(" is waiting to start"))
 }
 
 /// Lines held for display, oldest dropped first.
@@ -237,16 +282,29 @@ pub fn follow(
 ) -> impl Stream<Item = LogEvent> + use<> {
     let (sender, receiver) = mpsc::unbounded();
 
-    runtime.spawn(async move {
+    let task = runtime.spawn(async move {
         let api: Api<Pod> = Api::namespaced(client, &namespace);
 
-        let stream = match api.log_stream(&pod, &options.to_params()).await {
-            Ok(stream) => stream,
-            Err(error) => {
-                let _ = sender.unbounded_send(LogEvent::Failed(error.to_string()));
-                return;
+        let mut waiting = false;
+        let stream = loop {
+            match api.log_stream(&pod, &options.to_params()).await {
+                Ok(stream) => break stream,
+                Err(error) if !options.previous && waiting_to_start(&error) => {
+                    if !waiting && sender.unbounded_send(LogEvent::Waiting).is_err() {
+                        return;
+                    }
+                    waiting = true;
+                    tokio::time::sleep(START_RETRY).await;
+                }
+                Err(error) => {
+                    let _ = sender.unbounded_send(LogEvent::Failed(error.to_string()));
+                    return;
+                }
             }
         };
+        if sender.unbounded_send(LogEvent::Opened).is_err() {
+            return;
+        }
 
         // `futures`' line reader, not tokio's: kube hands back a
         // `futures::AsyncBufRead`, and the two traits are not interchangeable.
@@ -294,8 +352,11 @@ pub fn follow(
         }
     });
 
-    receiver
+    Events { receiver, task }
 }
+
+#[cfg(test)]
+mod startup_tests;
 
 #[cfg(test)]
 mod tests {

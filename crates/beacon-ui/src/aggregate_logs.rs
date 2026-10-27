@@ -288,6 +288,9 @@ impl AggregateLogs {
                 stream,
                 move |view, event, _, cx| {
                     match event {
+                        LogEvent::Waiting | LogEvent::Opened => {
+                            view.errors.remove(&identity);
+                        }
                         LogEvent::Lines(lines) => {
                             let tail = view.follow && view.at_tail();
                             view.logs.extend(

@@ -611,6 +611,54 @@ async fn serve(
         }
     }
     if parts.last() == Some(&"log") {
+        // Model kubelet's startup response for explicit waiting states. An
+        // absent status remains the fixture's default successful log stream.
+        let waiting = if query.get("previous").is_some_and(|value| value == "true") {
+            None
+        } else {
+            let objects = objects.lock().unwrap();
+            objects
+                .iter()
+                .find(|object| {
+                    matches(object)
+                        && object.pointer("/metadata/name").and_then(Value::as_str) == name
+                })
+                .and_then(|pod| {
+                    let container = query.get("container").map(String::as_str).or_else(|| {
+                        pod.pointer("/spec/containers/0/name")
+                            .and_then(Value::as_str)
+                    })?;
+                    [
+                        "containerStatuses",
+                        "initContainerStatuses",
+                        "ephemeralContainerStatuses",
+                    ]
+                    .into_iter()
+                    .filter_map(|field| pod["status"][field].as_array())
+                    .flatten()
+                    .find(|status| status["name"] == container)
+                    .filter(|status| {
+                        status
+                            .pointer("/lastState/terminated/containerID")
+                            .and_then(Value::as_str)
+                            .is_none_or(str::is_empty)
+                    })
+                    .and_then(|status| status.pointer("/state/waiting"))
+                    .map(|waiting| {
+                        (
+                            container.to_owned(),
+                            waiting["reason"]
+                                .as_str()
+                                .unwrap_or("ContainerCreating")
+                                .to_owned(),
+                        )
+                    })
+                })
+        };
+        if let Some((container, reason)) = waiting {
+            response(&mut stream, "400 Bad Request", json!({"apiVersion":"v1","kind":"Status","status":"Failure","reason":"BadRequest","code":400,"message":format!("container {container:?} in pod {:?} is waiting to start: {reason}", name.unwrap_or_default())}).to_string(), "application/json").await;
+            return;
+        }
         response(
             &mut stream,
             "200 OK",

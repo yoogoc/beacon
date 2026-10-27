@@ -196,6 +196,10 @@
     "en": "Opening the stream…",
     "zh-CN": "正在打开日志流…"
   },
+  "tools.waiting_for_container_to_start": {
+    "en": "Waiting for container to start…",
+    "zh-CN": "正在等待容器启动…"
+  },
   "tools.nothing_logged_yet": {
     "en": "Nothing logged yet.",
     "zh-CN": "暂无日志。"
