@@ -5,12 +5,17 @@ use gpui_kit::{
     component::{
         ActiveTheme as _, Disableable as _, Sizable as _,
         button::{Button, ButtonVariants as _},
-        h_flex, v_flex,
+        h_flex,
+        tooltip::Tooltip,
+        v_flex,
     },
     prelude::FluentBuilder as _,
     *,
 };
 use std::{collections::HashMap, sync::Arc};
+
+const NAMESPACE_WIDTH: f32 = 180.;
+
 #[derive(Clone)]
 enum Status {
     Pending,
@@ -114,6 +119,8 @@ impl BulkRestart {
     }
     fn row(&self, index: usize, cx: &Context<Self>) -> AnyElement {
         let target = &self.targets[index].reference;
+        let namespace = target.namespace.as_deref().unwrap_or("—").to_owned();
+        let name = target.name.clone();
         let (status, color) = match &self.statuses[index] {
             Status::Pending => ("Ready".to_string(), cx.theme().muted_foreground),
             Status::Running => ("Restarting…".into(), cx.theme().muted_foreground),
@@ -129,19 +136,28 @@ impl BulkRestart {
                 target.name
             ))
             .test_support()
+            .w_full()
+            .min_w_0()
             .p_3()
             .gap_1()
             .border_b_1()
             .border_color(cx.theme().border)
             .child(
                 h_flex()
+                    .w_full()
+                    .min_w_0()
                     .gap_3()
-                    .items_start()
+                    .items_center()
                     .child(
                         div()
-                            .w(px(132.))
+                            .id(("restart-namespace-cell", index))
+                            .w(px(NAMESPACE_WIDTH))
                             .flex_shrink_0()
                             .text_sm()
+                            .truncate()
+                            .tooltip(move |window, cx| {
+                                Tooltip::new(namespace.clone()).build(window, cx)
+                            })
                             .child(copyable_text(
                                 ("restart-namespace", index),
                                 target.namespace.as_deref().unwrap_or("—").to_string(),
@@ -149,10 +165,13 @@ impl BulkRestart {
                     )
                     .child(
                         div()
+                            .id(("restart-name-cell", index))
                             .flex_1()
                             .min_w_0()
                             .text_sm()
                             .font_weight(FontWeight::MEDIUM)
+                            .truncate()
+                            .tooltip(move |window, cx| Tooltip::new(name.clone()).build(window, cx))
                             .child(copyable_text(("restart-name", index), target.name.clone())),
                     ),
             )
@@ -224,14 +243,28 @@ impl Render for BulkRestart {
             .overflow_hidden()
             .child(
                 h_flex()
+                    .w_full()
+                    .min_w_0()
                     .px_3()
                     .py_2()
                     .gap_3()
                     .bg(cx.theme().muted)
                     .text_xs()
                     .text_color(cx.theme().muted_foreground)
-                    .child(div().w(px(132.)).child(crate::i18n::text("Namespace")))
-                    .child(div().flex_1().child("Deployment")),
+                    .child(
+                        div()
+                            .w(px(NAMESPACE_WIDTH))
+                            .flex_shrink_0()
+                            .whitespace_nowrap()
+                            .child(crate::i18n::text("Namespace")),
+                    )
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .whitespace_nowrap()
+                            .child("Deployment"),
+                    ),
             )
             .child(
                 div()
