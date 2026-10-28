@@ -45,6 +45,7 @@ use crate::theme::{BeaconTheme as _, Tone};
 
 mod forwards;
 mod list_settings;
+mod picker_search;
 mod toolbar;
 
 /// The namespace picker's entry for "do not scope at all". A namespace cannot
@@ -2046,12 +2047,13 @@ impl ClusterView {
                 cx.notify();
             },
         );
-        let picker_search = cx.subscribe(
+        let picker_search = cx.subscribe_in(
             &self.picker_search.clone(),
-            |_, _, event: &InputEvent, cx| {
-                if matches!(event, InputEvent::Change) {
-                    cx.notify();
-                }
+            window,
+            |view, _, event: &InputEvent, window, cx| match event {
+                InputEvent::PressEnter { .. } => view.confirm_picker_search(window, cx),
+                InputEvent::Change => cx.notify(),
+                _ => {}
             },
         );
         self._subscriptions = vec![
@@ -2795,13 +2797,9 @@ impl ClusterView {
             })
     }
 
-    /// Exact facets come from all watched objects, including currently hidden rows.
-    fn render_field_picker(
-        &self,
-        field: Field,
-        layout: toolbar::Layout,
-        cx: &mut Context<Self>,
-    ) -> impl IntoElement {
+    /// Keep mouse choices and keyboard confirmation in the same order, even
+    /// when the active value has disappeared from the current resource list.
+    fn field_picker_values(&self, field: Field, cx: &App) -> Vec<String> {
         let table = self.table.read(cx);
         let selected = table.delegate().field_filter(field).map(str::to_owned);
         let mut types = table.delegate().filter_values(field);
@@ -2811,6 +2809,23 @@ impl ClusterView {
             types.push(value.clone());
             types.sort();
         }
+        types
+    }
+
+    /// Exact facets come from all watched objects, including currently hidden rows.
+    fn render_field_picker(
+        &self,
+        field: Field,
+        layout: toolbar::Layout,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let selected = self
+            .table
+            .read(cx)
+            .delegate()
+            .field_filter(field)
+            .map(str::to_owned);
+        let types = self.field_picker_values(field, cx);
         let label = selected.clone().unwrap_or_else(|| "All".to_string());
         let input = self.picker_search.clone();
         let search = OptionSearch::new(input.read(cx).value().as_ref());

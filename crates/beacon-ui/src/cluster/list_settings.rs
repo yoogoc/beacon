@@ -251,12 +251,49 @@ impl ClusterView {
         self._subscriptions.push(cx.subscribe_in(
             &self.list_settings.search,
             window,
-            |_, _, event, _, cx| {
-                if matches!(event, InputEvent::Change) {
-                    cx.notify();
-                }
+            |view, _, event, window, cx| match event {
+                InputEvent::PressEnter { .. } => view.confirm_saved_filter_search(window, cx),
+                InputEvent::Change => cx.notify(),
+                _ => {}
             },
         ));
+    }
+
+    pub(super) fn confirm_column_search(&mut self, search: &OptionSearch, cx: &mut Context<Self>) {
+        if !self.list_settings.columns_open {
+            return;
+        }
+        let first = self
+            .table
+            .read(cx)
+            .delegate()
+            .column_choices()
+            .into_iter()
+            .find(|(_, name, _, required)| {
+                !required && (search.matches(name) || search.matches(&crate::i18n::text(name)))
+            });
+        if let Some((id, _, false, _)) = first {
+            self.toggle_list_column(&id, cx);
+        }
+    }
+
+    fn confirm_saved_filter_search(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let query = self.list_settings.search.read(cx).value();
+        if !self.list_settings.presets_open || query.trim().is_empty() {
+            return;
+        }
+        let search = OptionSearch::new(&query);
+        let first = self
+            .resource_preferences(cx)
+            .filters
+            .into_keys()
+            .find(|name| search.matches(name) || search.matches(&crate::i18n::text(name)));
+        if let Some(name) = first {
+            self.apply_filter_preset(&name, window, cx);
+            if !self.list_settings.presets_open {
+                self.row_search.read(cx).focus_handle(cx).focus(window, cx);
+            }
+        }
     }
 
     pub(super) fn render_column_picker(&self, cx: &mut Context<Self>) -> impl IntoElement {

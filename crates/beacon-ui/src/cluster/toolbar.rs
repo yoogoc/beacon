@@ -75,6 +75,9 @@ pub(super) fn picker_search(
 ) -> impl IntoElement {
     div()
         .id(("picker-search-frame", input.entity_id()))
+        // Input emits PressEnter and then propagates the action. The search
+        // owns that Enter; it must not also activate a surrounding trigger.
+        .on_action(|_: &gpui_kit::component::input::Enter, _, cx| cx.stop_propagation())
         .px_1()
         .pb_1()
         .mb_1()
