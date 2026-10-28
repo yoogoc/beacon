@@ -1,4 +1,5 @@
 //! A standalone, movable workspace tab for a pinned Pod/container filesystem.
+use crate::scroll::OverflowScrollbars as _;
 use crate::selection::checkbox;
 use crate::{bridge::Bridge, copyable_text::copyable_text, yaml_review};
 use beacon_kube::{
@@ -860,7 +861,7 @@ impl Render for FilePrompt {
                         .id("file-target-table")
                         .w_full()
                         .max_h(px(350.))
-                        .overflow_y_scroll()
+                        .overflow_y_scrollbar()
                         .child(
                             h_flex()
                                 .w_full()

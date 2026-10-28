@@ -1,0 +1,155 @@
+{
+  "_version": 2,
+  "containers.workspace_description": {
+    "en": "Customize context sources and resource details.",
+    "zh-CN": "设置上下文来源与资源详情的显示方式。"
+  },
+  "containers.workbench": {
+    "en": "Container workbench",
+    "zh-CN": "容器工作台"
+  },
+  "containers.grouped": {
+    "en": "Grouped sections",
+    "zh-CN": "分组折叠"
+  },
+  "containers.workbench_description": {
+    "en": "Switch between ports, health checks, environment and mounts.",
+    "zh-CN": "按类别切换端口、健康检查、环境变量和挂载。"
+  },
+  "containers.grouped_description": {
+    "en": "Scan ports and probes together; expand other configuration as needed.",
+    "zh-CN": "集中查看端口与探针，其他配置按需展开。"
+  },
+  "containers.details": {
+    "en": "Container details",
+    "zh-CN": "容器详情"
+  },
+  "containers.layout_description": {
+    "en": "Choose the container layout for Pods and workload templates.",
+    "zh-CN": "选择 Pod 与工作负载模板的容器详情布局。"
+  },
+  "containers.layout_autosave": {
+    "en": "Container layout saves automatically and applies immediately to all windows.",
+    "zh-CN": "布局自动保存，立即应用于所有窗口。"
+  },
+  "containers.ports_resources": {
+    "en": "Ports & resources",
+    "zh-CN": "端口与资源"
+  },
+  "containers.health": {
+    "en": "Health checks",
+    "zh-CN": "健康检查"
+  },
+  "containers.container_port": {
+    "en": "Container port",
+    "zh-CN": "容器端口"
+  },
+  "containers.host_port": {
+    "en": "Host port",
+    "zh-CN": "主机端口"
+  },
+  "containers.value_source": {
+    "en": "Value / source",
+    "zh-CN": "值 / 来源"
+  },
+  "containers.prefix": {
+    "en": "Prefix",
+    "zh-CN": "前缀"
+  },
+  "containers.access": {
+    "en": "Access",
+    "zh-CN": "访问模式"
+  },
+  "containers.read_write": {
+    "en": "Read / write",
+    "zh-CN": "读写"
+  },
+  "containers.block_device": {
+    "en": "Block device",
+    "zh-CN": "块设备"
+  },
+  "containers.headers": {
+    "en": "HTTP headers",
+    "zh-CN": "HTTP 请求头"
+  },
+  "containers.initial_delay": {
+    "en": "Initial delay",
+    "zh-CN": "初始延迟（秒）"
+  },
+  "containers.success_threshold": {
+    "en": "Success threshold",
+    "zh-CN": "连续成功阈值"
+  },
+  "containers.failure_threshold": {
+    "en": "Failure threshold",
+    "zh-CN": "连续失败阈值"
+  },
+  "containers.grace_period": {
+    "en": "Termination grace period (seconds)",
+    "zh-CN": "终止宽限期（秒）"
+  },
+  "containers.additional": {
+    "en": "Additional settings",
+    "zh-CN": "其他配置"
+  },
+  "containers.liveness": {
+    "en": "Liveness probe",
+    "zh-CN": "存活探针"
+  },
+  "containers.readiness": {
+    "en": "Readiness probe",
+    "zh-CN": "就绪探针"
+  },
+  "containers.startup": {
+    "en": "Startup probe",
+    "zh-CN": "启动探针"
+  },
+  "containers.resources": {
+    "en": "Resource requests & limits",
+    "zh-CN": "资源请求与限制"
+  },
+  "containers.no_ports": {
+    "en": "No container ports declared",
+    "zh-CN": "未声明容器端口"
+  },
+  "containers.no_health": {
+    "en": "No health checks configured",
+    "zh-CN": "未配置健康检查"
+  },
+  "containers.probe_parameters": {
+    "en": "Thresholds & timing",
+    "zh-CN": "阈值与时间参数"
+  },
+  "containers.no_env": {
+    "en": "No environment variables declared",
+    "zh-CN": "未声明环境变量"
+  },
+  "containers.env_sources": {
+    "en": "Environment sources",
+    "zh-CN": "环境变量来源"
+  },
+  "containers.no_mounts": {
+    "en": "No volumes mounted",
+    "zh-CN": "未挂载卷"
+  },
+  "containers.probe_timing": {
+    "en": "Every %{period}s · timeout %{timeout}s",
+    "zh-CN": "每 %{period}s 检查 · 超时 %{timeout}s"
+  },
+  "containers.environment_variables": {
+    "en": "Environment variables",
+    "zh-CN": "环境变量"
+  },
+  "containers.protocol": {
+    "en": "Protocol",
+    "zh-CN": "协议"
+  },
+  "containers.init_category": {
+    "en": "Init · ",
+    "zh-CN": "初始化 · "
+  },
+  "containers.ephemeral_category": {
+    "en": "Ephemeral · ",
+    "zh-CN": "临时 · "
+  }
+}

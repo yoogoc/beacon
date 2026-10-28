@@ -5,9 +5,10 @@ mod theme_page;
 mod update_page;
 mod workspace_page;
 
+use crate::scroll::OverflowScrollbars as _;
 use crate::selection::radio;
 use crate::settings::{
-    self, Appearance, ClusterIcon, ClusterSettings, ContextDisplay, CustomTheme,
+    self, Appearance, ClusterIcon, ClusterSettings, ContainerLayout, ContextDisplay, CustomTheme,
 };
 use beacon_kube::{
     ClusterId,
@@ -271,7 +272,7 @@ impl Section {
     fn description(self) -> &'static str {
         match self {
             Self::Appearance => "Make Beacon feel at home.",
-            Self::Workspace => "Choose how cluster contexts appear in the sidebar.",
+            Self::Workspace => "Customize context sources and resource details.",
             Self::Themes => "Choose a base, make it yours, then save and apply.",
             Self::Network => "Choose how Beacon connects to clusters and checks for updates.",
             Self::Updates => "Manage your version and update preferences.",
@@ -1854,7 +1855,7 @@ impl Render for PreferencesView {
                             .flex_1()
                             .min_w_0()
                             .min_h_0()
-                            .overflow_y_scroll()
+                            .overflow_y_scrollbar()
                             .child(
                                 v_flex()
                                     .w_full()

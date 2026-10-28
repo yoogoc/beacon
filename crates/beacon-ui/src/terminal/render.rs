@@ -1,5 +1,6 @@
 //! A cell-aligned GPUI view over Alacritty's screen and history.
 use super::*;
+use crate::scroll::OverflowScrollbars as _;
 use alacritty_terminal::{grid::Scroll, vte::ansi::CursorShape};
 use gpui_kit::assets::IconName;
 use gpui_kit::base::Selectable as _;
@@ -117,7 +118,7 @@ impl TerminalView {
                                 .px_3()
                                 .pb_2()
                                 .max_h(px(96.))
-                                .overflow_y_scroll()
+                                .overflow_y_scrollbar()
                                 .on_scroll_wheel(|_, _, cx| cx.stop_propagation())
                                 .text_xs()
                                 .text_color(cx.theme().muted_foreground)

@@ -429,7 +429,7 @@ impl ClusterView {
                         div()
                             .id("resource-column-options")
                             .min_h_0()
-                            .overflow_y_scroll()
+                            .overflow_y_scrollbar()
                             .child(v_flex().gap_0p5().children(rows)),
                     )
                     .child(
@@ -565,7 +565,7 @@ impl ClusterView {
                                 .child(crate::i18n::text(if empty { "Save the current view below." } else { "Try a different name." }))))))
                     .when(!rows.is_empty(), |menu| menu.child(div()
                         .id("saved-filter-options").min_h_0().max_h(px(232.))
-                        .px_2().pb_2().overflow_y_scroll()
+                        .px_2().pb_2().overflow_y_scrollbar()
                         .child(v_flex().gap_0p5().children(rows))))
                     .child(v_flex().flex_shrink_0().gap_2().p_3()
                         .border_t_1().border_color(cx.theme().border)

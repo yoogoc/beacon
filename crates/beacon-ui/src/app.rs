@@ -11,6 +11,7 @@
 //! cluster in the shared connection registry, so a second tab on a cluster
 //! costs a view and nothing else.
 
+use crate::scroll::OverflowScrollbars as _;
 use std::{
     cell::{Cell, RefCell},
     collections::{BTreeSet, HashMap},
@@ -2723,7 +2724,12 @@ impl BeaconApp {
             .collect();
         let menu_view = cx.weak_entity();
         h_flex()
-            .h(px(28.))
+            .h(px(if crate::scroll::DESKTOP_SCROLLBARS {
+                44.
+            } else {
+                28.
+            }))
+            .items_start()
             .w_full()
             .min_w_0()
             .flex_shrink_0()
@@ -2736,6 +2742,14 @@ impl BeaconApp {
                     .h_full()
                     .overflow_x_scroll()
                     .track_scroll(&self.tab_scrolls[&pane_id])
+                    .when(crate::scroll::DESKTOP_SCROLLBARS, |tabs| {
+                        tabs.pb_4().child(
+                            gpui_kit::component::scroll::Scrollbar::horizontal(
+                                &self.tab_scrolls[&pane_id],
+                            )
+                            .mode(gpui_kit::component::scroll::ScrollbarMode::Always),
+                        )
+                    })
                     .children(tabs),
             )
             .child(new_tab)
@@ -3076,7 +3090,7 @@ impl BeaconApp {
             div()
                 .id("cluster-activity-list")
                 .min_h_0()
-                .overflow_y_scroll()
+                .overflow_y_scrollbar()
                 .child(v_flex().gap_1().children(rows))
                 .when(sessions.is_empty(), |list| {
                     list.child(crate::i18n::text("No connected clusters yet."))

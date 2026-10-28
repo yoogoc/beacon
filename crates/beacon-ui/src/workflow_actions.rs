@@ -1,4 +1,5 @@
 //! Argo actions are configured, validated and reviewed before any write.
+use crate::scroll::OverflowScrollbars as _;
 use crate::{bridge::Bridge, copyable_text::copyable_text};
 use beacon_kube::{
     ClusterSession, DynamicObject, Kind, ObjectRef,
@@ -689,7 +690,7 @@ impl Render for WorkflowActions {
                     .child(
                         div()
                             .id("workflow-action-scroll")
-                            .overflow_y_scroll()
+                            .overflow_y_scrollbar()
                             .track_scroll(&self.scroll)
                             .child(content),
                     )

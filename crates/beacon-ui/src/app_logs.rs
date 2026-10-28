@@ -6,6 +6,7 @@ use std::{path::PathBuf, sync::Arc, time::Duration};
 
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::{Input, InputEvent, InputState};
+use gpui_kit::component::scroll::{Scrollbar, ScrollbarMode};
 use gpui_kit::component::tooltip::Tooltip;
 use gpui_kit::component::{
     ActiveTheme as _, Disableable as _, Root, Sizable as _, TitleBar, h_flex, v_flex,
@@ -79,8 +80,17 @@ pub(crate) struct AppLogs {
     filter: Filter,
     paused: bool,
     scroll: UniformListScrollHandle,
+    measurement: Option<LineMeasurement>,
+    desktop_scrollbars: bool,
     _refresh: Task<()>,
     _search: Subscription,
+}
+
+struct LineMeasurement {
+    lines: Arc<Vec<Line>>,
+    font: Font,
+    size: Pixels,
+    widest: Option<usize>,
 }
 
 impl Focusable for AppLogs {
@@ -171,6 +181,8 @@ impl AppLogs {
             filter: Filter::All,
             paused: false,
             scroll: UniformListScrollHandle::new(),
+            measurement: None,
+            desktop_scrollbars: crate::scroll::DESKTOP_SCROLLBARS,
             _refresh: refresh,
             _search: search_events,
         }
@@ -198,7 +210,51 @@ impl AppLogs {
 }
 
 impl Render for AppLogs {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let font = Font {
+            family: "monospace".into(),
+            ..window.text_style().font()
+        };
+        let font_size = window.rem_size() * 0.75;
+        if self.desktop_scrollbars
+            && self.measurement.as_ref().is_none_or(|cached| {
+                !Arc::ptr_eq(&cached.lines, &self.visible)
+                    || cached.font != font
+                    || cached.size != font_size
+            })
+        {
+            let widest = self
+                .visible
+                .iter()
+                .enumerate()
+                .map(|(index, line)| {
+                    let width = window
+                        .text_system()
+                        .shape_line(
+                            line.text.clone().into(),
+                            font_size,
+                            &[TextRun {
+                                len: line.text.len(),
+                                font: font.clone(),
+                                color: cx.theme().foreground,
+                                background_color: None,
+                                underline: None,
+                                strikethrough: None,
+                            }],
+                            None,
+                        )
+                        .width;
+                    (index, width)
+                })
+                .reduce(|a, b| if b.1 > a.1 { b } else { a })
+                .map(|(index, _)| index);
+            self.measurement = Some(LineMeasurement {
+                lines: self.visible.clone(),
+                font,
+                size: font_size,
+                widest,
+            });
+        }
         let total = self
             .snapshot
             .as_ref()
@@ -275,6 +331,13 @@ impl Render for AppLogs {
                             .tooltip(move |window, cx| Tooltip::new(text.clone()).build(window, cx))
                     })
                     .collect()
+            })
+            .when(self.desktop_scrollbars, |list| {
+                list.with_width_from_item(
+                    self.measurement.as_ref().and_then(|cached| cached.widest),
+                )
+                .with_horizontal_sizing_behavior(ListHorizontalSizingBehavior::Unconstrained)
+                .pb_4()
             })
             .track_scroll(&self.scroll)
             .size_full()
@@ -381,7 +444,18 @@ impl Render for AppLogs {
                         }))
                     })),
             )
-            .child(div().flex_1().min_h_0().overflow_hidden().child(body))
+            .child(
+                div()
+                    .flex_1()
+                    .min_h_0()
+                    .relative()
+                    .overflow_hidden()
+                    .child(body)
+                    .when(self.desktop_scrollbars, |area| {
+                        area.child(Scrollbar::horizontal(&self.scroll).mode(ScrollbarMode::Always))
+                            .child(Scrollbar::vertical(&self.scroll))
+                    }),
+            )
             .child(
                 div()
                     .id("app-log-file")
@@ -400,5 +474,67 @@ impl Render for AppLogs {
                     ))
                     .tooltip(move |window, cx| Tooltip::new(message.clone()).build(window, cx)),
             )
+    }
+}
+
+#[cfg(all(test, feature = "ui-tests"))]
+mod tests {
+    use super::*;
+    use gpui_kit::test::TestWindowExt as _;
+
+    #[::core::prelude::v1::test]
+    fn horizontal_scrollbar_reaches_the_longest_line_even_when_it_is_offscreen() {
+        let cx = &mut crate::feature_test_support::context();
+        let directory = tempfile::tempdir().unwrap();
+        let (window, view) = cx.update(|cx| {
+            gpui_kit::open_window(
+                WindowOptions {
+                    window_bounds: Some(WindowBounds::Windowed(Bounds::new(
+                        Point::default(),
+                        size(px(640.), px(400.)),
+                    ))),
+                    ..Default::default()
+                },
+                cx,
+                |window, cx| {
+                    window.set_view_retention(false);
+                    cx.new(|cx| {
+                        let mut view = AppLogs::new(directory.path().to_owned(), window, cx);
+                        view.desktop_scrollbars = true;
+                        view.paused = true;
+                        view.visible = Arc::new(
+                            (0..100)
+                                .map(|index| Line {
+                                    text: if index == 90 {
+                                        "a long log line ".repeat(100)
+                                    } else {
+                                        "short".into()
+                                    },
+                                    level: Level::Info,
+                                })
+                                .collect(),
+                        );
+                        view
+                    })
+                },
+            )
+            .unwrap()
+        });
+        cx.update_window(window, |_, window, cx| {
+            window.render_frame(cx);
+            window.render_frame(cx);
+            assert_eq!(view.read(cx).measurement.as_ref().unwrap().widest, Some(90));
+            let handle = view.read(cx).scroll.0.borrow().base_handle.clone();
+            let bounds = handle.bounds();
+            assert!(handle.max_offset().x > px(0.));
+            let y = bounds.bottom() - Scrollbar::width() / 2.;
+            window.drag(
+                point(bounds.left() + px(20.), y),
+                point(bounds.right() - px(10.), y),
+                cx,
+            );
+            assert!((handle.offset().x + handle.max_offset().x).abs() <= px(1.));
+        })
+        .unwrap();
     }
 }

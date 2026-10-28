@@ -1,4 +1,5 @@
 //! Shared controls and a nonmodal inspector for Pod and aggregated logs.
+use crate::scroll::OverflowScrollbars as _;
 use crate::{
     copyable_text::copyable_text,
     pod_logs::{Display, Filter, Level, Record},
@@ -309,7 +310,7 @@ impl Render for LogWorkbench {
             .or_else(|| self.display.borrow().error.clone());
         let bookmark_count = self.display.borrow().bookmarks.len();
         v_flex().w_full().flex_shrink_0().border_b_1().border_color(cx.theme().border).bg(cx.theme().background).text_xs()
-            .child(h_flex().id("structured-log-toolbar").w_full().min_w_0().overflow_x_scroll().whitespace_nowrap().gap_1().px_3().py_1()
+            .child(h_flex().id("structured-log-toolbar").w_full().min_w_0().overflow_x_scrollbar().whitespace_nowrap().gap_1().px_3().py_1()
                 .child(Button::new("log-regex").xsmall().ghost().selected(self.filter.regex).label(".*").tooltip(crate::i18n::text("Regular expression search (case insensitive)")).on_click(cx.listener(|view, _, _, cx| { view.filter.regex = !view.filter.regex; cx.emit(Changed::Filter); cx.notify(); })))
                 .children(Level::ALL.map(|level| { let label = level.label(); Button::new(format!("log-level-{label}")).xsmall().ghost().selected(self.filter.levels.contains(label)).label(label).on_click(cx.listener(move |view, _, _, cx| { if !view.filter.levels.remove(label) { view.filter.levels.insert(label.into()); } cx.emit(Changed::Filter); cx.notify(); })) }))
                 .child(div().h(px(16.)).border_l_1().border_color(cx.theme().border).mx_1())
@@ -324,7 +325,7 @@ impl Render for LogWorkbench {
             .when(self.fields_open, |panel| panel.child(v_flex().id("log-fields-panel").test_support().gap_2().px_3().py_2().bg(cx.theme().muted.opacity(0.35))
                 .child(h_flex().gap_2().child(div().flex_1().child(Input::new(&self.field_filter).id("log-field-filter").xsmall())).child(Button::new("log-clear-field-filter").xsmall().ghost().label(crate::i18n::text("Clear")).on_click(cx.listener(|view, _, window, cx| { view.field_filter.update(cx, |input, cx| input.set_value("", window, cx)); }))))
                 .child(h_flex().gap_2().items_center().child(crate::i18n::text("Display fields")).child(div().w(px(180.)).child(Input::new(&self.field_search).id("log-field-search").xsmall())).child(Button::new("log-all-fields").xsmall().ghost().label(crate::i18n::text("All")).on_click(cx.listener(|view, _, _, cx| { view.filter.fields = None; view.filter.compact = true; cx.emit(Changed::Filter); cx.notify(); }))).child(Button::new("log-no-fields").xsmall().ghost().label(crate::i18n::text("None")).on_click(cx.listener(|view, _, _, cx| { view.filter.fields = Some(BTreeSet::new()); view.filter.compact = true; cx.emit(Changed::Filter); cx.notify(); }))))
-                .child(h_flex().id("log-field-options").flex_wrap().gap_1().max_h(px(120.)).overflow_y_scroll().children(fields.into_iter().filter(|field| field.to_lowercase().contains(&self.field_search.read(cx).value().to_lowercase())).take(200).enumerate().map(|(index, field)| {
+                .child(h_flex().id("log-field-options").flex_wrap().gap_1().max_h(px(120.)).overflow_y_scrollbar().children(fields.into_iter().filter(|field| field.to_lowercase().contains(&self.field_search.read(cx).value().to_lowercase())).take(200).enumerate().map(|(index, field)| {
                     let selected = self.filter.fields.as_ref().is_none_or(|fields| fields.contains(&field));
                     Button::new(("log-show-field", index)).xsmall().ghost().selected(selected).label(field.clone()).on_click(cx.listener(move |view, _, _, cx| { let fields = view.filter.fields.get_or_insert_with(|| view.display.borrow().fields.keys().cloned().collect::<BTreeSet<_>>()); if !fields.remove(&field) { fields.insert(field.clone()); } view.filter.compact = true; cx.emit(Changed::Filter); cx.notify(); }))
                 })))
@@ -418,7 +419,7 @@ impl Render for LogInspector {
                             .id("log-inspector-fields")
                             .flex_1()
                             .min_w_0()
-                            .overflow_y_scroll()
+                            .overflow_y_scrollbar()
                             .gap_1()
                             .children(self.record.fields.iter().enumerate().map(
                                 |(index, (field, value))| {
@@ -491,7 +492,7 @@ impl Render for LogInspector {
                                     .id("log-inspector-raw")
                                     .flex_1()
                                     .min_size_0()
-                                    .overflow_y_scroll()
+                                    .overflow_y_scrollbar()
                                     .font_family("monospace")
                                     .child(copyable_text("log-raw-text", self.record.raw.clone())),
                             ),

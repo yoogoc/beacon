@@ -1,4 +1,5 @@
 //! Server-backed Can I and an explainable binding → role → rule view.
+use crate::scroll::OverflowScrollbars as _;
 use crate::{
     bridge::Bridge, copyable_text::copyable_text, detail::OwnerRequested, theme::BeaconTheme as _,
 };
@@ -620,7 +621,7 @@ impl Render for Permissions {
                 .child(h_flex().gap_2().child(div().flex_1().child(Input::new(&self.subresource).small())).child(div().flex_1().child(Input::new(&self.object_name).small())).child(Button::new("permission-can-i").small().primary().label(crate::i18n::text(if self.checking{"Checking…"}else{"Can I?"})).disabled(self.checking).on_click(cx.listener(|view,_,window,cx|view.check(window,cx)))))
                 .child(div().text_xs().text_color(cx.theme().muted_foreground).child(crate::i18n::text("Can I uses the API server. Other subjects require SubjectAccessReview permission. User groups must be entered explicitly; Group queries test that group's grants."))))
             .when_some(self.answer.as_ref(),|view,(allowed,message)|view.child(div().id("permission-answer").test_support().px_4().py_2().text_sm().text_color(if *allowed{cx.theme().success}else{cx.theme().warning}).child(copyable_text("permission-answer-text",message.clone()))))
-            .when(!self.errors.is_empty(),|view|view.child(v_flex().id("permission-errors").max_h(px(140.)).overflow_y_scroll().children(self.errors.iter().enumerate().map(|(index,error)|div().id(("permission-error",index)).test_support().px_4().py_1().text_xs().text_color(cx.theme().warning).child(copyable_text(("permission-error-text",index),error.clone()))))))
+            .when(!self.errors.is_empty(),|view|view.child(v_flex().id("permission-errors").max_h(px(140.)).overflow_y_scrollbar().children(self.errors.iter().enumerate().map(|(index,error)|div().id(("permission-error",index)).test_support().px_4().py_1().text_xs().text_color(cx.theme().warning).child(copyable_text(("permission-error-text",index),error.clone()))))))
             .child(v_flex().px_4().py_2().gap_1().child(div().text_xs().text_color(cx.theme().muted_foreground).child(if self.dirty{"Inspect bindings to refresh this subject and scope.".into()}else{crate::i18n::message("messages.matching_bindings_rbac_sources_only_other_authorizers_may_affect_can_i", &[("value0", (self.visible.len()).to_string())]).to_string()})).child(Input::new(&self.search).small()))
             .child(div().flex_1().min_size_0().when(self.visible.is_empty(),|view|view.child(div().id("permission-empty").test_support().p_4().text_sm().text_color(cx.theme().muted_foreground).child(crate::i18n::text(if self.loading{"Loading RBAC sources…"}else if self.identity.is_none()||!self.errors.is_empty(){"Bindings could not be fully checked. Review the messages above."}else{"No matching bindings in this scope."}))))
                 .when(!self.visible.is_empty(),|view|view.child(list(self.list.clone(),cx.processor(|view,row,_,cx|view.render_grant(row,cx))).size_full())))

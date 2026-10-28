@@ -1,6 +1,7 @@
 //! Read-only comparison with searchable targets and a field-first review.
 mod comparison;
 mod view;
+use crate::scroll::OverflowScrollbars as _;
 use crate::{
     bridge::Bridge, connections::SharedConnections, copyable_text::copyable_text,
     selection::checkbox,
@@ -879,9 +880,8 @@ impl CompareView {
                                                     .font_family(
                                                         cx.theme().mono_font_family.clone(),
                                                     )
-                                                    .when(open, |value| {
-                                                        value.max_h(px(240.)).overflow_y_scroll()
-                                                    })
+                                                    .overflow_y_scrollbar()
+                                                    .when(open, |value| value.max_h(px(240.)))
                                                     .when(!open, |value| {
                                                         value.max_h(px(44.)).overflow_hidden()
                                                     })

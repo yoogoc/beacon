@@ -1,5 +1,6 @@
 //! Creates one resource from an editable YAML manifest.
 
+use crate::scroll::OverflowScrollbars as _;
 use std::sync::Arc;
 
 use beacon_kube::{ClusterSession, DynamicObject, Kind, ops};
@@ -318,7 +319,7 @@ impl Render for CreateView {
                 div()
                     .id("create-resource-status")
                     .max_h(px(100.))
-                    .overflow_y_scroll()
+                    .overflow_y_scrollbar()
                     .px_4()
                     .py_2()
                     .text_xs()

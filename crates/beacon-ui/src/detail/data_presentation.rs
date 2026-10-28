@@ -447,7 +447,7 @@ impl DetailView {
                     .id("data-value-scroll")
                     .flex_1()
                     .min_h_0()
-                    .overflow_y_scroll()
+                    .overflow_y_scrollbar()
                     .p_3()
                     .child(content),
             )

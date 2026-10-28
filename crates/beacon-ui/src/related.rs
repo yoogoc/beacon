@@ -324,7 +324,7 @@ fn render_related_group(
             .id(("related-table", index))
             .size_full()
             .min_size_0()
-            .child(table_entity.clone())
+            .child(crate::table::view(table_entity, cx))
             .test_support()
             .into_any_element()
     };

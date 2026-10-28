@@ -7,6 +7,7 @@
 //! stripped. Events is what the cluster has *said* about it, which is almost
 //! always where the answer is when something is wrong.
 
+use crate::scroll::OverflowScrollbars as _;
 use std::{
     collections::{BTreeMap, BTreeSet},
     sync::Arc,
@@ -37,6 +38,7 @@ use crate::bridge::{Bridge, drain_into};
 use crate::theme::{BeaconTheme as _, Tone};
 use crate::tls::{self, CertificateInfo};
 
+mod containers;
 mod data_editors;
 mod data_presentation;
 mod header;
@@ -202,6 +204,7 @@ pub struct DetailView {
     labels_expanded: bool,
     annotations_expanded: bool,
     expanded_sections: BTreeSet<String>,
+    container_browser: containers::Browser,
     overview: crate::overview::Projection,
     node_pods: Option<Entity<crate::node_pods::NodePodsView>>,
     metrics: Option<Entity<crate::resource_metrics::ResourceMetricsView>>,
@@ -305,6 +308,7 @@ impl DetailView {
             labels_expanded: false,
             annotations_expanded: false,
             expanded_sections: BTreeSet::new(),
+            container_browser: containers::Browser::default(),
             overview,
             node_pods: None,
             metrics: None,
@@ -372,6 +376,9 @@ impl DetailView {
             view.defer_header_refresh(cx);
         })
         .detach();
+        if let Some(settings) = crate::settings::try_store(cx) {
+            cx.observe(&settings, |_, _, cx| cx.notify()).detach();
+        }
         this.resolve_pod_owners(cx);
         this.load_argo(cx);
         this.watch_argo_runs(window, cx);
@@ -1469,7 +1476,7 @@ impl DetailView {
             .id("overview")
             .test_support()
             .size_full()
-            .overflow_y_scroll()
+            .overflow_y_scrollbar()
             .child(content)
             .into_any_element()
     }
@@ -2131,171 +2138,6 @@ impl DetailView {
             })
     }
 
-    fn container_section(
-        &self,
-        containers: Vec<ContainerLine>,
-        cx: &mut Context<Self>,
-    ) -> impl IntoElement {
-        v_flex()
-            .gap_2()
-            .w_full()
-            .child(self.heading(
-                if self.kind.resource.kind == "Pod" {
-                    "Containers"
-                } else {
-                    "Pod template"
-                },
-                cx,
-            ))
-            .children(
-                containers
-                    .into_iter()
-                    .enumerate()
-                    .map(|(index, container)| {
-                        let tone = if container.ready {
-                            Tone::Healthy
-                        } else {
-                            crate::status::tone(&container.state)
-                        };
-                        let key = format!("container:{}{}", container.category, container.name);
-                        let default_open = index == 0 && container.category.is_empty();
-                        let expanded = self.expanded_sections.contains(&key) != default_open;
-                        let body = v_flex()
-                            .w_full()
-                            .min_w_0()
-                            .px_3()
-                            .pb_3()
-                            .gap_3()
-                            .child(self.field_rows(
-                                &[
-                                    ("Image".into(), Some(container.image)),
-                                    ("Ports".into(), container.ports),
-                                ],
-                                cx,
-                            ))
-                            .child(self.overview_table(&container.resources, cx))
-                            .child(self.disclosure(
-                                "Probes, environment & mounts",
-                                &format!("{key}:configuration"),
-                                self.field_rows(&container.fields, cx),
-                                false,
-                                cx,
-                            ))
-                            .when(!container.status_fields.is_empty(), |this| {
-                                this.child(self.disclosure(
-                                    "Runtime details",
-                                    &format!("{key}:runtime"),
-                                    self.field_rows(&container.status_fields, cx),
-                                    false,
-                                    cx,
-                                ))
-                            });
-                        v_flex()
-                            .id(SharedString::from(key.clone()))
-                            .w_full()
-                            .min_w_0()
-                            .rounded_md()
-                            .border_1()
-                            .border_color(cx.theme().border)
-                            .child(
-                                h_flex()
-                                    .w_full()
-                                    .min_w_0()
-                                    .flex_wrap()
-                                    .gap_2()
-                                    .p_2()
-                                    .items_center()
-                                    .child(
-                                        Button::new("toggle-container")
-                                            .ghost()
-                                            .xsmall()
-                                            .toggled(expanded)
-                                            .icon(if expanded {
-                                                gpui_kit::component::IconName::ChevronDown
-                                            } else {
-                                                gpui_kit::component::IconName::ChevronRight
-                                            })
-                                            .tooltip(crate::i18n::text(if expanded {
-                                                "Collapse container"
-                                            } else {
-                                                "Expand container"
-                                            }))
-                                            .on_click(cx.listener(move |view, _, _, cx| {
-                                                if !view.expanded_sections.remove(&key) {
-                                                    view.expanded_sections.insert(key.clone());
-                                                }
-                                                cx.notify();
-                                            })),
-                                    )
-                                    .child(
-                                        div()
-                                            .flex_1()
-                                            .min_w_0()
-                                            .text_sm()
-                                            .font_weight(FontWeight::MEDIUM)
-                                            .child(SelectableText::new(
-                                                "name",
-                                                format!("{}{}", container.category, container.name),
-                                            )),
-                                    )
-                                    .child(
-                                        div()
-                                            .px_2()
-                                            .py_0p5()
-                                            .rounded_md()
-                                            .text_xs()
-                                            .bg(cx.theme().tone_surface(tone))
-                                            .text_color(cx.theme().tone(tone))
-                                            .child(SelectableText::new("state", container.state)),
-                                    )
-                                    .when(container.restarts > 0, |this| {
-                                        this.child(
-                                            div()
-                                                .text_xs()
-                                                .text_color(cx.theme().muted_foreground)
-                                                .child(SelectableText::new(
-                                                    "restarts",
-                                                    crate::i18n::message(
-                                                        "messages.restarts",
-                                                        &[(
-                                                            "value0",
-                                                            (container.restarts).to_string(),
-                                                        )],
-                                                    )
-                                                    .to_string(),
-                                                )),
-                                        )
-                                    })
-                                    .when(container.stop_debug, |this| {
-                                        let name = container.name.clone();
-                                        this.child(
-                                            Button::new("stop-debug-container")
-                                                .xsmall()
-                                                .ghost()
-                                                .icon(IconName::CircleX)
-                                                .label(crate::i18n::text("Stop debug container"))
-                                                .disabled(!crate::actions::may_exec(
-                                                    self.rules.as_deref(),
-                                                ))
-                                                .on_click(cx.listener(
-                                                    move |view, _, window, cx| {
-                                                        crate::debug_stop::open(
-                                                            view.session.clone(),
-                                                            view.object.clone(),
-                                                            name.clone(),
-                                                            window,
-                                                            cx,
-                                                        );
-                                                    },
-                                                )),
-                                        )
-                                    }),
-                            )
-                            .when(expanded, |this| this.child(body))
-                    }),
-            )
-    }
-
     /// The bar under the keys: the same status line the YAML tab has, a
     /// reveal for Secrets, and Save.
     fn usage_link(&self, id: &'static str, cx: &mut Context<Self>) -> Option<AnyElement> {
@@ -2782,7 +2624,7 @@ impl DetailView {
         div()
             .id("events")
             .size_full()
-            .overflow_y_scroll()
+            .overflow_y_scrollbar()
             .child(
                 v_flex()
                     .p_3()
@@ -2947,10 +2789,7 @@ impl DetailView {
             }))
     }
 
-    /// The containers of a Pod, merged with what their statuses say.
-    ///
-    /// `None` for anything that is not a Pod, which is what keeps the section
-    /// out of a Deployment's overview.
+    /// Containers in a Pod or workload template, merged with live Pod status.
     fn containers(&self) -> Option<Vec<ContainerLine>> {
         let path =
             crate::overview::pod_spec_path(&self.kind.resource.group, &self.kind.resource.kind)?;
@@ -2982,11 +2821,6 @@ impl DetailView {
                     } else {
                         None
                     };
-                let mut fields = container.clone();
-                if let Value::Object(fields) = &mut fields {
-                    fields.remove("name");
-                    fields.remove("image");
-                }
                 containers.push(ContainerLine {
                     stop_debug: self.kind.resource.kind == "Pod"
                         && self.kind.resource.group.is_empty()
@@ -2999,27 +2833,6 @@ impl DetailView {
                         .as_str()
                         .unwrap_or("<no image>")
                         .to_string(),
-                    ports: container
-                        .get("ports")
-                        .and_then(Value::as_array)
-                        .filter(|v| !v.is_empty())
-                        .map(|ports| {
-                            ports
-                                .iter()
-                                .map(|port| {
-                                    let name = port["name"]
-                                        .as_str()
-                                        .map(|v| format!("{v}: "))
-                                        .unwrap_or_default();
-                                    format!(
-                                        "{name}{} / {}",
-                                        port["containerPort"],
-                                        port["protocol"].as_str().unwrap_or("TCP")
-                                    )
-                                })
-                                .collect::<Vec<_>>()
-                                .join("\n")
-                        }),
                     resources: crate::overview::resource_table(
                         &container["resources"]["requests"],
                         &container["resources"]["limits"],
@@ -3035,16 +2848,7 @@ impl DetailView {
                         }
                         .into()
                     }),
-                    fields: {
-                        let mut rows = crate::overview::rows(&fields);
-                        rows.sort_by_key(|(key, _)| match key.split(" / ").next() {
-                            Some("ports") => 0,
-                            Some("resources") => 1,
-                            Some("readinessProbe" | "livenessProbe" | "startupProbe") => 2,
-                            _ => 3,
-                        });
-                        rows
-                    },
+                    configuration: containers::Configuration::of(container),
                     status_fields: status.map(crate::overview::rows).unwrap_or_default(),
                 });
             }
@@ -3117,10 +2921,9 @@ struct ContainerLine {
     stop_debug: bool,
     name: String,
     category: &'static str,
-    fields: Vec<(String, Option<String>)>,
+    configuration: containers::Configuration,
     status_fields: Vec<(String, Option<String>)>,
     image: String,
-    ports: Option<String>,
     resources: crate::overview::Table,
     ready: bool,
     restarts: i64,
@@ -3201,10 +3004,20 @@ impl Render for DetailView {
 
         v_flex()
             .size_full()
+            .min_w_0()
+            .min_h_0()
             .overflow_hidden()
             .bg(cx.theme().background)
             .child(self.render_header(cx))
-            .child(div().flex_1().overflow_hidden().child(body))
+            .child(
+                div()
+                    .flex_1()
+                    .w_full()
+                    .min_w_0()
+                    .min_h_0()
+                    .overflow_hidden()
+                    .child(body),
+            )
     }
 }
 

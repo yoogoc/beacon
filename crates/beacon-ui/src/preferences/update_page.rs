@@ -1,5 +1,6 @@
 //! Compact update status and preferences, using the application's theme.
 use super::*;
+use crate::scroll::OverflowScrollbars as _;
 use crate::updates::{Status, Updater};
 use beacon_updater::Channel;
 use gpui_kit::base::ElementExt as _;
@@ -420,7 +421,7 @@ impl PreferencesView {
                                 .id("update-error-scroll")
                                 .test_support()
                                 .max_h(px(120.))
-                                .overflow_y_scroll()
+                                .overflow_y_scrollbar()
                                 .on_scroll_wheel(|_, _, cx| cx.stop_propagation())
                                 .text_xs()
                                 .text_color(cx.theme().danger)
@@ -480,7 +481,7 @@ impl PreferencesView {
                                     .id("update-notes-scroll")
                                     .test_support()
                                     .max_h(px(220.))
-                                    .overflow_y_scroll()
+                                    .overflow_y_scrollbar()
                                     .on_scroll_wheel(|_, _, cx| cx.stop_propagation())
                                     .child(div().id("update-notes-content").test_support().child(
                                         crate::copyable_text::copyable_text(

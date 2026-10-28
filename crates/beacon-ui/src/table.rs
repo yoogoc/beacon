@@ -22,7 +22,8 @@ use gpui_kit::assets::IconName;
 use gpui_kit::base::TestSupportExt as _;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::menu::{DropdownMenu as _, PopupMenu, PopupMenuItem};
-use gpui_kit::component::table::{Column, ColumnSort, TableDelegate, TableState};
+use gpui_kit::component::scroll::{Scrollbar, ScrollbarMode};
+use gpui_kit::component::table::{Column, ColumnSort, DataTable, TableDelegate, TableState};
 use gpui_kit::component::tooltip::Tooltip;
 use gpui_kit::component::{ActiveTheme as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
@@ -49,6 +50,54 @@ use crate::theme::{BeaconTheme as _, Tone};
 /// component wants. Columns are resizable afterwards, so this only has to be a
 /// reasonable first guess at a normal window width.
 const FLEX_UNIT: f32 = 140.0;
+const SELECTION_COLUMN_WIDTH: f32 = 44.0;
+
+pub(crate) fn view(table: &Entity<TableState<ResourceTable>>, cx: &App) -> AnyElement {
+    if cfg!(any(target_os = "windows", target_os = "linux")) {
+        with_horizontal_scrollbar(table, cx)
+    } else {
+        table.clone().into_any_element()
+    }
+}
+
+fn with_horizontal_scrollbar(table: &Entity<TableState<ResourceTable>>, cx: &App) -> AnyElement {
+    let state = table.read(cx);
+    let fixed_width = if state.col_fixed && state.delegate().selection_column {
+        px(SELECTION_COLUMN_WIDTH)
+    } else {
+        px(0.)
+    };
+    // Share the table's handle so dragging moves the header and virtual rows
+    // together. A separate footer keeps the last row clear of the thumb.
+    v_flex()
+        .size_full()
+        .min_size_0()
+        .child(
+            div().flex_1().min_size_0().overflow_hidden().child(
+                DataTable::new(table)
+                    .bordered(false)
+                    .scrollbar_visible(true, false),
+            ),
+        )
+        .child(
+            div()
+                .id("resource-table-horizontal-scrollbar")
+                .test_support()
+                .relative()
+                .flex_shrink_0()
+                .w_full()
+                .h(Scrollbar::width())
+                .bg(cx.theme().tokens.table)
+                .child(
+                    div().absolute().inset_0().left(fixed_width).child(
+                        Scrollbar::horizontal(&state.horizontal_scroll_handle)
+                            .mode(ScrollbarMode::Always)
+                            .viewport_from_layout(),
+                    ),
+                ),
+        )
+        .into_any_element()
+}
 
 pub struct ResourceTable {
     context_view: Option<WeakEntity<ClusterView>>,
@@ -1209,8 +1258,8 @@ impl TableDelegate for ResourceTable {
         }
         if self.selection_column && index == 0 {
             return Column::new("select", "")
-                .width(px(44.))
-                .min_width(px(44.))
+                .width(px(SELECTION_COLUMN_WIDTH))
+                .min_width(px(SELECTION_COLUMN_WIDTH))
                 .fixed_left()
                 .resizable(false)
                 .movable(false)
@@ -1647,6 +1696,94 @@ mod rendering_tests {
     impl Render for IngressTable {
         fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
             div().size_full().child(self.0.clone())
+        }
+    }
+
+    struct ScrollableTable(Entity<TableState<ResourceTable>>);
+    impl Render for ScrollableTable {
+        fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            // Exercise the Windows/Linux presentation on every test host.
+            with_horizontal_scrollbar(&self.0, cx)
+        }
+    }
+
+    #[::core::prelude::v1::test]
+    fn horizontal_scrollbar_reveals_offscreen_columns_and_tracks_window_resizes() {
+        for retained in [false, true] {
+            let cx = &mut support::context();
+            let (window, view) = cx.update(|cx| {
+                gpui_kit::open_window(
+                    WindowOptions {
+                        window_bounds: Some(WindowBounds::Windowed(Bounds::new(
+                            Point::default(),
+                            size(px(640.), px(400.)),
+                        ))),
+                        ..Default::default()
+                    },
+                    cx,
+                    |window, cx| {
+                        window.set_view_retention(retained);
+                        let state = cx.new(|cx| {
+                            let mut delegate = ResourceTable::new(ColumnSet {
+                                columns: (0..5)
+                                    .map(|index| ColumnDef::new(
+                                        format!("Column {index}"),
+                                        ColumnWidth::Fixed(240.),
+                                        ColumnSource::Name,
+                                    ))
+                                    .collect(),
+                            });
+                            delegate.apply(vec![Delta::Reset(vec![Arc::new(
+                                serde_json::from_value(serde_json::json!({
+                                    "apiVersion": "v1", "kind": "Pod",
+                                    "metadata": {"name": "demo", "namespace": "default", "uid": "demo"}
+                                })).unwrap(),
+                            )])]);
+                            crate::i18n::table(delegate, window, cx)
+                        });
+                        cx.new(|_| ScrollableTable(state))
+                    },
+                ).unwrap()
+            });
+            cx.update_window(window, |_, window, cx| {
+                window.render_frame(cx);
+                window.render_frame(cx);
+                let rail = window.find("resource-table-horizontal-scrollbar").bounds();
+                let fixed = window.find(("col-header", 0usize)).bounds();
+                let state = view.read(cx).0.read(cx);
+                assert!(state.horizontal_scroll_handle.max_offset().x > px(0.));
+                assert!(
+                    state
+                        .vertical_scroll_handle
+                        .0
+                        .borrow()
+                        .base_handle
+                        .bounds()
+                        .bottom()
+                        <= rail.top()
+                );
+                let start = point(fixed.right() + px(12.), rail.center().y);
+                let end = point(rail.right() - px(12.), start.y);
+                window.drag(start, end, cx);
+                assert!(view.read(cx).0.read(cx).horizontal_scroll_handle.offset().x < px(0.));
+                let last = window.find(("col-header", 5usize)).bounds();
+                assert!(
+                    last.left() >= fixed.right() && last.right() <= rail.right() + px(1.),
+                    "last column must be readable: {last:?}"
+                );
+                assert_eq!(window.find(("col-header", 0usize)).bounds(), fixed);
+            })
+            .unwrap();
+            cx.simulate_window_resize(window, size(px(1600.), px(400.)));
+            cx.update_window(window, |_, window, cx| {
+                window.render_frame(cx);
+                window.render_frame(cx);
+                assert_eq!(
+                    view.read(cx).0.read(cx).horizontal_scroll_handle.offset().x,
+                    px(0.)
+                );
+            })
+            .unwrap();
         }
     }
 

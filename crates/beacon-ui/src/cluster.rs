@@ -8,6 +8,7 @@
 //! are. Nothing here knows what a Pod is: each view watches one selected kind,
 //! and the sidebar can either change it or open another view explicitly.
 
+use crate::scroll::OverflowScrollbars as _;
 use std::{collections::BTreeSet, sync::Arc, time::Duration};
 
 use crate::selection::checkbox;
@@ -2276,7 +2277,7 @@ impl ClusterView {
             Releases::Ready(releases) => div()
                 .id("releases")
                 .size_full()
-                .overflow_y_scroll()
+                .overflow_y_scrollbar()
                 .child(v_flex().w_full().children(releases.iter().map(|release| {
                     let tone = if release.status == "deployed" {
                         Tone::Healthy
@@ -2610,7 +2611,7 @@ impl ClusterView {
                             .id("namespace-list")
                             .min_h_0()
                             .flex_1()
-                            .overflow_y_scroll()
+                            .overflow_y_scrollbar()
                             .child(v_flex().gap_0p5().children(rows)),
                     )
                     .when(names.is_empty(), |this| {
@@ -2792,7 +2793,7 @@ impl ClusterView {
                         .child(crate::copyable_text::copyable_text("label-filter-error", error))))
                     .child(toolbar::picker_search("label-options-search", &search_input, cx))
                     .children(hint.map(|hint| div().text_xs().text_color(cx.theme().muted_foreground).child(hint)))
-                    .child(div().id("label-filter-values").min_h_0().flex_1().overflow_y_scroll()
+                    .child(div().id("label-filter-values").min_h_0().flex_1().overflow_y_scrollbar()
                         .child(v_flex().gap_0p5().children(rows)))
             })
     }
@@ -2929,7 +2930,7 @@ impl ClusterView {
                             .aria_label(format!("{} options", field.label()))
                             .min_h_0()
                             .flex_1()
-                            .overflow_y_scroll()
+                            .overflow_y_scrollbar()
                             .child(v_flex().gap_0p5().children(choices)),
                     )
                     .when(matching.is_empty(), |this| {
@@ -2987,15 +2988,13 @@ impl Render for ClusterView {
                 .into_any_element();
         }
 
-        // `TableState` renders itself; it is the virtualised table, not a
-        // delegate that something else draws.
         let table = div()
             .id("resource-list-pane")
             .test_support()
             .relative()
             .size_full()
             .overflow_hidden()
-            .child(self.table.clone())
+            .child(crate::table::view(&self.table, cx))
             .children(self.render_create_button(cx))
             .into_any_element();
 

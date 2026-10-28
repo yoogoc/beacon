@@ -1,5 +1,6 @@
 //! Theme-aware release identity, revision history and read-only document review.
 use super::*;
+use crate::scroll::OverflowScrollbars as _;
 fn muted(text: impl Into<SharedString>, cx: &App) -> AnyElement {
     div()
         .text_xs()
@@ -304,7 +305,7 @@ impl HelmDetails {
         }
         v_flex().flex_1().min_size_0().gap_2()
             .child(muted("Select a revision to inspect its values. Helm may prune older revisions; gaps are shown as stored.", cx))
-            .child(div().id("helm-history").test_support().flex_1().overflow_y_scroll()
+            .child(div().id("helm-history").test_support().flex_1().overflow_y_scrollbar()
                 .child(v_flex().w_full()
                     .child(h_flex().px_3().py_2().gap_3().bg(cx.theme().muted).text_xs()
                         .child(div().w(px(74.)).child(crate::i18n::text("Revision")))

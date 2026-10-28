@@ -1,4 +1,5 @@
 //! Cluster capacity, live session samples and Prometheus history in a normal tab.
+use crate::scroll::OverflowScrollbars as _;
 use crate::{
     bridge::Bridge,
     detail::{DetailClosed, DetailView, OwnerRequested},
@@ -665,7 +666,7 @@ impl Render for OverviewView {
                 div()
                     .id("cluster-overview-scroll")
                     .size_full()
-                    .overflow_y_scroll()
+                    .overflow_y_scrollbar()
                     .child(content),
             )
             .when_some(self.detail.clone(), |view, detail| {

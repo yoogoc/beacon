@@ -848,7 +848,7 @@ impl FilesView {
                     .text_size(cx.theme().font_size * 0.6875).text_color(cx.theme().muted_foreground)
                     .child(crate::i18n::text("Text preview")).child(div().flex_1()).child("UTF-8"))
                 .child(div().id("file-preview-scroll").test_support().flex_1().min_size_0()
-                    .overflow_scroll().p_3().pt_1().font_family(cx.theme().mono_font_family.clone()).text_size(cx.theme().mono_font_size)
+                    .overflow_scrollbar().p_3().pt_1().font_family(cx.theme().mono_font_family.clone()).text_size(cx.theme().mono_font_size)
                     .line_height(relative(1.6)).whitespace_nowrap()
                     .child(copyable_text("file-content", text.clone())))
                 .into_any_element()
@@ -1054,7 +1054,7 @@ impl Render for FilesView {
                             .id("files-breadcrumb-scroll")
                             .flex_1()
                             .min_w_0()
-                            .overflow_x_scroll()
+                            .overflow_x_scrollbar()
                             .child(
                                 h_flex()
                                     .gap_1()
@@ -1173,7 +1173,7 @@ impl Render for FilesView {
                                 .flex_1()
                                 .min_w_0()
                                 .max_h(px(120.))
-                                .overflow_y_scroll()
+                                .overflow_y_scrollbar()
                                 .child(copyable_text("files-message", message)),
                         )
                         .child(

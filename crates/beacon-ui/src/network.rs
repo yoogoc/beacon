@@ -1,4 +1,5 @@
 //! Live network paths; every available hop navigates to the actual resource.
+use crate::scroll::OverflowScrollbars as _;
 use crate::{
     bridge::{Bridge, drain_into},
     copyable_text::copyable_text,
@@ -326,7 +327,7 @@ impl Render for NetworkView {
                                                         .id(("network-full-notes", index))
                                                         .w(px(360.))
                                                         .max_h(px(280.))
-                                                        .overflow_y_scroll()
+                                                        .overflow_y_scrollbar()
                                                         .child(v_flex().gap_2().children(
                                                             notes.iter().enumerate().map(
                                                                 |(i, note)| {

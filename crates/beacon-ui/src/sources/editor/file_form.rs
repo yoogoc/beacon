@@ -10,8 +10,18 @@ impl SourceEditor {
             .min_w_0()
             .max_h(px(264.))
             .overflow_y_scroll()
+            .when(crate::scroll::DESKTOP_SCROLLBARS, |area| {
+                area.overflow_x_scroll()
+            })
             .track_scroll(&self.file_scroll)
-            .vertical_scrollbar(&self.file_scroll)
+            .scrollbar(
+                &self.file_scroll,
+                if crate::scroll::DESKTOP_SCROLLBARS {
+                    gpui_kit::component::scroll::ScrollbarAxis::Both
+                } else {
+                    gpui_kit::component::scroll::ScrollbarAxis::Vertical
+                },
+            )
             .children(self.files.iter().enumerate().map(|(index, file)| {
                 let id = file.name.entity_id();
                 let remove_id = file.id.clone();

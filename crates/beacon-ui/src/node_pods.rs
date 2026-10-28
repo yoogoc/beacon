@@ -269,7 +269,7 @@ fn render_pods_content(
             .id("node-pods-table")
             .size_full()
             .min_size_0()
-            .child(table.clone())
+            .child(crate::table::view(table, cx))
             .test_support()
             .into_any_element()
     };

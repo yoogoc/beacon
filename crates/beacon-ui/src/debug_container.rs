@@ -1,4 +1,5 @@
 //! A debug-container form and terminal, isolated from the resource overview.
+use crate::scroll::OverflowScrollbars as _;
 use crate::{bridge::Bridge, copyable_text::copyable_text};
 use beacon_kube::{
     ClusterSession, DynamicObject,
@@ -348,7 +349,7 @@ impl Render for DebugView {
             .w_full()
             .min_h_0()
             .max_h((window.viewport_size().height - px(180.)).max(px(240.)))
-            .overflow_y_scroll()
+            .overflow_y_scrollbar()
             .gap_4()
             .child(header);
         if let Some(created) = &self.created {

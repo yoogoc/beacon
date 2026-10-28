@@ -1,4 +1,5 @@
 //! Schema assistance shared by existing-resource and creation YAML editors.
+use crate::scroll::OverflowScrollbars as _;
 use crate::{
     bridge::Bridge,
     copyable_text::copyable_text,
@@ -430,7 +431,7 @@ impl Render for YamlAssistance {
                         .id("yaml-schema-problems")
                         .test_support()
                         .max_h(px(160.))
-                        .overflow_y_scroll()
+                        .overflow_y_scrollbar()
                         .px_3()
                         .pb_1()
                         .children(
@@ -523,7 +524,7 @@ impl Render for YamlAssistance {
                     .py_2()
                     .gap_1()
                     .max_h(px(160.))
-                    .overflow_y_scroll()
+                    .overflow_y_scrollbar()
                     .bg(cx.theme().muted.opacity(0.3))
                     .child(
                         h_flex()

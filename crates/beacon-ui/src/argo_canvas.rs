@@ -16,6 +16,7 @@ use gpui_kit::{
         button::{Button, ButtonVariants as _},
         h_flex,
         input::{Input, InputEvent, InputState},
+        scroll::{Scrollbar, ScrollbarHandle, ScrollbarMode},
         spinner::Spinner,
         tooltip::Tooltip,
         v_flex,
@@ -35,6 +36,29 @@ struct Focus {
     label: String,
     ids: Vec<String>,
 }
+
+#[derive(Clone, Default)]
+struct GraphScrollbar {
+    bounds: Rc<Cell<Bounds<Pixels>>>,
+    content: Rc<Cell<Size<Pixels>>>,
+    offset: Rc<Cell<Point<Pixels>>>,
+    pending: Rc<Cell<Option<Point<Pixels>>>>,
+}
+impl ScrollbarHandle for GraphScrollbar {
+    fn viewport_bounds(&self) -> Bounds<Pixels> {
+        self.bounds.get()
+    }
+    fn content_size(&self) -> Size<Pixels> {
+        self.content.get()
+    }
+    fn offset(&self) -> Point<Pixels> {
+        self.offset.get()
+    }
+    fn set_offset(&self, offset: Point<Pixels>) {
+        self.offset.set(offset);
+        self.pending.set(Some(offset));
+    }
+}
 pub(crate) struct ArgoCanvas {
     prepared: Prepared,
     scene: Arc<Scene>,
@@ -44,6 +68,8 @@ pub(crate) struct ArgoCanvas {
     pinned: Option<String>,
     camera: Camera,
     bounds: Rc<Cell<Bounds<Pixels>>>,
+    horizontal_scroll: GraphScrollbar,
+    desktop_scrollbars: bool,
     drag: Option<Point<Pixels>>,
     search: Entity<InputState>,
     matches: Vec<GraphNode>,
@@ -86,6 +112,8 @@ impl ArgoCanvas {
                 Point::default(),
                 size(px(600.), px(420.)),
             ))),
+            horizontal_scroll: GraphScrollbar::default(),
+            desktop_scrollbars: crate::scroll::DESKTOP_SCROLLBARS,
             drag: None,
             search,
             matches: vec![],
@@ -450,7 +478,7 @@ impl ArgoCanvas {
             .test_support()
             .absolute()
             .right(px(12.))
-            .bottom(px(12.))
+            .bottom(px(if self.desktop_scrollbars { 28. } else { 12. }))
             .w(px(96.))
             .h(px(64.))
             .rounded_md()
@@ -609,7 +637,24 @@ impl Render for ArgoCanvas {
         if self.scene.graph.edges.is_empty() && self.scene.graph.nodes.len() <= 12 {
             Arc::make_mut(&mut self.scene).arrange_independent(size.width);
         }
+        if let Some(offset) = self.horizontal_scroll.pending.take() {
+            self.camera = self.resolved();
+            self.camera.automatic = false;
+            self.camera.center.x = (size.width / 2. - offset.x) / self.camera.scale;
+        }
         let camera = self.resolved();
+        let content_width = self.scene.size().width * camera.scale;
+        self.horizontal_scroll.bounds.set(self.bounds.get());
+        self.horizontal_scroll
+            .content
+            .set(gpui_kit::size(content_width, size.height));
+        self.horizontal_scroll.offset.set(point(
+            camera
+                .origin(size)
+                .x
+                .clamp(-(content_width - size.width).max(px(0.)), px(0.)),
+            px(0.),
+        ));
         let empty = self.scene.graph.nodes.is_empty();
         let ready = !empty && self.error.is_none();
         let mut graph = div()
@@ -829,7 +874,7 @@ impl Render for ArgoCanvas {
                     .id("argo-zoom-controls")
                     .absolute()
                     .left(px(12.))
-                    .bottom(px(12.))
+                    .bottom(px(if self.desktop_scrollbars { 28. } else { 12. }))
                     .gap_1()
                     .p_1()
                     .rounded_md()
@@ -877,6 +922,11 @@ impl Render for ArgoCanvas {
             );
             if size.width >= px(360.) {
                 graph = graph.child(self.minimap(cx));
+            }
+            if self.desktop_scrollbars {
+                graph = graph.child(
+                    Scrollbar::horizontal(&self.horizontal_scroll).mode(ScrollbarMode::Always),
+                );
             }
         }
         let mut toolbar = h_flex()

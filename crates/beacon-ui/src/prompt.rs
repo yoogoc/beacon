@@ -9,6 +9,7 @@
 //! the button says, and a confirmation for everything is a confirmation for
 //! nothing.
 
+use crate::scroll::OverflowScrollbars as _;
 use beacon_kube::{ObjectRef, Operation};
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::{Input, InputState};
@@ -258,7 +259,7 @@ impl Prompt {
                         .id("delete-target-table")
                         .w_full()
                         .max_h(px(280.))
-                        .overflow_y_scroll()
+                        .overflow_y_scrollbar()
                         .child(v_flex().children(rows)),
                 )
                 .into_any_element(),

@@ -47,6 +47,13 @@ pub(crate) enum ContextDisplay {
     SourceGroups,
     SourceLabels,
 }
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum ContainerLayout {
+    #[default]
+    Workbench,
+    Grouped,
+}
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub(crate) struct CustomTheme {
@@ -168,6 +175,7 @@ pub(crate) struct Preferences {
     pub language: crate::i18n::Language,
     pub appearance: Appearance,
     pub context_display: ContextDisplay,
+    pub container_layout: ContainerLayout,
     pub themes: BTreeMap<String, CustomTheme>,
     pub proxy: Proxy,
     pub clusters: BTreeMap<String, ClusterSettings>,
@@ -231,6 +239,9 @@ struct Store(Entity<State>);
 impl Global for Store {}
 pub(crate) fn store(cx: &App) -> Entity<State> {
     cx.global::<Store>().0.clone()
+}
+pub(crate) fn try_store(cx: &App) -> Option<Entity<State>> {
+    cx.try_global::<Store>().map(|store| store.0.clone())
 }
 pub(crate) fn init(cx: &mut App) {
     let directory = std::env::var_os("BEACON_CONFIG_DIR")
@@ -304,6 +315,21 @@ pub(crate) fn save_language(language: crate::i18n::Language, cx: &mut App) -> Re
         cx.notify();
     });
     crate::i18n::apply(language, cx);
+    cx.refresh_windows();
+    Ok(())
+}
+
+/// Save this display preference independently of drafts in the settings window.
+pub(crate) fn save_container_layout(layout: ContainerLayout, cx: &mut App) -> Result<(), String> {
+    let state = store(cx);
+    let mut preferences = state.read(cx).preferences.clone();
+    preferences.container_layout = layout;
+    write(&state.read(cx).directory, &preferences)?;
+    state.update(cx, |state, cx| {
+        state.preferences = preferences;
+        cx.emit(Changed(None));
+        cx.notify();
+    });
     cx.refresh_windows();
     Ok(())
 }
@@ -432,6 +458,9 @@ pub(crate) fn apply(window: Option<&mut Window>, cx: &mut App) {
         let theme = Theme::global_mut(cx);
         theme.link = theme.info;
     }
+    if crate::scroll::DESKTOP_SCROLLBARS {
+        Theme::global_mut(cx).scrollbar_mode = gpui_kit::component::scroll::ScrollbarMode::Always;
+    }
     Theme::sync_base(cx);
 }
 /// Build a local preview without changing the application theme or persisted settings.
@@ -505,8 +534,8 @@ fn custom_icon_data(path: &Path) -> Option<Arc<[u8]>> {
 #[cfg(test)]
 mod tests {
     use super::{
-        Appearance, ClusterSettings, ContextDisplay, CustomTheme, Preferences, custom_icon_data,
-        read, write,
+        Appearance, ClusterSettings, ContainerLayout, ContextDisplay, CustomTheme, Preferences,
+        custom_icon_data, read, write,
     };
     use beacon_kube::{ClusterId, connection::Proxy};
     use gpui_kit::{component::Theme, px, rgb};
@@ -541,10 +570,12 @@ mod tests {
         p.themes.insert(t.name.clone(), t.clone());
         p.appearance = Appearance::Custom(t.name.clone());
         p.context_display = ContextDisplay::SourceLabels;
+        p.container_layout = ContainerLayout::Grouped;
         write(dir.path(), &p).unwrap();
         let read = read(dir.path()).unwrap();
         assert_eq!(read.appearance, p.appearance);
         assert_eq!(read.context_display, ContextDisplay::SourceLabels);
+        assert_eq!(read.container_layout, ContainerLayout::Grouped);
         assert_eq!(read.themes[&t.name].colors, t.colors);
         assert_eq!(
             std::fs::read_dir(dir.path().join("themes"))
@@ -565,6 +596,7 @@ mod tests {
         .unwrap();
         assert!(old.resources.is_empty());
         assert_eq!(old.context_display, ContextDisplay::SourceGroups);
+        assert_eq!(old.container_layout, ContainerLayout::Workbench);
         let mut preferences = old;
         let saved = ResourcePreferences {
             columns: ColumnLayout {

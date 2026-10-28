@@ -1,5 +1,6 @@
 //! Pod logs, commands and interactive shells in the independent bottom panel.
 
+use crate::scroll::OverflowScrollbars as _;
 #[cfg(test)]
 use std::collections::VecDeque;
 use std::{cell::RefCell, path::PathBuf, rc::Rc, sync::Arc};
@@ -1048,7 +1049,7 @@ impl PodToolsView {
                     .id("pod-log-toolbar")
                     .w_full()
                     .min_w_0()
-                    .overflow_x_scroll()
+                    .overflow_x_scrollbar()
                     .whitespace_nowrap()
                     .flex_shrink_0()
                     .px_3()
@@ -1259,7 +1260,7 @@ impl PodToolsView {
                 div()
                     .id("exec-output")
                     .size_full()
-                    .overflow_scroll()
+                    .overflow_scrollbar()
                     .p_3()
                     .child(
                         v_flex()

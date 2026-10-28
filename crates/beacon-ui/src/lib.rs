@@ -52,6 +52,7 @@ mod resource_compare;
 mod resource_menu;
 mod resource_metrics;
 mod rollout;
+mod scroll;
 mod selection;
 mod service_account_secret;
 mod settings;

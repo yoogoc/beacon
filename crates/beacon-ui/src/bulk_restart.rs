@@ -1,4 +1,5 @@
 //! A fixed selection is reviewed once; every Deployment keeps its own result.
+use crate::scroll::OverflowScrollbars as _;
 use crate::{bridge::Bridge, copyable_text::copyable_text};
 use beacon_kube::{ClusterSession, DeleteTarget, Kind};
 use gpui_kit::{
@@ -310,7 +311,7 @@ impl Render for BulkRestart {
                 )
             });
         v_flex().id("bulk-restart-dialog").test_support()
-            .w(px(620.)).max_w_full().max_h_full().overflow_y_scroll().p_4().gap_3()
+            .w(px(620.)).max_w_full().max_h_full().overflow_y_scrollbar().p_4().gap_3()
             .rounded_lg().border_1().border_color(cx.theme().border)
             .bg(cx.theme().background).text_color(cx.theme().foreground).shadow_lg()
             .child(div().text_lg().font_weight(FontWeight::SEMIBOLD).child(heading))

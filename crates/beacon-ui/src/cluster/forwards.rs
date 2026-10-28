@@ -82,7 +82,7 @@ impl ClusterView {
             .filter(|p| p.cluster == self.session.id().as_str())
             .cloned()
             .collect();
-        v_flex().id("forwards").size_full().overflow_y_scroll().p_4().gap_3()
+        v_flex().id("forwards").size_full().overflow_y_scrollbar().p_4().gap_3()
             .child(h_flex().gap_2().child(div().text_lg().child(crate::i18n::text("Port Forwards"))).child(div().text_sm().text_color(cx.theme().muted_foreground).child(format!("{} active",forwards.len()))))
             .when(forwards.is_empty(),|view|view.child(div().text_sm().text_color(cx.theme().muted_foreground).child(crate::i18n::text("No active forwards. Right-click a Pod, Service or Deployment to configure one, or restore a saved forward below."))))
             .children(forwards.into_iter().map(|forward| {

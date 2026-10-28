@@ -56,6 +56,46 @@ fn populate(view: &Entity<ArgoCanvas>, count: usize, cx: &mut App) {
     view.update(cx, |view, cx| view.replace(Prepared::new(graph), nodes, cx));
 }
 
+#[::core::prelude::v1::test]
+fn horizontal_scrollbar_pans_a_zoomed_graph_to_its_right_edge() {
+    let (mut cx, window, view) = fixture();
+    cx.update_window(window, |_, window, cx| {
+        populate(&view, 20, cx);
+        view.update(cx, |view, cx| {
+            view.desktop_scrollbars = true;
+            view.grouped = false;
+            view.scene = Arc::new(Scene::new(&view.prepared.source, None, false, None));
+            view.camera = Camera {
+                automatic: false,
+                scale: 2.,
+                center: point(px(200.), px(150.)),
+            };
+            cx.notify();
+        });
+        window.render_frame(cx);
+        window.render_frame(cx);
+        let bounds = window.find("argo-execution-graph").bounds();
+        let content = view.read(cx).horizontal_scroll.content.get().width;
+        assert!(content > bounds.size.width);
+        let y = bounds.bottom() - Scrollbar::width() / 2.;
+        window.drag(
+            point(bounds.left() + px(20.), y),
+            point(bounds.right() - px(10.), y),
+            cx,
+        );
+        let surface = window.find("argo-graph-surface").bounds();
+        assert!(
+            (surface.right() - bounds.right()).abs() <= px(1.),
+            "right edge must be reachable: {surface:?}"
+        );
+        assert!(!view.read(cx).camera.automatic);
+        window.click("argo-fit", cx);
+        assert_fit(window, cx);
+        assert_eq!(view.read(cx).horizontal_scroll.offset().x, px(0.));
+    })
+    .unwrap();
+}
+
 fn assert_fit(window: &mut Window, cx: &mut App) {
     window.render_frame(cx);
     window.render_frame(cx);

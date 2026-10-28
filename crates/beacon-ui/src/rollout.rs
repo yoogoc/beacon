@@ -1,4 +1,5 @@
 //! Revision history, reviewed rollback, and live Deployment progress.
+use crate::scroll::OverflowScrollbars as _;
 use crate::{
     bridge::Bridge,
     copyable_text::copyable_text,
@@ -247,7 +248,7 @@ impl Render for RolloutView {
         v_flex()
             .id("deployment-history")
             .size_full()
-            .overflow_y_scroll()
+            .overflow_y_scrollbar()
             .p_3()
             .gap_3()
             .child(

@@ -1,4 +1,5 @@
 //! Configure a loopback listener before opening it; presets never auto-connect.
+use crate::scroll::OverflowScrollbars as _;
 use crate::{bridge::Bridge, copyable_text::copyable_text};
 use beacon_kube::{
     ClusterSession,
@@ -200,7 +201,7 @@ impl ForwardDialog {
 }
 impl Render for ForwardDialog {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        v_flex().id("forward-dialog").test_support().w(px(500.)).max_w_full().max_h_full().overflow_y_scroll()
+        v_flex().id("forward-dialog").test_support().w(px(500.)).max_w_full().max_h_full().overflow_y_scrollbar()
             .rounded_xl().border_1().border_color(cx.theme().border).shadow_lg()
             .bg(cx.theme().background).text_color(cx.theme().foreground)
             .child(h_flex().px_4().py_3().gap_3().border_b_1().border_color(cx.theme().border)

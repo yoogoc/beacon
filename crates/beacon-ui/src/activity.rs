@@ -1,5 +1,6 @@
 //! The details behind the status bar counters. These only read local state.
 
+use crate::scroll::OverflowScrollbars as _;
 use beacon_kube::{ClusterSession, Health};
 use gpui_kit::component::{ActiveTheme as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
@@ -137,7 +138,7 @@ pub(crate) fn watches(session: &ClusterSession, cx: &App) -> AnyElement {
         div()
             .id("watch-activity-list")
             .min_h_0()
-            .overflow_y_scroll()
+            .overflow_y_scrollbar()
             .child(v_flex().children(rows))
             .when(watches.is_empty(), |list| {
                 list.child(crate::i18n::text("No active watches in this cluster."))

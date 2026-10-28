@@ -1,4 +1,5 @@
 //! Live logs for every container in a selector, including new replicas.
+use crate::scroll::OverflowScrollbars as _;
 use crate::{
     bridge::{Bridge, drain_into},
     copyable_text::copyable_text,
@@ -490,7 +491,7 @@ impl Render for AggregateLogs {
         v_flex().w_full().h((window.viewport_size().height * 0.78).min(px(760.))).gap_2()
             .child(h_flex().gap_2().child(div().flex_1().child(Input::new(&self.selector).small()))
                 .child(Button::new("apply-log-selector").small().ghost().label(crate::i18n::text("Apply selector / retry")).on_click(cx.listener(|view, _, window, cx| view.load(window, cx)))))
-            .child(h_flex().id("aggregate-log-toolbar").w_full().overflow_x_scroll().gap_2().flex_shrink_0()
+            .child(h_flex().id("aggregate-log-toolbar").w_full().overflow_x_scrollbar().gap_2().flex_shrink_0()
                 .child(div().w(px(210.)).flex_shrink_0().child(Select::new(&self.container).small().title_prefix(crate::i18n::text("Container: "))))
                 .child(div().w(px(180.)).flex_shrink_0().child(Input::new(&self.search).small()))
                 .child(Button::new("aggregate-pause").small().ghost().label(crate::i18n::text(if self.follow { "Pause follow" } else { "Resume follow" })).on_click(cx.listener(|view, _, _, cx| { view.follow = !view.follow; if view.follow { view.latest(); } cx.notify(); })))

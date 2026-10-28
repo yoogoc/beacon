@@ -1,4 +1,5 @@
 //! Per-resource metrics: Metrics API session sampling and Prometheus history.
+use crate::scroll::OverflowScrollbars as _;
 use crate::{
     bridge::Bridge,
     theme::{BeaconTheme as _, Tone},
@@ -765,7 +766,7 @@ impl Render for ResourceMetricsView {
                 )
             })
             .child(controls);
-        v_flex().id("resource-metrics").size_full().min_size_0().gap_3().p_4().overflow_y_scroll()
+        v_flex().id("resource-metrics").size_full().min_size_0().gap_3().p_4().overflow_y_scrollbar()
             .child(header)
             .child(div().id("resource-metrics-coverage").test_support().text_xs().text_color(cx.theme().muted_foreground).child(coverage))
             .when_some(available, |v, available| v.child(div().text_xs().text_color(cx.theme().muted_foreground).child(available)))

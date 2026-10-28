@@ -1,4 +1,5 @@
 //! A searchable guide built from the keymap installed on this platform.
+use crate::scroll::OverflowScrollbars as _;
 use gpui_kit::base::SelectableText;
 use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::component::{ActiveTheme as _, Root, TitleBar, h_flex, v_flex};
@@ -199,7 +200,7 @@ impl Render for Shortcuts {
             .child(v_flex().p_4().gap_2().child(div().text_lg().font_weight(FontWeight::SEMIBOLD).child(crate::i18n::text("Keyboard shortcuts")))
                 .child(div().text_sm().text_color(cx.theme().muted_foreground).child(crate::i18n::text("Shortcuts depend on focus. Pod Shell captures keys for the container. Focus another control to use application shortcuts.")))
                 .child(Input::new(&self.search)))
-            .child(div().id("shortcut-list").flex_1().min_h_0().overflow_y_scroll().child(
+            .child(div().id("shortcut-list").flex_1().min_h_0().overflow_y_scrollbar().child(
                 v_flex().px_4().children(visible.into_iter().map(|(index,e)| {
                     h_flex().id(("shortcut", index)).w_full().gap_4().py_3().items_start().border_b_1().border_color(cx.theme().border)
                         .child(div().w(px(180.)).flex_shrink_0().font_family("monospace").text_sm().child(SelectableText::new("keys",e.keys.clone())))
