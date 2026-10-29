@@ -22,6 +22,8 @@ gpui_kit::assets::icon_assets!(
         Shapes,
         Layers,
         Columns3,
+        Columns2,
+        ArrowLeftRight,
         GripVertical,
         Bookmark,
         Logs,

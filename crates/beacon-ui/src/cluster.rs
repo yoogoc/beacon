@@ -39,7 +39,8 @@ use crate::create::{CreateEvent, CreateView};
 use crate::detail::{DetailClosed, DetailTab, DetailView, OwnerRequested};
 use crate::filters::{Field, OptionSearch};
 use crate::palette::Sources;
-use crate::pod_tools::{PodToolTab, PodToolsClosed, PodToolsView};
+use crate::pod_tools::PodToolTab;
+use crate::pod_workspace::{Closed as PodWorkspaceClosed, PodWorkspace};
 use crate::prompt::{Ask, Prompt, PromptEvent};
 use crate::table::ResourceTable;
 use crate::theme::{BeaconTheme as _, Tone};
@@ -156,7 +157,7 @@ pub struct ClusterView {
     /// reset the split the user dragged.
     split: Entity<ResizableState>,
     /// Pod streams and terminals have their own lifetime and bottom split.
-    pod_tools: Option<Entity<PodToolsView>>,
+    pod_tools: Option<Entity<PodWorkspace>>,
     pod_tools_split: Entity<ResizableState>,
     debug_dialogs: Vec<WeakEntity<crate::debug_container::DebugView>>,
 
@@ -1541,7 +1542,11 @@ impl ClusterView {
             return;
         }
         self.pending_reveal = None;
-        if self.pod_tools.take().is_some() || self.detail.take().is_some() {
+        if let Some(tools) = &self.pod_tools {
+            tools.update(cx, |tools, cx| tools.close_active(window, cx));
+            return;
+        }
+        if self.detail.take().is_some() {
             cx.notify();
         }
     }
@@ -1621,7 +1626,6 @@ impl ClusterView {
         });
         // The panel is about an object of the previous kind.
         self.detail = None;
-        self.pod_tools = None;
         self.pending_reveal = None;
         self.watch_objects(window, cx);
         self.load_columns(window, cx);
@@ -1689,12 +1693,20 @@ impl ClusterView {
                 detail.update(cx, |detail, cx| detail.refresh(object, rules, cx));
             }
         }
-        if let Some(tools) = self.pod_tools.clone() {
-            let key = tools.read(cx).target().clone();
-            if let Some(object) = self.table.read(cx).delegate().object(&key).cloned() {
-                let rules = self.rules.clone();
-                tools.update(cx, |tools, cx| tools.refresh(object, rules, cx));
-            }
+        if let Some(tools) = self.pod_tools.clone()
+            && self
+                .kind
+                .as_ref()
+                .is_some_and(|kind| kind.resource.group.is_empty() && kind.resource.kind == "Pod")
+        {
+            let table = self.table.read(cx).delegate();
+            let objects = table
+                .keys()
+                .iter()
+                .filter_map(|key| table.object(key).cloned())
+                .collect();
+            let rules = self.rules.clone();
+            tools.update(cx, |tools, cx| tools.refresh(objects, rules, cx));
         }
     }
 
@@ -1733,23 +1745,30 @@ impl ClusterView {
         };
         self.table
             .update(cx, |table, cx| table.scroll_to_row(row, cx));
-        if let Some(tools) = &self.pod_tools
-            && tools.read(cx).target() == key
-        {
-            tools.update(cx, |tools, cx| tools.select(tab, window, cx));
-            cx.notify();
-            return;
-        }
-
-        let session = self.session.clone();
+        let tools = if let Some(tools) = &self.pod_tools {
+            tools.clone()
+        } else {
+            let session = self.session.clone();
+            let tools = cx.new(|cx| PodWorkspace::new(session, window, cx));
+            cx.subscribe(&tools, |view, _, _: &PodWorkspaceClosed, cx| {
+                view.pod_tools = None;
+                cx.notify();
+            })
+            .detach();
+            self.pod_tools = Some(tools.clone());
+            tools
+        };
+        let table = self.table.read(cx).delegate();
+        let objects = table
+            .keys()
+            .iter()
+            .filter_map(|key| table.object(key).cloned())
+            .collect();
         let rules = self.rules.clone();
-        let tools = cx.new(|cx| PodToolsView::new(session, object, rules, tab, window, cx));
-        cx.subscribe(&tools, |view, _, _: &PodToolsClosed, cx| {
-            view.pod_tools = None;
-            cx.notify();
-        })
-        .detach();
-        self.pod_tools = Some(tools);
+        tools.update(cx, |tools, cx| {
+            tools.refresh(objects, rules.clone(), cx);
+            tools.open(object, rules, tab, window, cx);
+        });
         cx.notify();
     }
 
@@ -3153,6 +3172,65 @@ mod integration_tests {
     use crate::feature_test_support as support;
     use gpui_kit::test::TestWindowExt as _;
     use serde_json::json;
+
+    #[::core::prelude::v1::test]
+    fn pod_sessions_survive_namespace_and_resource_navigation() {
+        let cx = &mut support::context();
+        let directory = tempfile::tempdir().unwrap();
+        support::workspace(cx, directory.path());
+        let object = json!({"apiVersion":"v1","kind":"Pod","metadata":{"name":"web","namespace":"default","uid":"web-1","resourceVersion":"1"},"spec":{"containers":[{"name":"app"}]}});
+        let (_fixture, session) = support::fixture(cx, "retained-pod-session", vec![object]);
+        let pods = Arc::new(support::kind("", "Pod", "pods"));
+        let (handle, view) = cx.update(|cx| {
+            gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
+                window.set_view_retention(false);
+                cx.new(|cx| {
+                    ClusterView::new(
+                        session,
+                        Some("default".into()),
+                        Some(pods.clone()),
+                        None,
+                        false,
+                        window,
+                        cx,
+                    )
+                })
+            })
+            .unwrap()
+        });
+        support::settle(cx, |cx| {
+            view.read_with(cx, |view, cx| {
+                !view.table.read(cx).delegate().keys().is_empty()
+            })
+        });
+        cx.update_window(handle, |_, window, cx| {
+            view.update(cx, |view, cx| {
+                view.open_pod_tools(
+                    &ObjectRef::new(Some("default".into()), "web"),
+                    PodToolTab::Logs,
+                    window,
+                    cx,
+                );
+                let original = view.pod_tools.as_ref().unwrap().entity_id();
+                view.set_namespace(Some("other".into()), window, cx);
+                assert_eq!(view.pod_tools.as_ref().unwrap().entity_id(), original);
+                view.show(
+                    Arc::new(support::kind("", "ConfigMap", "configmaps")),
+                    window,
+                    cx,
+                );
+                assert_eq!(view.pod_tools.as_ref().unwrap().entity_id(), original);
+                view.show(pods, window, cx);
+                assert_eq!(view.pod_tools.as_ref().unwrap().entity_id(), original);
+            });
+            window.render_frame(cx);
+            assert_eq!(
+                window.find(("pod-session", 0usize)).label(),
+                Some("default/web")
+            );
+        })
+        .unwrap();
+    }
 
     fn menu(window: &Window) -> Vec<(String, bool)> {
         gpui_kit::base::test_support::snapshots(window)

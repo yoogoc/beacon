@@ -21,6 +21,7 @@ use gpui_kit::*;
 
 use crate::bridge::{Bridge, drain_into};
 use crate::theme::{BeaconTheme as _, Tone};
+mod workspace_controls;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum PodToolTab {
@@ -47,6 +48,9 @@ pub(crate) struct PodToolsView {
     object: Arc<DynamicObject>,
     rules: Option<Arc<Rules>>,
     tab: PodToolTab,
+    /// Standalone views retain the original header; workspaces own session tabs.
+    embedded: Option<bool>,
+    log_advanced: bool,
     command: Entity<InputState>,
     ran: Exec,
     shell: Option<Entity<crate::terminal::TerminalView>>,
@@ -525,6 +529,8 @@ impl PodToolsView {
             object,
             rules,
             tab,
+            embedded: None,
+            log_advanced: false,
             command,
             ran: Exec::Idle,
             shell: None,
@@ -558,8 +564,36 @@ impl PodToolsView {
         this
     }
 
-    pub(crate) fn target(&self) -> &ObjectRef {
-        &self.target
+    pub(crate) fn embed(&mut self, show_name: bool, cx: &mut Context<Self>) {
+        if self.embedded.is_none() {
+            self.log_workbench
+                .update(cx, |view, cx| view.use_compact_controls(cx));
+        }
+        if self.embedded != Some(show_name) {
+            self.embedded = Some(show_name);
+            cx.notify();
+        }
+    }
+    pub(crate) fn focus_current(&self, window: &mut Window, cx: &mut Context<Self>) {
+        match self.tab {
+            PodToolTab::Logs => self.log_search.read(cx).focus_handle(cx).focus(window, cx),
+            PodToolTab::Exec => self.command.read(cx).focus_handle(cx).focus(window, cx),
+            PodToolTab::Shell => {
+                if let Some(shell) = &self.shell {
+                    shell.read(cx).focus_handle(cx).focus(window, cx);
+                }
+            }
+        }
+    }
+    pub(crate) fn stop(&mut self, cx: &mut Context<Self>) {
+        self._logs_task = None;
+        self._exec_task = None;
+        if let Some(abort) = self.download_abort.take() {
+            abort.abort();
+        }
+        self._download_task = None;
+        self.shell = None;
+        cx.notify();
     }
 
     pub(crate) fn refresh(
@@ -586,9 +620,10 @@ impl PodToolsView {
     }
 
     fn render_header(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let title = match &self.target.namespace {
-            Some(namespace) => format!("{namespace} / {}", self.target.name),
-            None => self.target.name.clone(),
+        let title = match (&self.target.namespace, self.embedded) {
+            (Some(namespace), Some(false)) => namespace.clone(),
+            (Some(namespace), _) => format!("{namespace} / {}", self.target.name),
+            (None, _) => self.target.name.clone(),
         };
         h_flex()
             .w_full()
@@ -628,14 +663,16 @@ impl PodToolsView {
                         }
                     })),
             )
-            .child(
-                Button::new("close-pod-tools")
-                    .xsmall()
-                    .ghost()
-                    .label("×")
-                    .tooltip(crate::i18n::text("Close the Pod tools panel"))
-                    .on_click(cx.listener(|_, _, _, cx| cx.emit(PodToolsClosed))),
-            )
+            .when(self.embedded.is_none(), |this| {
+                this.child(
+                    Button::new("close-pod-tools")
+                        .xsmall()
+                        .ghost()
+                        .label("×")
+                        .tooltip(crate::i18n::text("Close the Pod tools panel"))
+                        .on_click(cx.listener(|_, _, _, cx| cx.emit(PodToolsClosed))),
+                )
+            })
     }
 
     /// Keep newly added ephemeral containers available without resetting a selection.
@@ -1044,7 +1081,7 @@ impl PodToolsView {
 
         v_flex()
             .size_full()
-            .child(
+            .when(self.embedded.is_none(), |pane| pane.child(
                 h_flex()
                     .id("pod-log-toolbar")
                     .w_full()
@@ -1161,11 +1198,13 @@ impl PodToolsView {
                             }
                         },
                     )),
-            )
-            .child(self.log_workbench.clone())
+            ))
+            .when(self.embedded.is_some(), |pane| pane.child(self.workspace_log_toolbar(cx)))
+            .when(self.embedded.is_none() || self.log_advanced, |pane| pane.child(self.log_workbench.clone()))
             .when(matches!(self.log_status, LogStatus::Failed(_)) && count > 0, |pane| pane.child(div().px_3().py_1().text_xs().text_color(cx.theme().danger).child(crate::copyable_text::copyable_text("pod-log-stream-error", match &self.log_status { LogStatus::Failed(error) => error.clone(), _ => String::new() }))))
             .children(self.render_download_status(cx))
             .child(div().flex_1().min_size_0().overflow_hidden().child(body))
+            .when(self.embedded.is_some(), |pane| pane.child(self.workspace_log_footer(cx)))
             .children(self.log_workbench.read(cx).inspector())
             .into_any_element()
     }

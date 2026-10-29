@@ -39,12 +39,30 @@ pub(crate) struct LogWorkbench {
     error: Option<String>,
     message: Option<String>,
     exporting: bool,
+    compact_controls: bool,
     inspector: Option<Entity<LogInspector>>,
     _subscriptions: Vec<Subscription>,
     _export: Option<Task<()>>,
 }
 impl EventEmitter<Changed> for LogWorkbench {}
 impl LogWorkbench {
+    pub(crate) fn use_compact_controls(&mut self, cx: &mut Context<Self>) {
+        self.compact_controls = true;
+        self.filter.compact = true;
+        cx.notify();
+    }
+    pub(crate) fn set_level(&mut self, level: Option<&str>, cx: &mut Context<Self>) {
+        if let Some(level) = level {
+            if !self.filter.levels.remove(level) {
+                self.filter.levels.insert(level.to_owned());
+            }
+        } else {
+            self.filter.levels.clear();
+        }
+        cx.emit(Changed::Filter);
+        cx.notify();
+    }
+
     pub fn new(
         display: Rc<RefCell<Display>>,
         search: Entity<InputState>,
@@ -150,6 +168,7 @@ impl LogWorkbench {
                 error: None,
                 message: None,
                 exporting: false,
+            compact_controls: false,
                 inspector: None,
                 _subscriptions: subscriptions,
                 _export: None,
@@ -310,9 +329,9 @@ impl Render for LogWorkbench {
             .or_else(|| self.display.borrow().error.clone());
         let bookmark_count = self.display.borrow().bookmarks.len();
         v_flex().w_full().flex_shrink_0().border_b_1().border_color(cx.theme().border).bg(cx.theme().background).text_xs()
-            .child(h_flex().id("structured-log-toolbar").w_full().min_w_0().overflow_x_scrollbar().whitespace_nowrap().gap_1().px_3().py_1()
+            .child(h_flex().id("structured-log-toolbar").w_full().min_w_0().overflow_x_scrollbar().when(!self.compact_controls, |bar| bar.whitespace_nowrap()).when(self.compact_controls, |bar| bar.flex_wrap()).gap_1().px_3().py_1()
                 .child(Button::new("log-regex").xsmall().ghost().selected(self.filter.regex).label(".*").tooltip(crate::i18n::text("Regular expression search (case insensitive)")).on_click(cx.listener(|view, _, _, cx| { view.filter.regex = !view.filter.regex; cx.emit(Changed::Filter); cx.notify(); })))
-                .children(Level::ALL.map(|level| { let label = level.label(); Button::new(format!("log-level-{label}")).xsmall().ghost().selected(self.filter.levels.contains(label)).label(label).on_click(cx.listener(move |view, _, _, cx| { if !view.filter.levels.remove(label) { view.filter.levels.insert(label.into()); } cx.emit(Changed::Filter); cx.notify(); })) }))
+                .children(Level::ALL.map(|level| { let label = level.label(); Button::new(format!("log-level-{label}")).xsmall().ghost().selected(self.filter.levels.contains(label)).toggled(self.filter.levels.contains(label)).label(label).on_click(cx.listener(move |view, _, _, cx| { if !view.filter.levels.remove(label) { view.filter.levels.insert(label.into()); } cx.emit(Changed::Filter); cx.notify(); })) }))
                 .child(div().h(px(16.)).border_l_1().border_color(cx.theme().border).mx_1())
                 .child(Button::new("log-fields").xsmall().ghost().selected(self.fields_open).label(crate::i18n::message("messages.fields", &[("value0", (if self.filter.predicates.is_empty() { String::new() } else { format!(" {}", self.filter.predicates.len()) }).to_string())]).to_string()).tooltip(crate::i18n::text("Filter exact field values and choose displayed fields")).on_click(cx.listener(|view, _, _, cx| { view.fields_open = !view.fields_open; cx.notify(); })))
                 .child(Button::new("log-compact").xsmall().ghost().selected(self.filter.compact).label(crate::i18n::text("Compact")).on_click(cx.listener(|view, _, _, cx| { view.filter.compact = !view.filter.compact; cx.emit(Changed::Filter); cx.notify(); })))

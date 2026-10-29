@@ -45,6 +45,7 @@ mod permissions;
 mod pod_files;
 mod pod_logs;
 mod pod_tools;
+mod pod_workspace;
 mod preferences;
 pub mod prompt;
 mod related;

@@ -1,0 +1,63 @@
+{
+  "_version": 2,
+  "pod_sessions.close": {
+    "en": "Close Pod session?",
+    "zh-CN": "关闭 Pod 会话？"
+  },
+  "pod_sessions.close_warning": {
+    "en": "The running command or shell in this session will disconnect.",
+    "zh-CN": "此会话中正在运行的命令或终端将断开连接。"
+  },
+  "pod_sessions.right": {
+    "en": "Choose right-hand Pod",
+    "zh-CN": "选择右侧 Pod"
+  },
+  "pod_sessions.all": {
+    "en": "All Pod sessions",
+    "zh-CN": "所有 Pod 会话"
+  },
+  "pod_sessions.close_tab": {
+    "en": "Close this Pod session",
+    "zh-CN": "关闭此 Pod 会话"
+  },
+  "pod_sessions.add": {
+    "en": "Open another Pod session",
+    "zh-CN": "打开另一个 Pod 会话"
+  },
+  "pod_sessions.choose": {
+    "en": "Choose a Pod",
+    "zh-CN": "选择 Pod"
+  },
+  "pod_sessions.single": {
+    "en": "Return to a single Pod",
+    "zh-CN": "返回单 Pod 视图"
+  },
+  "pod_sessions.split": {
+    "en": "View two Pods side by side",
+    "zh-CN": "并排查看两个 Pod"
+  },
+  "pod_sessions.level_count": {
+    "en": "%{count} levels",
+    "zh-CN": "%{count} 个级别"
+  },
+  "pod_sessions.advanced": {
+    "en": "Advanced log controls",
+    "zh-CN": "高级日志选项"
+  },
+  "pod_sessions.display": {
+    "en": "Log display and export",
+    "zh-CN": "日志显示与导出"
+  },
+  "pod_sessions.copy": {
+    "en": "Copy matching logs",
+    "zh-CN": "复制匹配的日志"
+  },
+  "pod_sessions.cancel_export": {
+    "en": "Cancel log export",
+    "zh-CN": "取消日志导出"
+  },
+  "pod_sessions.no_match": {
+    "en": "No matching Pods",
+    "zh-CN": "没有匹配的 Pod"
+  }
+}
