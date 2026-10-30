@@ -502,9 +502,17 @@ fn copy_and_port_options_have_one_menu_each_and_preserve_each_operation() {
         1
     );
     assert!(
-        !items
+        !items.iter().any(|(_, label, _)| (label.starts_with("Copy ")
+            && label != "Copy or move resource…")
+            || label.starts_with("Forward port "))
+    );
+    assert_eq!(
+        items
             .iter()
-            .any(|(_, label, _)| label.starts_with("Copy ") || label.starts_with("Forward port "))
+            .filter(|(_, label, _)| label == "Copy or move resource…")
+            .count(),
+        1,
+        "resource transfer is independent of clipboard copy options"
     );
     let index = |name: &str| items.iter().find(|(_, label, _)| label == name).unwrap().0;
     for label in ["Copy status", "Copy container states"] {

@@ -102,6 +102,9 @@ impl Fixture {
     pub fn deny(&self, resource: &str) {
         self.denied.lock().unwrap().insert(resource.to_owned());
     }
+    pub fn allow(&self, resource: &str) {
+        self.denied.lock().unwrap().remove(resource);
+    }
     pub fn rules(&self, resource_rules: Value) {
         *self.rules.lock().unwrap() = resource_rules;
     }
@@ -315,7 +318,9 @@ async fn serve(
         let denied = denied.lock().unwrap();
         let verb = method.to_ascii_lowercase();
         denied.contains(&format!("{verb}/{resource}"))
-            || name.is_some_and(|name| denied.contains(&format!("{verb}/{resource}/{name}")))
+            || name
+                .or_else(|| request.pointer("/metadata/name").and_then(Value::as_str))
+                .is_some_and(|name| denied.contains(&format!("{verb}/{resource}/{name}")))
     };
     if mutation_refused {
         response(&mut stream, "403 Forbidden", json!({"kind":"Status","apiVersion":"v1","status":"Failure","reason":"Forbidden","message":format!("Fixture refuses {method} {resource}"),"code":403}).to_string(), "application/json").await;
@@ -683,9 +688,19 @@ async fn serve(
             .and_then(Value::as_str)
             .is_some()
     {
+        if objects.lock().unwrap().iter().any(|object| {
+            matches(object) && object.pointer("/metadata/name") == request.pointer("/metadata/name")
+        }) {
+            response(&mut stream, "409 Conflict", json!({"kind":"Status","apiVersion":"v1","status":"Failure","code":409,"reason":"AlreadyExists","message":"fixture target already exists"}).to_string(), "application/json").await;
+            return;
+        }
         let mut created = request.clone();
         created["metadata"]["resourceVersion"] = json!("1");
-        created["metadata"]["uid"] = json!("created-fixture");
+        static CREATED_SERIAL: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+        created["metadata"]["uid"] = json!(format!(
+            "created-fixture-{}",
+            CREATED_SERIAL.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        ));
         if !query.contains_key("dryRun") {
             objects.lock().unwrap().push(created.clone());
             let _ = events.send(json!({"type":"ADDED","object":created.clone()}));
@@ -734,11 +749,40 @@ async fn serve(
         response(&mut stream,"404 Not Found",json!({"apiVersion":"v1","kind":"Status","status":"Failure","code":404,"message":"fixture resource missing","reason":"NotFound"}).to_string(),"application/json").await;
         return;
     };
-    if method == "DELETE" && kind == "Pod" && parts.get(index + 2).is_none() {
+    if method == "DELETE" && parts.get(index + 2).is_none() {
         if request.pointer("/preconditions/uid").is_some()
             && request.pointer("/preconditions/uid") != object.pointer("/metadata/uid")
         {
             response(&mut stream, "409 Conflict", json!({"apiVersion":"v1","kind":"Status","status":"Failure","code":409,"reason":"Conflict","message":"Pod UID changed after review"}).to_string(), "application/json").await;
+            return;
+        }
+        if request.pointer("/preconditions/resourceVersion").is_some()
+            && request.pointer("/preconditions/resourceVersion")
+                != object.pointer("/metadata/resourceVersion")
+        {
+            response(&mut stream, "409 Conflict", json!({"kind":"Status","apiVersion":"v1","status":"Failure","code":409,"reason":"Conflict","message":"resource version changed after review"}).to_string(), "application/json").await;
+            return;
+        }
+        if object
+            .pointer("/metadata/finalizers")
+            .and_then(Value::as_array)
+            .is_some_and(|items| !items.is_empty())
+        {
+            object["metadata"]["deletionTimestamp"] = json!("2026-10-30T00:00:00Z");
+            if !query.contains_key("dryRun") {
+                objects.lock().unwrap().retain(|existing| {
+                    !matches(existing)
+                        || existing.pointer("/metadata/name") != object.pointer("/metadata/name")
+                });
+                objects.lock().unwrap().push(object.clone());
+            }
+            response(
+                &mut stream,
+                "202 Accepted",
+                object.to_string(),
+                "application/json",
+            )
+            .await;
             return;
         }
         if !query.contains_key("dryRun") {

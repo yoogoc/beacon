@@ -558,6 +558,17 @@ impl ResourceTable {
             );
         }
 
+        let transfer_view = view.clone();
+        let transfer_target = target.clone();
+        menu = menu.item(
+            PopupMenuItem::new(crate::i18n::text("Copy or move resource…"))
+                .icon(IconName::ArrowRightLeft)
+                .on_click(move |_, window, cx| {
+                    let _ = transfer_view.update(cx, |view, cx| {
+                        view.transfer_resources(Some(&transfer_target), window, cx)
+                    });
+                }),
+        );
         let compare_view = view.clone();
         let compare_target = target.clone();
         menu = menu.item(

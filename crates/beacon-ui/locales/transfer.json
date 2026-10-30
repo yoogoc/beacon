@@ -1,0 +1,391 @@
+{
+  "_version": 2,
+  "transfer.text_0": {
+    "en": "Add a -copy suffix",
+    "zh-CN": "添加 -copy 后缀"
+  },
+  "transfer.text_1": {
+    "en": "Allow sending Secret contents to this destination.",
+    "zh-CN": "允许将 Secret 内容写入此目标位置。"
+  },
+  "transfer.text_2": {
+    "en": "Check and preview",
+    "zh-CN": "检查与预览"
+  },
+  "transfer.text_3": {
+    "en": "Check summary",
+    "zh-CN": "检查摘要"
+  },
+  "transfer.text_4": {
+    "en": "Cluster-scoped resource",
+    "zh-CN": "集群级资源，无命名空间"
+  },
+  "transfer.text_5": {
+    "en": "Connecting or loading namespaces…",
+    "zh-CN": "正在连接或加载命名空间…"
+  },
+  "transfer.text_6": {
+    "en": "Copy / move",
+    "zh-CN": "复制 / 移动"
+  },
+  "transfer.text_7": {
+    "en": "Copy only",
+    "zh-CN": "仅复制"
+  },
+  "transfer.text_8": {
+    "en": "Copy or move resource…",
+    "zh-CN": "复制或移动资源…"
+  },
+  "transfer.text_9": {
+    "en": "Copy or move selected resources",
+    "zh-CN": "复制或移动所选资源"
+  },
+  "transfer.text_10": {
+    "en": "Copy resources",
+    "zh-CN": "复制资源"
+  },
+  "transfer.text_11": {
+    "en": "Copy this dependency too",
+    "zh-CN": "一并复制此依赖"
+  },
+  "transfer.text_12": {
+    "en": "Could not list namespaces. Enter an existing namespace manually.",
+    "zh-CN": "无法列出命名空间，请手动输入已有命名空间。"
+  },
+  "transfer.text_13": {
+    "en": "Create target copies",
+    "zh-CN": "创建目标副本"
+  },
+  "transfer.text_14": {
+    "en": "Destination",
+    "zh-CN": "目标位置"
+  },
+  "transfer.text_15": {
+    "en": "Enter namespace manually",
+    "zh-CN": "手动输入命名空间"
+  },
+  "transfer.text_16": {
+    "en": "I checked the destination. Delete the reviewed source resources from:",
+    "zh-CN": "我已检查目标可用，允许删除以下位置中已审阅的源资源："
+  },
+  "transfer.text_17": {
+    "en": "Keep remaining sources",
+    "zh-CN": "保留剩余源资源"
+  },
+  "transfer.text_18": {
+    "en": "Move",
+    "zh-CN": "移动"
+  },
+  "transfer.text_19": {
+    "en": "Move resources",
+    "zh-CN": "移动资源"
+  },
+  "transfer.text_20": {
+    "en": "No source cleanup starts until every target is verified. Deletions check the reviewed source UID and version; finalizers are never removed.",
+    "zh-CN": "全部目标验证通过后才能清理源端；删除时再次核对源 UID 与版本，不强制移除 finalizer。"
+  },
+  "transfer.text_21": {
+    "en": "Operation in progress…",
+    "zh-CN": "操作进行中…"
+  },
+  "transfer.text_22": {
+    "en": "Resource transfer",
+    "zh-CN": "资源转移"
+  },
+  "transfer.text_23": {
+    "en": "Resources and target names",
+    "zh-CN": "资源与目标名称"
+  },
+  "transfer.text_24": {
+    "en": "Results",
+    "zh-CN": "执行结果"
+  },
+  "transfer.text_25": {
+    "en": "Retry failed copies",
+    "zh-CN": "重试失败的复制"
+  },
+  "transfer.text_26": {
+    "en": "Search clusters",
+    "zh-CN": "搜索集群"
+  },
+  "transfer.text_27": {
+    "en": "Server identity, status, ownership and generated addresses are removed from the copy. Volume data and external systems are not transferred.",
+    "zh-CN": "副本会清理服务器标识、状态、原归属及自动分配的地址。卷数据与外部系统不随资源转移。"
+  },
+  "transfer.text_28": {
+    "en": "Skip",
+    "zh-CN": "跳过"
+  },
+  "transfer.text_29": {
+    "en": "Target YAML",
+    "zh-CN": "目标 YAML"
+  },
+  "transfer.text_30": {
+    "en": "Target and names",
+    "zh-CN": "目标与命名"
+  },
+  "transfer.text_31": {
+    "en": "Target name, permissions and server dry-run passed.",
+    "zh-CN": "目标名称、权限及服务端试运行检查通过。"
+  },
+  "transfer.text_32": {
+    "en": "Transfer ended. Any remaining source resources were retained.",
+    "zh-CN": "转移已结束，尚未清理的源资源已保留。"
+  },
+  "transfer.text_33": {
+    "en": "Transfer results",
+    "zh-CN": "转移结果"
+  },
+  "transfer.text_34": {
+    "en": "Use owning workload",
+    "zh-CN": "改为操作上层工作负载"
+  },
+  "transfer.text_35": {
+    "en": "Verify again",
+    "zh-CN": "重新验证"
+  },
+  "transfer.text_36": {
+    "en": "View target resource",
+    "zh-CN": "查看目标资源"
+  },
+  "transfer.text_37": {
+    "en": "Workload readiness checks do not verify application traffic or external dependencies.",
+    "zh-CN": "工作负载就绪检查不验证业务流量或外部依赖。"
+  },
+  "transfer.text_38": {
+    "en": "Create and verify the destination first. Source deletion requires a separate confirmation.",
+    "zh-CN": "先创建并验证目标，再单独确认删除源资源。"
+  },
+  "transfer.text_39": {
+    "en": "Copy keeps all source resources.",
+    "zh-CN": "复制后保留所有源资源。"
+  },
+  "transfer.text_40": {
+    "en": "Target verified",
+    "zh-CN": "目标已验证"
+  },
+  "transfer.text_41": {
+    "en": "Target created; verification pending",
+    "zh-CN": "目标已创建，待验证"
+  },
+  "transfer.text_42": {
+    "en": "Target not confirmed",
+    "zh-CN": "目标尚未确认"
+  },
+  "transfer.text_43": {
+    "en": "Source deleted",
+    "zh-CN": "源资源已删除"
+  },
+  "transfer.text_44": {
+    "en": "Source deletion requested",
+    "zh-CN": "源资源删除中"
+  },
+  "transfer.text_45": {
+    "en": "Source retained · dependency",
+    "zh-CN": "源资源保留 · 依赖"
+  },
+  "transfer.text_46": {
+    "en": "Source retained",
+    "zh-CN": "源资源保留"
+  },
+  "transfer.text_47": {
+    "en": "Transfer destination",
+    "zh-CN": "转移目标"
+  },
+  "transfer.text_48": {
+    "en": "Wait for the running transfer operation to finish.",
+    "zh-CN": "请等待当前转移操作完成。"
+  },
+  "transfer.text_49": {
+    "en": "Connect to the target cluster first.",
+    "zh-CN": "请先连接目标集群。"
+  },
+  "transfer.text_50": {
+    "en": "Select at least one resource.",
+    "zh-CN": "请至少选择一个资源。"
+  },
+  "transfer.text_51": {
+    "en": "This resource does not support reading full objects.",
+    "zh-CN": "此资源不支持读取完整对象。"
+  },
+  "transfer.text_52": {
+    "en": "Cluster identities, generated resources and persistent storage require their own migration workflow.",
+    "zh-CN": "集群身份、自动生成的资源和持久化存储需要专门的迁移流程。"
+  },
+  "transfer.text_53": {
+    "en": "This resource has an owner. Transfer its owning workload instead of a controller-managed child.",
+    "zh-CN": "此资源由上层对象管理，请转移上层工作负载，不要直接转移子资源。"
+  },
+  "transfer.text_54": {
+    "en": "Cluster-generated authentication tokens cannot be transferred. Create credentials at the destination.",
+    "zh-CN": "不能转移集群生成的认证令牌，请在目标端生成凭据。"
+  },
+  "transfer.text_55": {
+    "en": "A Service without a selector relies on external endpoints. Transfer its endpoint configuration separately.",
+    "zh-CN": "不含 selector 的 Service 依赖外部端点，请单独迁移端点配置。"
+  },
+  "transfer.text_56": {
+    "en": "This StatefulSet provisions persistent volumes. Migrate its data and storage bindings separately.",
+    "zh-CN": "此 StatefulSet 会创建持久卷，请单独迁移数据与存储绑定。"
+  },
+  "transfer.text_57": {
+    "en": "API definitions require a dedicated migration workflow; transfer resource instances instead.",
+    "zh-CN": "API 定义需要专门的迁移流程，此处可转移资源实例。"
+  },
+  "transfer.text_58": {
+    "en": "Use Create a new Job for Job executions. Transfer a CronJob template instead.",
+    "zh-CN": "Job 执行请使用“创建新 Job”；配置转移可操作 CronJob 模板。"
+  },
+  "transfer.text_59": {
+    "en": "Choose a valid lowercase target resource name.",
+    "zh-CN": "请输入有效的目标名称，使用小写字母、数字、短横线或点。"
+  },
+  "transfer.text_60": {
+    "en": "The source metadata is missing.",
+    "zh-CN": "源资源缺少 metadata。"
+  },
+  "transfer.text_61": {
+    "en": "Service spec is missing.",
+    "zh-CN": "Service 缺少 spec。"
+  },
+  "transfer.text_62": {
+    "en": "Use Submit or Resubmit for Workflow runs; transfer a WorkflowTemplate instead.",
+    "zh-CN": "工作流执行请使用提交或重新提交，配置转移请操作 WorkflowTemplate。"
+  },
+  "transfer.text_63": {
+    "en": "This workload references persistent volumes. Migrate storage and its data separately before transferring the workload.",
+    "zh-CN": "此工作负载引用持久卷，请先完成存储与数据迁移。"
+  },
+  "transfer.text_64": {
+    "en": "The target is being deleted.",
+    "zh-CN": "目标资源正在删除。"
+  },
+  "transfer.text_65": {
+    "en": "Target workload is not ready yet. Check its status, then verify again.",
+    "zh-CN": "目标工作负载尚未就绪，请检查状态后重新验证。"
+  },
+  "transfer.text_66": {
+    "en": "Select at least one source resource to move; dependencies are copied only.",
+    "zh-CN": "请至少选择一个要移动的源资源；依赖项仅复制。"
+  },
+  "transfer.text_67": {
+    "en": "The selected source was replaced or has no UID. Refresh the resource list.",
+    "zh-CN": "所选源资源已被重建或缺少 UID，请刷新资源列表。"
+  },
+  "transfer.text_68": {
+    "en": "The source is being deleted or has no resource version.",
+    "zh-CN": "源资源正在删除或缺少资源版本。"
+  },
+  "transfer.text_69": {
+    "en": "The target cluster does not serve this exact API version and resource scope.",
+    "zh-CN": "目标集群不提供对应的 API 版本与资源范围。"
+  },
+  "transfer.text_70": {
+    "en": "Choose a target namespace for namespaced resources; cluster-scoped resources have no namespace.",
+    "zh-CN": "命名空间级资源需要选择目标命名空间，集群级资源没有命名空间。"
+  },
+  "transfer.text_71": {
+    "en": "Choose a target namespace.",
+    "zh-CN": "请选择目标命名空间。"
+  },
+  "transfer.text_72": {
+    "en": "The source and target are identical. Choose another location or target name.",
+    "zh-CN": "源与目标相同，请选择其他位置或修改目标名称。"
+  },
+  "transfer.text_73": {
+    "en": "Helm or GitOps manages this resource. The copy is independent; update the source configuration to prevent reconciliation.",
+    "zh-CN": "此资源由 Helm 或 GitOps 管理。副本独立存在，请同步调整源配置，避免被自动还原。"
+  },
+  "transfer.text_74": {
+    "en": "A target resource with this name already exists. Rename or skip it; existing resources are never overwritten.",
+    "zh-CN": "目标已有同名资源，请改名或跳过；不会覆盖已有资源。"
+  },
+  "transfer.text_75": {
+    "en": "Confirm sending Secret contents to the selected destination.",
+    "zh-CN": "请确认将 Secret 内容写入所选目标位置。"
+  },
+  "transfer.text_76": {
+    "en": "Source delete permission is required for a move.",
+    "zh-CN": "移动需要拥有源资源的删除权限。"
+  },
+  "transfer.text_77": {
+    "en": "Resolve the transfer checks before creating target resources.",
+    "zh-CN": "请先解决检查中的问题，再创建目标资源。"
+  },
+  "transfer.text_78": {
+    "en": "The create response has no UID. Inspect the target; source cleanup is blocked.",
+    "zh-CN": "创建响应缺少 UID，请检查目标；源端清理已阻止。"
+  },
+  "transfer.text_79": {
+    "en": "The source snapshot is missing.",
+    "zh-CN": "缺少源资源快照。"
+  },
+  "transfer.text_80": {
+    "en": "The target configuration changed after creation. Source cleanup is blocked.",
+    "zh-CN": "目标配置在创建后发生变化，已阻止清理源资源。"
+  },
+  "transfer.text_81": {
+    "en": "The target was replaced after creation. Source cleanup is blocked.",
+    "zh-CN": "目标在创建后被重建，已阻止清理源资源。"
+  },
+  "transfer.text_82": {
+    "en": "A copy must never delete source resources.",
+    "zh-CN": "复制操作不能删除源资源。"
+  },
+  "transfer.text_83": {
+    "en": "Every target must be created and verified before source cleanup.",
+    "zh-CN": "全部目标创建并验证通过后，才能清理源资源。"
+  },
+  "transfer.text_84": {
+    "en": "The reviewed source was deleted; a replacement now uses its name and was not touched.",
+    "zh-CN": "已审阅的源资源已删除；同名的新资源保持不变。"
+  },
+  "transfer.text_85": {
+    "en": "Deletion requested; waiting for the source to disappear. Finalizers are not removed.",
+    "zh-CN": "已请求删除，正在等待源资源消失；不会强制移除 finalizer。"
+  },
+  "transfer.text_86": {
+    "en": "Multiple source resources map to the same target name. Rename or skip one of them.",
+    "zh-CN": "多个源资源对应同一个目标名称，请改名或跳过其中一项。"
+  },
+  "transfer.text_87": {
+    "en": "An unrelated target already exists. It was not adopted or overwritten; source cleanup is blocked.",
+    "zh-CN": "目标已有其他资源，不会接管或覆盖；源端清理已阻止。"
+  },
+  "transfer.selected_count": {
+    "en": "Selected for transfer: %{count}",
+    "zh-CN": "已选 %{count} 项"
+  },
+  "transfer.created_count": {
+    "en": "Targets created: %{count}",
+    "zh-CN": "目标已创建：%{count}"
+  },
+  "transfer.deleted_count": {
+    "en": "Sources deleted: %{count}",
+    "zh-CN": "源端已删除：%{count}"
+  },
+  "transfer.delete_sources_count": {
+    "en": "Delete reviewed sources (%{count})",
+    "zh-CN": "删除 %{count} 个源资源"
+  },
+  "transfer.source_changed": {
+    "en": "Source %{target} changed after review. Keep both sides and start a fresh transfer review.",
+    "zh-CN": "源资源 %{target} 在审阅后发生变化。已保留两端资源，请重新检查转移。"
+  },
+  "transfer.dependency_missing": {
+    "en": "Required dependency: %{kind}/%{name}",
+    "zh-CN": "目标缺少必要依赖：%{kind}/%{name}"
+  },
+  "transfer.connection_changed": {
+    "en": "A transfer connection was disconnected or replaced. Keep the source and open a fresh transfer review.",
+    "zh-CN": "转移连接已断开或被替换。请保留源资源并重新审阅转移。"
+  },
+  "transfer.retry_connection": {
+    "en": "Retry connection",
+    "zh-CN": "重试连接"
+  },
+  "transfer.scope": {
+    "en": "Resource scope",
+    "zh-CN": "资源范围"
+  }
+}

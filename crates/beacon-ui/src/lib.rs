@@ -52,6 +52,7 @@ mod related;
 mod resource_compare;
 mod resource_menu;
 mod resource_metrics;
+mod resource_transfer;
 mod rollout;
 mod scroll;
 mod selection;

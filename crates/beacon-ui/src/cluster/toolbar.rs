@@ -368,6 +368,20 @@ impl ClusterView {
                             cx.notify();
                         })),
                 )
+                .child(
+                    Button::new("transfer-selected")
+                        .small()
+                        .outline()
+                        .icon(Glyph::ArrowRightLeft)
+                        .when(!compact, |button| {
+                            button.label(crate::i18n::text("Copy / move"))
+                        })
+                        .accessibility_label(crate::i18n::text("Copy or move selected resources"))
+                        .tooltip(crate::i18n::text("Copy or move selected resources"))
+                        .on_click(cx.listener(|view, _, window, cx| {
+                            view.transfer_resources(None, window, cx)
+                        })),
+                )
                 .when(selected == 2, |bar| {
                     bar.child(
                         Button::new("compare-selected")

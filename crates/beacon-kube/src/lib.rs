@@ -44,6 +44,7 @@ pub mod store;
 pub mod terminal;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test_support;
+pub mod transfer;
 pub mod watch;
 pub mod workflow_ops;
 

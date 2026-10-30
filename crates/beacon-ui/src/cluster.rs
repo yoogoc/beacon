@@ -607,6 +607,41 @@ impl ClusterView {
         }
     }
 
+    pub(crate) fn transfer_resources(
+        &self,
+        target: Option<&ObjectRef>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(kind) = self.kind.clone() else {
+            return;
+        };
+        let table = self.table.read(cx).delegate();
+        let targets = target
+            .map(|target| vec![target.clone()])
+            .unwrap_or_else(|| {
+                table
+                    .selected_targets()
+                    .into_iter()
+                    .map(|target| target.reference)
+                    .collect()
+            });
+        let selections = targets
+            .into_iter()
+            .filter_map(|reference| {
+                let object = table.object(&reference)?;
+                Some(beacon_kube::transfer::Selection {
+                    kind: (*kind).clone(),
+                    uid: object.metadata.uid.clone(),
+                    name: reference.name.clone(),
+                    reference,
+                    copy_only: false,
+                })
+            })
+            .collect();
+        crate::resource_transfer::open(self.session.clone(), selections, window, cx);
+    }
+
     pub(crate) fn compare_selected(&self, window: &mut Window, cx: &mut Context<Self>) {
         let selected = self.table.read(cx).delegate().selected_targets();
         if selected.len() == 2 {
