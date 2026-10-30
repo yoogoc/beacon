@@ -669,7 +669,7 @@ checksum = "ac07cdecf99051d9a5238b80f35af32cdeba5b336e55d957b318b50137e18da5"
 
 [[package]]
 name = "beacon"
-version = "1.4.40"
+version = "1.4.41"
 dependencies = [
  "anyhow",
  "beacon-kube",
@@ -685,7 +685,7 @@ dependencies = [
 
 [[package]]
 name = "beacon-columns"
-version = "1.4.40"
+version = "1.4.41"
 dependencies = [
  "k8s-openapi",
  "serde",
@@ -694,7 +694,7 @@ dependencies = [
 
 [[package]]
 name = "beacon-kube"
-version = "1.4.40"
+version = "1.4.41"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -721,7 +721,7 @@ dependencies = [
 
 [[package]]
 name = "beacon-ui"
-version = "1.4.40"
+version = "1.4.41"
 dependencies = [
  "alacritty_terminal",
  "anyhow",
@@ -753,7 +753,7 @@ dependencies = [
 
 [[package]]
 name = "beacon-updater"
-version = "1.4.40"
+version = "1.4.41"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
