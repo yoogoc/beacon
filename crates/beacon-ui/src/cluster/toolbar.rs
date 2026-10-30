@@ -382,6 +382,22 @@ impl ClusterView {
                             view.transfer_resources(None, window, cx)
                         })),
                 )
+                .child(
+                    Button::new("export-selected")
+                        .small()
+                        .outline()
+                        .icon(Glyph::Download)
+                        .loading(self.resource_exporting)
+                        .when(!compact, |button| button.label(crate::i18n::text("Export")))
+                        .accessibility_label(crate::i18n::text("Export selected resources"))
+                        .tooltip(crate::i18n::text(if self.kind.as_ref().is_some_and(|kind| kind.resource.group.is_empty() && kind.resource.kind == "Secret") {
+                            "Export full Secret YAML, including Secret values. Multiple resources are saved as a ZIP."
+                        } else {
+                            "Export one resource as YAML, or multiple YAML files in a ZIP."
+                        }))
+                        .disabled(self.resource_exporting || !self.kind.as_ref().is_some_and(|kind| kind.supports("get")))
+                        .on_click(cx.listener(|view, _, window, cx| view.export_selected(window, cx))),
+                )
                 .when(selected == 2, |bar| {
                     bar.child(
                         Button::new("compare-selected")

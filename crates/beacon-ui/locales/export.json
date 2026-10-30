@@ -1,0 +1,47 @@
+{
+  "_version": 2,
+  "export.label": {
+    "en": "Export",
+    "zh-CN": "导出"
+  },
+  "export.selected": {
+    "en": "Export selected resources",
+    "zh-CN": "导出所选资源"
+  },
+  "export.hint": {
+    "en": "Export one resource as YAML, or multiple YAML files in a ZIP.",
+    "zh-CN": "单个资源导出为 YAML，多个资源分别生成 YAML 后打包为 ZIP。"
+  },
+  "export.secret_hint": {
+    "en": "Export full Secret YAML, including Secret values. Multiple resources are saved as a ZIP.",
+    "zh-CN": "导出完整 Secret YAML，包含 Secret 实际值；多个资源打包为 ZIP。"
+  },
+  "export.running": {
+    "en": "Exporting resources",
+    "zh-CN": "正在导出资源"
+  },
+  "export.dialog_failed": {
+    "en": "Could not open the resource export save dialog.",
+    "zh-CN": "无法打开资源导出的保存对话框。"
+  },
+  "export.empty": {
+    "en": "Select at least one resource to export.",
+    "zh-CN": "请至少选择一个要导出的资源。"
+  },
+  "export.replaced": {
+    "en": "This resource was replaced. Refresh the list and select it again.",
+    "zh-CN": "此资源已被重建，请刷新列表并重新选择。"
+  },
+  "export.saved": {
+    "en": "Exported %{count} resources to %{path}",
+    "zh-CN": "已导出 %{count} 个资源到 %{path}"
+  },
+  "export.failed": {
+    "en": "Resource export failed; the destination was not replaced. %{error}",
+    "zh-CN": "资源导出失败，目标文件未被替换。%{error}"
+  },
+  "export.resource_failed": {
+    "en": "Could not export %{target}; the destination was not replaced. %{error}",
+    "zh-CN": "无法导出 %{target}，目标文件未被替换。%{error}"
+  }
+}

@@ -48,6 +48,7 @@ use crate::theme::{BeaconTheme as _, Tone};
 mod forwards;
 mod list_settings;
 mod picker_search;
+mod resource_export;
 mod toolbar;
 
 /// The namespace picker's entry for "do not scope at all". A namespace cannot
@@ -174,6 +175,7 @@ pub struct ClusterView {
     /// What the last write said, for the toolbar.
     outcome: Option<Outcome>,
     bulk_deleting: bool,
+    resource_exporting: bool,
     bulk_restart: Option<Entity<crate::bulk_restart::BulkRestart>>,
     mode: Mode,
     releases: Releases,
@@ -194,6 +196,7 @@ pub struct ClusterView {
     _columns: Option<Task<()>>,
     _operation: Option<Task<()>>,
     _bulk_operation: Option<Task<()>>,
+    _resource_export: Option<Task<()>>,
     _rules: Option<Task<()>>,
     _metrics: Task<()>,
     forward_dialog: Option<Entity<crate::forward_dialog::ForwardDialog>>,
@@ -368,6 +371,7 @@ impl ClusterView {
             workflow_action: None,
             outcome: None,
             bulk_deleting: false,
+            resource_exporting: false,
             bulk_restart: None,
             mode: Mode::Objects,
             releases: Releases::Unopened,
@@ -379,6 +383,7 @@ impl ClusterView {
             _columns: None,
             _operation: None,
             _bulk_operation: None,
+            _resource_export: None,
             _rules: None,
             _metrics: Task::ready(()),
             forward_dialog: None,

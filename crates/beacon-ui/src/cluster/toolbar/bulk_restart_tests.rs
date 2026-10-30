@@ -132,6 +132,8 @@ fn bulk_restart_toolbar_is_a_separate_row_without_squeezing_filters_in_both_them
                 for id in [
                     "clear-selected",
                     "compare-selected",
+                    "export-selected",
+                    "transfer-selected",
                     "restart-selected",
                     "delete-selected",
                 ] {

@@ -17,6 +17,7 @@ pub mod discovery;
 pub mod edit;
 pub mod error;
 pub mod exec;
+pub mod export;
 mod file_exec;
 pub mod files;
 pub mod forward;

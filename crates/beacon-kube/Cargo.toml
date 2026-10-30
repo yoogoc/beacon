@@ -28,6 +28,7 @@ reqwest.workspace = true
 url.workspace = true
 tempfile.workspace = true
 http = "1"
+zip = { version = "8.6.0", default-features = false, features = ["deflate-flate2"] }
 
 # The example is the headless proof that this crate stands on its own.
 [dev-dependencies]
