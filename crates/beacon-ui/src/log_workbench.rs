@@ -331,7 +331,7 @@ impl Render for LogWorkbench {
         v_flex().w_full().flex_shrink_0().border_b_1().border_color(cx.theme().border).bg(cx.theme().background).text_xs()
             .child(h_flex().id("structured-log-toolbar").w_full().min_w_0().overflow_x_scrollbar().when(!self.compact_controls, |bar| bar.whitespace_nowrap()).when(self.compact_controls, |bar| bar.flex_wrap()).gap_1().px_3().py_1()
                 .child(Button::new("log-regex").xsmall().ghost().selected(self.filter.regex).label(".*").tooltip(crate::i18n::text("Regular expression search (case insensitive)")).on_click(cx.listener(|view, _, _, cx| { view.filter.regex = !view.filter.regex; cx.emit(Changed::Filter); cx.notify(); })))
-                .children(Level::ALL.map(|level| { let label = level.label(); Button::new(format!("log-level-{label}")).xsmall().ghost().selected(self.filter.levels.contains(label)).toggled(self.filter.levels.contains(label)).label(label).on_click(cx.listener(move |view, _, _, cx| { if !view.filter.levels.remove(label) { view.filter.levels.insert(label.into()); } cx.emit(Changed::Filter); cx.notify(); })) }))
+                .children(Level::ALL.map(|level| { let label = level.label(); Button::new(format!("log-level-{label}")).xsmall().ghost().selected(self.filter.levels.contains(label)).toggled(self.filter.levels.contains(label)).label(crate::i18n::text(label)).on_click(cx.listener(move |view, _, _, cx| { if !view.filter.levels.remove(label) { view.filter.levels.insert(label.into()); } cx.emit(Changed::Filter); cx.notify(); })) }))
                 .child(div().h(px(16.)).border_l_1().border_color(cx.theme().border).mx_1())
                 .child(Button::new("log-fields").xsmall().ghost().selected(self.fields_open).label(crate::i18n::message("messages.fields", &[("value0", (if self.filter.predicates.is_empty() { String::new() } else { format!(" {}", self.filter.predicates.len()) }).to_string())]).to_string()).tooltip(crate::i18n::text("Filter exact field values and choose displayed fields")).on_click(cx.listener(|view, _, _, cx| { view.fields_open = !view.fields_open; cx.notify(); })))
                 .child(Button::new("log-compact").xsmall().ghost().selected(self.filter.compact).label(crate::i18n::text("Compact")).on_click(cx.listener(|view, _, _, cx| { view.filter.compact = !view.filter.compact; cx.emit(Changed::Filter); cx.notify(); })))
@@ -400,7 +400,7 @@ impl Render for LogInspector {
                                 Level::Info => Tone::Healthy,
                                 _ => Tone::Unknown,
                             }))
-                            .child(self.record.level.label()),
+                            .child(crate::i18n::text(self.record.level.label())),
                     )
                     .child(div().flex_1())
                     .child(

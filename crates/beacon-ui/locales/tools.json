@@ -284,6 +284,18 @@
     "en": "All levels",
     "zh-CN": "所有级别"
   },
+  "tools.log_level_trace": {
+    "en": "Trace",
+    "zh-CN": "跟踪"
+  },
+  "tools.log_level_debug": {
+    "en": "Debug",
+    "zh-CN": "调试"
+  },
+  "tools.log_level_info": {
+    "en": "Info",
+    "zh-CN": "信息"
+  },
   "tools.warn_error": {
     "en": "Warn + Error",
     "zh-CN": "警告和错误"

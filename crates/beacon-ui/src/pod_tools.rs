@@ -265,7 +265,7 @@ fn render_log_row(
                         crate::pod_logs::Level::Warning => Tone::Warning,
                         _ => Tone::Unknown,
                     }))
-                    .child(row.record.level.label()),
+                    .child(crate::i18n::text(row.record.level.label())),
             )
         })
         .child(div().when(wrap, |text| text.flex_1().min_w_0()).child(
