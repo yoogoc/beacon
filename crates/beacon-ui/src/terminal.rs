@@ -51,6 +51,7 @@ const HISTORY: usize = 10_000;
 
 mod input;
 mod interaction;
+mod kubectl_command;
 mod render;
 use interaction::{Metrics, SearchState};
 
@@ -809,15 +810,39 @@ impl TerminalView {
     /// the placeholder says what that click will do.
     fn render_launcher(&self, label: &'static str, cx: &mut Context<Self>) -> impl IntoElement {
         h_flex()
+            .max_w_full()
+            .flex_wrap()
+            .justify_center()
             .gap_2()
             .items_center()
-            .child(div().w(px(260.)).child(Input::new(&self.command).small()))
+            .child(
+                div()
+                    .w(px(260.))
+                    .max_w_full()
+                    .child(Input::new(&self.command).small()),
+            )
             .child(
                 Button::new("start-shell")
                     .primary()
                     .small()
                     .label(crate::i18n::text(label))
                     .on_click(cx.listener(|view, _, window, cx| view.start(window, cx))),
+            )
+            .child(
+                Button::new("copy-shell-command")
+                    .small()
+                    .outline()
+                    .icon(gpui_kit::assets::IconName::Copy)
+                    .label(crate::i18n::text("Copy command"))
+                    .accessibility_label(crate::i18n::text("Copy kubectl exec command"))
+                    .tooltip(crate::i18n::text(if cfg!(windows) {
+                        "Copy kubectl exec command for PowerShell 7.3+ without opening a session"
+                    } else {
+                        "Copy kubectl exec command without opening a session"
+                    }))
+                    .on_click(
+                        cx.listener(|view, _, window, cx| view.copy_kubectl_command(window, cx)),
+                    ),
             )
     }
 }

@@ -111,5 +111,29 @@
   "terminal.f1_help": {
     "en": "Send F1 to the focused terminal.",
     "zh-CN": "将 F1 按键发送到当前终端。"
+  },
+  "terminal.copy_command": {
+    "en": "Copy command",
+    "zh-CN": "复制命令"
+  },
+  "terminal.copy_kubectl": {
+    "en": "Copy kubectl exec command",
+    "zh-CN": "复制 kubectl exec 命令"
+  },
+  "terminal.copy_kubectl_hint": {
+    "en": "Copy kubectl exec command without opening a session",
+    "zh-CN": "复制 kubectl exec 命令，不启动终端连接"
+  },
+  "terminal.copy_kubectl_powershell_hint": {
+    "en": "Copy kubectl exec command for PowerShell 7.3+ without opening a session",
+    "zh-CN": "复制适用于 PowerShell 7.3+ 的 kubectl exec 命令，不启动终端连接"
+  },
+  "terminal.kubectl_copied": {
+    "en": "kubectl command copied.",
+    "zh-CN": "已复制 kubectl 命令。"
+  },
+  "terminal.kubectl_source_missing": {
+    "en": "The kubeconfig source is unavailable. Restore it before copying this command.",
+    "zh-CN": "Kubeconfig 来源不可用，请恢复该来源后再复制命令。"
   }
 }

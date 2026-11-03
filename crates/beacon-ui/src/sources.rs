@@ -29,6 +29,18 @@ impl Global for Store {}
 pub(crate) fn store(cx: &App) -> Entity<State> {
     cx.global::<Store>().0.clone()
 }
+/// Added files and pasted imports have durable paths. System sources keep
+/// kubectl's own KUBECONFIG merge behavior, rather than a temporary snapshot.
+pub(crate) fn kubeconfig_path(id: &beacon_kube::ClusterId, cx: &App) -> Option<PathBuf> {
+    let state = cx.try_global::<Store>()?.0.read(cx);
+    state
+        .catalog
+        .source_for(id)?
+        .contexts
+        .iter()
+        .find(|context| &context.entry.id == id && !context.file.as_os_str().is_empty())
+        .map(|context| context.file.clone())
+}
 pub(crate) fn init(cx: &mut App) {
     let state = cx.new(|_| State {
         catalog: Arc::default(),
