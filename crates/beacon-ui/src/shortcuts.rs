@@ -268,6 +268,8 @@ fn describe(name: &str, scope: &str) -> (String, String) {
         "HistoryDown" => "Scroll down through the terminal history.",
         "HistoryBottom" => "Return to live terminal output.",
         "F1" if scope == "Pod shell" => "Send F1 to the focused terminal.",
+        "SendTab" => "Send Tab to the focused shell for completion.",
+        "SendBackTab" => "Send Shift+Tab to the focused terminal.",
         "Cut" => "Copy and remove the selected text.",
         "Paste" if scope == "Pod shell" => "Paste clipboard text into the focused shell.",
         "Paste" => "Insert the clipboard text into the focused field.",

@@ -543,5 +543,21 @@
   "shortcuts.delete_to_previous_word_start": {
     "en": "Delete To Previous Word Start",
     "zh-CN": "删除至上一个单词开头"
+  },
+  "shortcuts.terminal_completion": {
+    "en": "Send Tab to the focused shell for completion.",
+    "zh-CN": "将 Tab 发送给当前终端，用于 Shell 补全。"
+  },
+  "shortcuts.terminal_backtab": {
+    "en": "Send Shift+Tab to the focused terminal.",
+    "zh-CN": "将 Shift+Tab 发送给当前终端。"
+  },
+  "shortcuts.terminal_tab_title": {
+    "en": "Send Tab",
+    "zh-CN": "发送 Tab"
+  },
+  "shortcuts.terminal_backtab_title": {
+    "en": "Send Back Tab",
+    "zh-CN": "发送 Shift+Tab"
   }
 }

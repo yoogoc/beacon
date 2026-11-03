@@ -31,6 +31,21 @@ impl Default for Metrics {
 }
 
 impl TerminalView {
+    pub(super) fn tab(&mut self, backwards: bool, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.focus.is_focused(window) {
+            // The toolbar and child inputs retain ordinary focus traversal.
+            cx.propagate();
+            return;
+        }
+        if self.composition.text.is_empty() {
+            self.key(
+                &Keystroke::parse(if backwards { "shift-tab" } else { "tab" }).unwrap(),
+                cx,
+            );
+        }
+        cx.stop_propagation();
+    }
+
     pub(super) fn send_input(&mut self, bytes: Vec<u8>, cx: &mut Context<Self>) {
         if bytes.is_empty() || !matches!(self.state, State::Running) {
             return;

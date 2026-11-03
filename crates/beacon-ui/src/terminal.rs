@@ -64,7 +64,9 @@ gpui_kit::actions!(
         HistoryUp,
         HistoryDown,
         HistoryBottom,
-        F1
+        F1,
+        SendTab,
+        SendBackTab
     ]
 );
 
@@ -93,6 +95,10 @@ pub(crate) fn init(cx: &mut App) {
         KeyBinding::new("shift-pagedown", HistoryDown, Some(CONTEXT)),
         KeyBinding::new("shift-end", HistoryBottom, Some(CONTEXT)),
         KeyBinding::new("f1", F1, Some(CONTEXT)),
+        // Root handles Tab as an action before ordinary key-down listeners.
+        // Claim it here so completion reaches the shell instead of moving focus.
+        KeyBinding::new("tab", SendTab, Some(CONTEXT)),
+        KeyBinding::new("shift-tab", SendBackTab, Some(CONTEXT)),
         KeyBinding::new(&format!("{modifier}-="), ZoomIn, Some(CONTEXT)),
         KeyBinding::new(&format!("{modifier}-+"), ZoomIn, Some(CONTEXT)),
         KeyBinding::new(&format!("{modifier}--"), ZoomOut, Some(CONTEXT)),

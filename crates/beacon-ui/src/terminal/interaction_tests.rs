@@ -82,6 +82,94 @@ fn position(view: &TerminalView, column: f32, row: f32) -> gpui_kit::Point<Pixel
 }
 
 #[::core::prelude::v1::test]
+fn tab_completion_and_backtab_reach_the_shell_once_without_moving_focus() {
+    let cx = &mut support::context();
+    let directory = tempfile::tempdir().unwrap();
+    support::workspace(cx, directory.path());
+    let (_fixture, window, terminal, mut input) = open(cx, b"$ cd ");
+    let next_tab = Rc::new(StdCell::new(false));
+    let switched = next_tab.clone();
+    cx.update(|cx| {
+        cx.on_action(move |_: &crate::app::NextTab, _| switched.set(true));
+    });
+    cx.update_window(window, |_, window, cx| {
+        for (key, bytes) in [
+            ("tab", b"\t".as_slice()),
+            ("shift-tab", b"\x1b[Z".as_slice()),
+            ("tab", b"\t".as_slice()),
+        ] {
+            window.press(key, cx);
+            window.render_frame(cx);
+            assert!(
+                terminal.read(cx).focus.is_focused(window),
+                "{key} must keep the shell focused"
+            );
+            assert_eq!(input.try_recv().unwrap(), bytes, "{key}");
+            assert!(input.try_recv().is_err(), "{key} must only be sent once");
+        }
+        window.press("x", cx);
+        assert_eq!(input.try_recv().unwrap(), b"x");
+        // In-progress IME text is local; Tab must not commit or leak it.
+        terminal.update(cx, |view, _| view.composition.text = "ni".into());
+        window.press("tab", cx);
+        window.render_frame(cx);
+        assert!(terminal.read(cx).focus.is_focused(window));
+        assert!(input.try_recv().is_err());
+        assert_eq!(terminal.read(cx).composition.text, "ni");
+        terminal.update(cx, |view, _| view.composition.clear());
+        // Existing workspace tab switching remains available explicitly.
+        window.press("ctrl-tab", cx);
+        assert!(next_tab.get());
+        assert!(input.try_recv().is_err());
+    })
+    .unwrap();
+}
+
+#[::core::prelude::v1::test]
+fn tab_navigation_in_terminal_search_and_toolbar_does_not_send_shell_input() {
+    let cx = &mut support::context();
+    let (_fixture, window, terminal, mut input) = open(cx, b"$ ");
+    cx.update_window(window, |_, window, cx| {
+        window.click("terminal-find", cx);
+        window.render_frame(cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(window, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(
+            terminal
+                .read(cx)
+                .search_input
+                .read(cx)
+                .focus_handle(cx)
+                .is_focused(window)
+        );
+        window.press("tab", cx);
+        window.render_frame(cx);
+        assert!(
+            !terminal
+                .read(cx)
+                .search_input
+                .read(cx)
+                .focus_handle(cx)
+                .is_focused(window)
+        );
+        assert!(!terminal.read(cx).focus.is_focused(window));
+        assert!(input.try_recv().is_err());
+        let button = window.focused(cx);
+        assert!(button.is_some());
+        // A toolbar button inherits BeaconTerminal, but the action must fall
+        // through to Root when the terminal's own focus handle is not active.
+        window.press("tab", cx);
+        window.render_frame(cx);
+        assert_ne!(window.focused(cx), button);
+        assert!(input.try_recv().is_err());
+    })
+    .unwrap();
+}
+
+#[::core::prelude::v1::test]
 fn ended_sessions_keep_the_transcript_selectable_and_hide_input_until_requested() {
     let cx = &mut support::context();
     let (_fixture, window, terminal, mut input) = open(

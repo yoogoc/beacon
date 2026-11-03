@@ -476,6 +476,8 @@ impl Render for TerminalView {
                     cx.propagate();
                 }
             }))
+            .on_action(cx.listener(|view, _: &SendTab, window, cx| view.tab(false, window, cx)))
+            .on_action(cx.listener(|view, _: &SendBackTab, window, cx| view.tab(true, window, cx)))
             .on_action(
                 cx.listener(|view, _: &gpui_kit::base::actions::Confirm, window, cx| {
                     if view.focus.is_focused(window) {

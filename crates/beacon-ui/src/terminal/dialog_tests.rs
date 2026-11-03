@@ -52,6 +52,17 @@ fn terminal_enter_and_escape_stay_in_the_dialog_and_ansi_colors_are_preserved() 
         window.render_frame(cx);
         terminal.read(cx).focus.clone().focus(window, cx);
         window.render_frame(cx);
+        for (key, bytes) in [
+            ("tab", b"\t".as_slice()),
+            ("shift-tab", b"\x1b[Z".as_slice()),
+        ] {
+            window.press(key, cx);
+            window.render_frame(cx);
+            assert!(terminal.read(cx).focus.is_focused(window));
+            assert!(window.has_active_dialog(cx));
+            assert_eq!(input.try_recv().unwrap(), bytes);
+            assert!(input.try_recv().is_err());
+        }
         window.press("enter", cx);
         window.render_frame(cx);
         assert!(
