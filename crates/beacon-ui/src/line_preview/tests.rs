@@ -81,8 +81,16 @@ fn non_json_formats_use_the_same_preview_and_raw_copy_stays_exact() {
     }
 }
 fn open(cx: &mut TestAppContext, width: f32) -> (AnyWindowHandle, Entity<LinePreview>) {
+    open_with_delay(cx, width, OPEN_DELAY)
+}
+
+fn open_with_delay(
+    cx: &mut TestAppContext,
+    width: f32,
+    delay: Duration,
+) -> (AnyWindowHandle, Entity<LinePreview>) {
     cx.update(|cx| {
-        let preview = LinePreview::new(cx);
+        let preview = LinePreview::with_open_delay(delay, cx);
         let child = preview.clone();
         let (window, _) = gpui_kit::open_window(
             WindowOptions {
@@ -101,6 +109,62 @@ fn open(cx: &mut TestAppContext, width: f32) -> (AnyWindowHandle, Entity<LinePre
         .unwrap();
         (window, preview)
     })
+}
+
+#[::core::prelude::v1::test]
+fn three_second_hover_restarts_on_another_row_cancels_on_leave_and_click_opens_immediately() {
+    let cx = &mut support::context();
+    let dir = tempfile::tempdir().unwrap();
+    support::workspace(cx, dir.path());
+    let (window, preview) = open_with_delay(cx, 760., Duration::from_secs(3));
+    hover(cx, window, 0);
+    cx.run_until_parked();
+    cx.executor().advance_clock(Duration::from_secs(2));
+    hover(cx, window, 1);
+    cx.run_until_parked();
+    cx.executor().advance_clock(Duration::from_millis(2999));
+    cx.run_until_parked();
+    assert!(preview.read_with(cx, |view, _| view.active.is_none()));
+    cx.executor().advance_clock(Duration::from_millis(1));
+    support::settle(cx, |cx| {
+        preview.read_with(cx, |view, _| {
+            view.active.as_ref().is_some_and(|active| active.id == 1)
+        })
+    });
+
+    preview.update(cx, |view, cx| view.close(cx));
+    hover(cx, window, 2);
+    cx.run_until_parked();
+    cx.executor().advance_clock(Duration::from_secs(2));
+    cx.update_window(window, |_, window, cx| {
+        window.dispatch_event(
+            MouseMoveEvent {
+                position: point(px(750.), px(650.)),
+                pressed_button: None,
+                modifiers: Default::default(),
+            }
+            .to_platform_input(),
+            cx,
+        );
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.executor().advance_clock(Duration::from_secs(3));
+    cx.run_until_parked();
+    assert!(preview.read_with(cx, |view, _| view.active.is_none()));
+
+    cx.update_window(window, |_, window, cx| {
+        let bounds = window.find(("line-preview-trigger", 3usize)).bounds();
+        preview.update(cx, |view, cx| {
+            view.show(3, "level=info msg=ready".into(), bounds, window, cx);
+        });
+    })
+    .unwrap();
+    support::settle(cx, |cx| {
+        preview.read_with(cx, |view, _| {
+            view.pinned && view.active.as_ref().is_some_and(|active| active.id == 3)
+        })
+    });
 }
 fn hover(cx: &mut TestAppContext, window: AnyWindowHandle, id: usize) {
     cx.update_window(window, |_, window, cx| {

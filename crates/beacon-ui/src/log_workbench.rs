@@ -152,7 +152,10 @@ impl LogWorkbench {
                 ),
             ];
             Self {
-                line_preview: crate::line_preview::LinePreview::new(cx),
+                line_preview: crate::line_preview::LinePreview::with_open_delay(
+                    std::time::Duration::from_secs(3),
+                    cx,
+                ),
                 display,
                 search,
                 field_filter,

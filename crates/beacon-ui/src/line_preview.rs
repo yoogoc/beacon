@@ -29,6 +29,7 @@ struct Active {
 }
 
 pub(crate) struct LinePreview {
+    open_delay: Duration,
     active: Option<Active>,
     editor: Option<Entity<EditorState>>,
     pinned: bool,
@@ -46,7 +47,12 @@ pub(crate) struct LinePreview {
 
 impl LinePreview {
     pub fn new(cx: &mut App) -> Entity<Self> {
+        Self::with_open_delay(OPEN_DELAY, cx)
+    }
+
+    pub fn with_open_delay(open_delay: Duration, cx: &mut App) -> Entity<Self> {
         cx.new(|_| Self {
+            open_delay,
             active: None,
             editor: None,
             pinned: false,
@@ -144,9 +150,10 @@ impl LinePreview {
             self.editor = None;
             cx.notify();
         }
+        let open_delay = self.open_delay;
         self._open = Some(cx.spawn_in(window, async move |this, cx| {
             if !pin {
-                cx.background_executor().timer(OPEN_DELAY).await;
+                cx.background_executor().timer(open_delay).await;
             }
             let parsed = cx
                 .background_executor()

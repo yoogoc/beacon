@@ -1685,7 +1685,15 @@ mod rendering_tests {
                     .unwrap();
                 cx.run_until_parked();
                 cx.executor()
-                    .advance_clock(std::time::Duration::from_millis(240));
+                    .advance_clock(std::time::Duration::from_millis(2999));
+                cx.run_until_parked();
+                cx.update_window(window, |_, window, cx| {
+                    window.render_frame(cx);
+                    assert!(window.try_find("line-preview").is_none());
+                })
+                .unwrap();
+                cx.executor()
+                    .advance_clock(std::time::Duration::from_millis(1));
                 support::render_until(cx, window, |window| {
                     window
                         .try_find("line-preview")
