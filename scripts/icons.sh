@@ -1,10 +1,8 @@
 #!/usr/bin/env bash
 # Regenerate every icon in assets/app-icon/ from beacon-icon.svg.
 #
-# Each raster is rendered from the SVG at its final size rather than downscaled
-# from the 1024, which is what keeps the 16 and 32 px versions legible: the lamp
-# and the heptagon ring are tuned to survive at those sizes, and a bicubic
-# downscale of the big one smears both.
+# The SVG wraps the approved mascot PNG in the app tile. Render each output
+# directly at its final size to avoid repeatedly resampling intermediate icons.
 #
 # Needs rsvg-convert (librsvg) and magick (ImageMagick). The .icns step needs
 # iconutil, which only exists on macOS -- run this on a Mac, or leave beacon.icns

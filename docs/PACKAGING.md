@@ -22,8 +22,10 @@ cargo packager -p beacon --release --formats nsis      # Windows
 ## 图标
 
 `assets/app-icon/` 是完整一套：`beacon.icns`（macOS）、`beacon.ico`（Windows）、
-`icon-{16,32,64,128,256,512,1024}.png`（Linux hicolor 主题），源文件是
-`beacon-icon.svg`。`scripts/icons.sh` 从 SVG 重新生成全部产物，需要 `rsvg-convert`、
+`icon-{16,32,64,128,256,512,1024}.png`（Linux hicolor 主题），图标入口是
+`beacon-icon.svg`，它引用 `concepts/beacon-mascot-compact-v1.png`，将领航员、七辐舵轮
+和指路灯放在白色圆角底板中。当前人物画稿是 PNG，SVG 负责底板与裁切。
+`scripts/icons.sh` 从这一入口重新生成全部产物，需要 `rsvg-convert`、
 `magick`，`.icns` 那步还需要 macOS 的 `iconutil`。
 
 macOS 使用 `beacon-macos.svg` 引用同一图案，在 1024×1024 画布中居中放置
@@ -31,10 +33,8 @@ macOS 使用 `beacon-macos.svg` 引用同一图案，在 1024×1024 画布中居
 只更新 macOS 图标时运行 `scripts/icons.sh --macos`；它直接按每个 ICNS 尺寸渲染，
 不会重写 Windows ICO 或 Linux PNG。
 
-**每个尺寸都是从 SVG 按目标尺寸渲染的，不是从 1024 缩下来的。** 图形本身是按小尺寸
-可读性调的：七边形环（Kubernetes 那顶舵轮）用了一宽一窄两道描边，灯是暖色而背景是冷色 ——
-**色相对比是唯一能扛过重采样到 16px 的东西**，到那个尺寸环已经糊没了，只剩深蓝底上一团暖
-光。双缩放会把这两样一起抹平。
+每个尺寸都直接从包含原始 PNG 的 SVG 按目标尺寸渲染，避免从中间尺寸反复缩放。
+新增人物细节时，需要同时检查小尺寸下舵轮与暖色指路灯的辨识度。
 
 已验证：打出来的 bundle 里 `Contents/Resources/beacon.icns` 与
 `assets/app-icon/beacon.icns` **字节一致**（sha256 相同）。
