@@ -56,6 +56,7 @@ pub(crate) struct FilesView {
     text_preview: Entity<crate::line_preview::TextLines>,
     selected: BTreeSet<String>,
     busy: bool,
+    reading: bool,
     message: Option<String>,
     progress: Arc<AtomicU64>,
     transfer: bool,
@@ -163,6 +164,7 @@ impl FilesView {
             text_preview: crate::line_preview::TextLines::new(cx),
             selected: BTreeSet::new(),
             busy: false,
+            reading: false,
             message: None,
             progress: Arc::new(AtomicU64::new(0)),
             transfer: false,
@@ -338,6 +340,7 @@ impl FilesView {
         self._task = None;
         self._progress = None;
         self.busy = false;
+        self.reading = false;
         self.transfer = false;
         self.writing = false;
         self.message = Some("Operation cancelled. Refresh to check the current directory.".into());
@@ -364,6 +367,7 @@ impl FilesView {
         self.text_preview.update(cx, |view, cx| view.close(cx));
         self._prompt = None;
         self.busy = true;
+        self.reading = matches!(work, Work::List(_) | Work::Preview(_));
         self.message = None;
         self.transfer = matches!(work, Work::Upload(..) | Work::Download(..));
         self.writing = !matches!(work, Work::List(_) | Work::Preview(_) | Work::Download(..));
@@ -459,6 +463,7 @@ impl FilesView {
         cx: &mut Context<Self>,
     ) {
         self.busy = false;
+        self.reading = false;
         self.transfer = false;
         self.writing = false;
         self.abort = None;
@@ -1042,6 +1047,83 @@ mod integration_tests {
         .unwrap();
         support::settle(cx, |cx| view.read_with(cx, |v, _| !v.busy));
         view.read_with(cx, |v, _| assert!(v.preview.is_some(), "{:?}", v.message));
+    }
+
+    #[::core::prelude::v1::test]
+    fn folder_reads_float_above_existing_content_without_moving_the_layout() {
+        let cx = &mut support::context();
+        let (_files, _fixture, window, view, pane) = setup_pane(cx);
+        open_first(cx, window, &view);
+        let path = view.read_with(cx, |view, _| view.listing.as_ref().unwrap().path.clone());
+        for width in [1100., 420., 280.] {
+            pane.update(cx, |pane, cx| {
+                pane.width = px(width);
+                cx.notify();
+            });
+            view.update(cx, |view, cx| {
+                view.message = None;
+                cx.notify();
+            });
+            draw(cx, window);
+            cx.update_window(window, |_, window, cx| {
+                let before = window.find("files-content").bounds();
+                view.update(cx, |view, cx| view.load(path.clone(), window, cx));
+                assert!(view.read(cx).busy && view.read(cx).reading);
+                window.render_frame(cx);
+                assert_eq!(window.find("files-content").bounds(), before);
+                assert!(window.try_find("file-progress").is_none());
+                assert!(window.try_find("files-initial-loading").is_none());
+                let card = window.find("files-loading-card").bounds();
+                assert!(window.find("files-loading-overlay").visible());
+                assert!(card.left() >= before.left() && card.right() <= before.right());
+                assert!(before.contains(&card.center()));
+                assert!(view.read(cx).preview.is_some());
+                window.click("files-cancel", cx);
+                window.render_frame(cx);
+                assert!(!view.read(cx).busy && !view.read(cx).reading);
+                assert!(window.try_find("files-loading-overlay").is_none());
+            })
+            .unwrap();
+        }
+    }
+
+    #[::core::prelude::v1::test]
+    fn first_file_read_has_an_animated_centered_spinner_and_clears_when_ready() {
+        let cx = &mut support::context();
+        let (_files, _fixture, window, view) = setup(cx);
+        let path = view.read_with(cx, |view, _| view.listing.as_ref().unwrap().path.clone());
+        cx.update_window(window, |_, window, cx| {
+            cx.set_reduce_motion(false);
+            view.update(cx, |view, cx| {
+                view.listing = None;
+                view.preview = None;
+                // A stale row index during a container switch must not mask
+                // the initial loading view or dereference a missing listing.
+                view.load(path.clone(), window, cx);
+            });
+            window.render_frame(cx);
+            assert!(window.find("files-initial-loading").visible());
+            assert!(window.find("files-initial-spinner").visible());
+            assert!(window.try_find("file-progress").is_none());
+            assert!(window.try_find("files-loading-card").is_none());
+            assert!(
+                window.simulate_next_frame(cx) > 0,
+                "loading must request animation frames"
+            );
+            cx.set_reduce_motion(true);
+            window.click("files-cancel", cx);
+            assert!(!view.read(cx).busy && !view.read(cx).reading);
+            view.update(cx, |view, cx| view.load(path, window, cx));
+        })
+        .unwrap();
+        support::settle(cx, |cx| view.read_with(cx, |view, _| !view.busy));
+        draw(cx, window);
+        assert!(view.read_with(cx, |view, _| !view.reading && view.listing.is_some()));
+        cx.update_window(window, |_, window, _| {
+            assert!(window.try_find("files-initial-loading").is_none());
+            assert!(window.try_find("files-loading-overlay").is_none());
+        })
+        .unwrap();
     }
 
     #[::core::prelude::v1::test]

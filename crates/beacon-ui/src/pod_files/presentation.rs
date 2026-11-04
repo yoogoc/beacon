@@ -6,6 +6,7 @@ use gpui_kit::component::input::Textarea;
 use gpui_kit::component::menu::{ContextMenuExt as _, DropdownMenu as _, PopupMenuItem};
 use gpui_kit::component::resizable::{h_resizable, resizable_panel};
 use gpui_kit::component::select::Select;
+use gpui_kit::component::spinner::Spinner;
 use gpui_kit::component::tooltip::Tooltip;
 
 fn action(id: &'static str, icon: IconName, label: &'static str) -> Button {
@@ -73,6 +74,76 @@ fn empty_state(icon: IconName, title: &str, hint: &str, cx: &App) -> AnyElement 
 }
 
 impl FilesView {
+    fn render_loading(&self, initial: bool, cx: &mut Context<Self>) -> AnyElement {
+        let spinner = |size| {
+            Spinner::new()
+                .icon(Icon::new(IconName::LoaderCircle))
+                .with_size(size)
+                .color(cx.theme().muted_foreground)
+        };
+        let cancel = Button::new("files-cancel")
+            .small()
+            .ghost()
+            .label(crate::i18n::text("Cancel"))
+            .on_click(cx.listener(|view, _, _, cx| view.cancel(cx)));
+        if initial {
+            v_flex()
+                .id("files-initial-loading")
+                .test_support()
+                .role(Role::Status)
+                .aria_label(crate::i18n::text("Loading files"))
+                .size_full()
+                .justify_center()
+                .items_center()
+                .gap_2()
+                .p_6()
+                .text_center()
+                .child(
+                    div()
+                        .id("files-initial-spinner")
+                        .test_support()
+                        .p_3()
+                        .rounded(px(12.))
+                        .bg(cx.theme().muted)
+                        .child(spinner(px(24.))),
+                )
+                .child(
+                    div()
+                        .font_weight(FontWeight::MEDIUM)
+                        .child(crate::i18n::text("Loading files")),
+                )
+                .child(
+                    div()
+                        .max_w(px(300.))
+                        .text_color(cx.theme().muted_foreground)
+                        .child(crate::i18n::text("Reading the container filesystem…")),
+                )
+                .child(cancel)
+                .into_any_element()
+        } else {
+            h_flex()
+                .id("files-loading-card")
+                .test_support()
+                .role(Role::Status)
+                .aria_label(crate::i18n::text("Loading files"))
+                .items_center()
+                .gap_3()
+                .px_4()
+                .py_3()
+                .max_w_full()
+                .rounded_lg()
+                .border_1()
+                .border_color(cx.theme().border)
+                .bg(cx.theme().popover)
+                .text_color(cx.theme().popover_foreground)
+                .shadow_lg()
+                .child(spinner(px(20.)))
+                .child(crate::i18n::text("Loading files"))
+                .child(cancel)
+                .into_any_element()
+        }
+    }
+
     fn close_preview(&mut self, cx: &mut Context<Self>) {
         if self.busy || self.dirty(cx) {
             return;
@@ -205,7 +276,11 @@ impl FilesView {
 
     fn render_list(&self, cx: &mut Context<Self>) -> AnyElement {
         let listing = self.listing.clone();
-        let visible = self.visible.clone();
+        let visible = if listing.is_some() {
+            self.visible.clone()
+        } else {
+            Arc::default()
+        };
         let count = visible.len();
         let total = listing.as_ref().map_or(0, |l| l.entries.len());
         let show_mode = self.list_width.get() >= px(470.);
@@ -511,13 +586,8 @@ impl FilesView {
             )
             .child(div().flex_1().min_size_0().child(if count > 0 {
                 list.into_any_element()
-            } else if self.busy {
-                empty_state(
-                    IconName::LoaderCircle,
-                    "Loading files",
-                    "Reading the container filesystem…",
-                    cx,
-                )
+            } else if self.busy && self.reading && self.listing.is_none() {
+                self.render_loading(true, cx)
             } else if self.listing.is_none() {
                 empty_state(
                     IconName::Folder,
@@ -1116,7 +1186,7 @@ impl Render for FilesView {
                         )
                     }),
             )
-            .when(self.busy, |body| {
+            .when(self.busy && !self.reading, |body| {
                 body.child(
                     h_flex()
                         .w_full()
@@ -1126,9 +1196,10 @@ impl Render for FilesView {
                         .flex_shrink_0()
                         .bg(cx.theme().muted)
                         .child(
-                            Icon::new(IconName::LoaderCircle)
-                                .size(px(14.))
-                                .text_color(cx.theme().foreground),
+                            Spinner::new()
+                                .icon(Icon::new(IconName::LoaderCircle))
+                                .with_size(px(14.))
+                                .color(cx.theme().foreground),
                         )
                         .child(copyable_text(
                             "file-progress",
@@ -1188,11 +1259,36 @@ impl Render for FilesView {
             })
             .child(
                 div()
+                    .id("files-content")
+                    .test_support()
+                    .relative()
                     .flex_1()
                     .min_size_0()
                     .border_t_1()
                     .border_color(cx.theme().border)
-                    .child(content),
+                    .child(content)
+                    .when(
+                        self.busy
+                            && self.reading
+                            && (self.listing.is_some() || self.preview.is_some()),
+                        |area| {
+                            area.child(
+                                div()
+                                    .id("files-loading-overlay")
+                                    .test_support()
+                                    .absolute()
+                                    .inset_0()
+                                    .flex()
+                                    .items_center()
+                                    .justify_center()
+                                    .p_3()
+                                    .bg(cx.theme().background.opacity(0.35))
+                                    .occlude()
+                                    .on_scroll_wheel(|_, _, cx| cx.stop_propagation())
+                                    .child(self.render_loading(false, cx)),
+                            )
+                        },
+                    ),
             )
     }
 }
