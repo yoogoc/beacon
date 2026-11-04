@@ -1,6 +1,8 @@
 //! Local kubeconfig sources. Loading discovers contexts without authenticating.
 //! System configuration keeps kubectl's merge rules and its legacy identities;
 //! explicitly added files resolve independently, including files in a folder.
+pub mod export;
+
 use crate::{
     ClusterId,
     config::{ContextEntry, Contexts},

@@ -1,0 +1,51 @@
+{
+  "_version": 2,
+  "cluster_export.label": {
+    "en": "Export cluster…",
+    "zh-CN": "导出集群…"
+  },
+  "cluster_export.unavailable": {
+    "en": "This cluster's kubeconfig source is unavailable. Reload its source before exporting.",
+    "zh-CN": "此集群的 kubeconfig 来源不可用，请重新加载来源后再导出。"
+  },
+  "cluster_export.dialog_failed": {
+    "en": "Could not open the cluster export save dialog.",
+    "zh-CN": "无法打开集群导出的保存对话框。"
+  },
+  "cluster_export.saved": {
+    "en": "Exported %{cluster} to %{path}",
+    "zh-CN": "已将 %{cluster} 导出到 %{path}"
+  },
+  "cluster_export.failed": {
+    "en": "Cluster export failed; the destination was not replaced. %{error}",
+    "zh-CN": "集群导出失败，目标文件未被替换。%{error}"
+  },
+  "cluster_export.read_reference": {
+    "en": "Could not read %{field}: %{error}",
+    "zh-CN": "无法读取 %{field}：%{error}"
+  },
+  "cluster_export.reference_too_large": {
+    "en": "The %{field} file exceeds the 4 MiB export limit.",
+    "zh-CN": "%{field} 文件超过 4 MiB 导出限制。"
+  },
+  "cluster_export.missing_context": {
+    "en": "The selected context is missing from the kubeconfig source.",
+    "zh-CN": "kubeconfig 来源中缺少所选 context。"
+  },
+  "cluster_export.missing_cluster": {
+    "en": "The context's cluster is missing from the kubeconfig source.",
+    "zh-CN": "kubeconfig 来源中缺少此 context 引用的集群。"
+  },
+  "cluster_export.missing_user": {
+    "en": "The context's user is missing from the kubeconfig source.",
+    "zh-CN": "kubeconfig 来源中缺少此 context 引用的用户。"
+  },
+  "cluster_export.token_encoding": {
+    "en": "The token file is not valid UTF-8.",
+    "zh-CN": "token 文件不是有效的 UTF-8 文本。"
+  },
+  "cluster_export.serialize": {
+    "en": "Could not serialize the kubeconfig.",
+    "zh-CN": "无法序列化 kubeconfig。"
+  }
+}

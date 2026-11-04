@@ -48,6 +48,8 @@ use crate::theme::{BeaconTheme as _, Tone, toggle_mode};
 use crate::workspace::{Direction, Node, Pane, PaneId, Workspace};
 use gpui_kit::base::ElementExt as _;
 
+mod cluster_export;
+
 gpui_kit::actions!(
     beacon,
     [
@@ -428,6 +430,7 @@ pub struct BeaconApp {
     /// The *watches* belong to the views, so closing a tab stops what it was
     /// watching.
     connections: Entity<Connections>,
+    cluster_exports: BTreeSet<ClusterId>,
 
     tabs: Vec<Tab>,
     /// Index into `tabs`. Meaningless, and never read, while `tabs` is empty.
@@ -556,6 +559,7 @@ impl BeaconApp {
             closed_sources: BTreeSet::new(),
             preferences,
             connections,
+            cluster_exports: BTreeSet::new(),
             tabs: Vec::new(),
             active: 0,
             palette,
@@ -2112,6 +2116,8 @@ impl BeaconApp {
                 let selected = active.as_ref() == Some(&id);
                 let color = self.cluster_color(&id, cx);
                 let connected = self.connections.read(cx).sessions.contains_key(&id);
+                let can_export =
+                    catalog.targets.contains_key(&id) && !self.cluster_exports.contains(&id);
                 let target = id.clone();
                 let menu_target = id.clone();
                 let menu_view = cx.entity().downgrade();
@@ -2242,6 +2248,8 @@ impl BeaconApp {
                         let reconnect_target = menu_target.clone();
                         let reconnect_view = menu_view.clone();
                         let settings_target = menu_target.clone();
+                        let export_target = menu_target.clone();
+                        let export_view = menu_view.clone();
                         let permissions_target = menu_target.clone();
                         let permissions_connections = menu_view.clone();
                         menu.item(
@@ -2264,6 +2272,16 @@ impl BeaconApp {
                                     crate::preferences::cluster(settings_target.clone(), cx)
                                 },
                             ),
+                        )
+                        .item(
+                            PopupMenuItem::new(crate::i18n::text("Export cluster…"))
+                                .icon(gpui_kit::assets::IconName::Download)
+                                .disabled(!can_export)
+                                .on_click(move |_, window, cx| {
+                                    let _ = export_view.update(cx, |app, cx| {
+                                        app.export_cluster(export_target.clone(), window, cx)
+                                    });
+                                }),
                         )
                         .item(
                             PopupMenuItem::new(crate::i18n::text("Permissions…"))
