@@ -71,9 +71,6 @@ gpui_kit::actions!(
     ]
 );
 
-/// The sidebar carries the cluster names, leaving room for more resource tabs.
-const TAB_WIDTH: Pixels = px(190.);
-
 fn application_menu() -> impl IntoElement {
     // Block the caption hitbox around the entire popover trigger. Occluding
     // only its Button hides the parent mouse-down handler that opens the menu.
@@ -2540,18 +2537,16 @@ impl BeaconApp {
         match &tab.state {
             TabState::Connected(view) => view.read(cx).title(),
             TabState::Files(view) => view.read(cx).title(),
-            TabState::Disconnected => {
+            TabState::Disconnected | TabState::Connecting | TabState::Failed(_) => {
                 if tab.initial_mode == Mode::Objects {
                     tab.initial_kind
                         .as_ref()
                         .map(|kind| SharedString::from(kind.resource.kind.clone()))
-                        .unwrap_or_else(|| "Cluster".into())
+                        .unwrap_or_else(|| crate::i18n::text("Cluster"))
                 } else {
-                    tab.initial_mode.label().into()
+                    crate::i18n::text(tab.initial_mode.label())
                 }
             }
-            TabState::Connecting => crate::i18n::text("Connecting…"),
-            TabState::Failed(_) => crate::i18n::text("Unavailable"),
         }
     }
 
@@ -2568,6 +2563,18 @@ impl BeaconApp {
                 let what = self.tab_title(tab, cx);
                 let accessible_name =
                     format!("{what} · {}", self.cluster_display_name(&tab.cluster));
+                let tooltip = match &tab.state {
+                    TabState::Connecting => {
+                        format!("{accessible_name}\n{}", crate::i18n::text("Connecting…"))
+                    }
+                    TabState::Disconnected => {
+                        format!("{accessible_name}\n{}", crate::i18n::text("Disconnected"))
+                    }
+                    TabState::Failed(_) => {
+                        format!("{accessible_name}\n{}", crate::i18n::text("Unavailable"))
+                    }
+                    _ => accessible_name.clone(),
+                };
                 let drag = DraggedTab {
                     source: cx.weak_entity(),
                     id,
@@ -2583,7 +2590,6 @@ impl BeaconApp {
                         pane.tabs.len(),
                     )
                     .h(px(28.))
-                    .max_w(TAB_WIDTH)
                     .min_w(px(100.))
                     .flex_shrink_0()
                     .px_2()
@@ -2599,7 +2605,15 @@ impl BeaconApp {
                     })
                     .hover(|tab| tab.bg(cx.theme().tab_active))
                     .child(div().size(px(7.)).flex_shrink_0().rounded_full().bg(color))
-                    .child(div().min_w_0().truncate().child(what))
+                    .child(
+                        div()
+                            .id(("resource-tab-title", id as usize))
+                            .test_support()
+                            .whitespace_nowrap()
+                            .flex_shrink_0()
+                            .child(what),
+                    )
+                    .tooltip(move |window, cx| Tooltip::new(tooltip.clone()).build(window, cx))
                     .on_prepaint(move |bounds, window, cx| {
                         if let Some(entry) =
                             cx.global::<WorkspaceWindows>().windows.get(&workspace_id)
@@ -2624,6 +2638,7 @@ impl BeaconApp {
                         Button::new(SharedString::from(format!("close-tab-{id}")))
                             .xsmall()
                             .ghost()
+                            .flex_shrink_0()
                             .label("×")
                             .tooltip(crate::i18n::text("Close tab"))
                             .on_click(cx.listener(move |view, _, window, cx| {
@@ -3400,6 +3415,9 @@ impl Render for BeaconApp {
 
 #[cfg(all(test, feature = "ui-tests"))]
 mod tab_duplication_tests;
+
+#[cfg(all(test, feature = "ui-tests"))]
+mod tab_title_tests;
 
 #[cfg(all(test, feature = "ui-tests"))]
 #[path = "app/window_state_tests.rs"]
