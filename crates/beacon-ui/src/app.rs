@@ -3422,6 +3422,8 @@ mod rendering_tests {
         cx.update(|cx| {
             crate::settings::store(cx).update(cx, |settings, _| {
                 settings.preferences.updates.auto_check = false;
+                settings.preferences.proxy =
+                    beacon_kube::connection::Proxy::Custom("://invalid".into());
             });
             crate::updates::init(cx);
         });
@@ -3477,12 +3479,21 @@ mod rendering_tests {
             .expect("Update should open application settings");
         cx.update_window(settings, |_, window, cx| {
             window.render_frame(cx);
-            assert!(window.find("get-update-package").visible());
+            assert!(window.find("check-updates").visible());
+            assert!(window.try_find("get-update-package").is_none());
             window.click("settings-appearance", cx);
             window.render_frame(cx);
             assert!(window.try_find("get-update-package").is_none());
         })
         .unwrap();
+        cx.update(|cx| {
+            crate::updates::store(cx).update(cx, |updater, cx| {
+                updater.cancel(cx);
+                updater.status = Status::Available(release.clone());
+                cx.notify();
+            });
+        });
+        cx.run_until_parked();
         cx.update_window(window, |_, window, cx| {
             window.click("open-updates", cx);
         })
@@ -3491,7 +3502,8 @@ mod rendering_tests {
         assert_eq!(cx.windows().len(), 2, "reuse the open settings window");
         cx.update_window(settings, |_, window, cx| {
             window.render_frame(cx);
-            assert!(window.find("get-update-package").visible());
+            assert!(window.find("check-updates").visible());
+            assert!(window.try_find("get-update-package").is_none());
         })
         .unwrap();
         for (status, visible) in [
@@ -3521,6 +3533,7 @@ mod rendering_tests {
         ] {
             cx.update(|cx| {
                 crate::updates::store(cx).update(cx, |updater, cx| {
+                    updater.cancel(cx);
                     updater.status = status;
                     cx.notify();
                 });

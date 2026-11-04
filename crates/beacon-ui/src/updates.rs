@@ -204,6 +204,20 @@ impl Updater {
     pub fn check(&mut self, cx: &mut Context<Self>) {
         self.start_check(CheckKind::Manual, cx);
     }
+    pub fn check_on_open(&mut self, cx: &mut Context<Self>) {
+        // Refresh a previously discovered release when the user opens Updates.
+        // Rendering and active downloads/installations must not restart checks.
+        if matches!(
+            self.status,
+            Status::Available(_)
+                | Status::Failed {
+                    release: Some(_),
+                    ..
+                }
+        ) {
+            self.check(cx);
+        }
+    }
     fn start_check(&mut self, kind: CheckKind, cx: &mut Context<Self>) {
         if matches!(self.status, Status::Checking) {
             // A manual request may reuse the running background check, but its
@@ -453,6 +467,22 @@ enum Progress {
 #[cfg(all(test, feature = "ui-tests"))]
 mod tests {
     use super::*;
+    use beacon_updater::{Asset, Format};
+    use gpui_kit::test::TestWindowExt as _;
+
+    fn release() -> Release {
+        Release {
+            version: "9.9.9".parse().unwrap(),
+            notes: "A newer release".into(),
+            page: "https://example.invalid/release".parse().unwrap(),
+            asset: Asset {
+                url: "https://example.invalid/package".parse().unwrap(),
+                signature: String::new(),
+                size: 1024,
+                format: Format::App,
+            },
+        }
+    }
 
     fn initialize(auto_check: bool, directory: &std::path::Path, cx: &mut App) {
         gpui_kit::init(cx);
@@ -467,6 +497,121 @@ mod tests {
         });
         Bridge::init(cx).unwrap();
         init(cx);
+    }
+
+    #[::core::prelude::v1::test]
+    fn opening_updates_rechecks_discovered_releases_without_interrupting_active_work() {
+        let directory = tempfile::tempdir().unwrap();
+        let cx = TestAppContext::single();
+        cx.update(|cx| {
+            initialize(false, directory.path(), cx);
+            store(cx).update(cx, |view, cx| {
+                for status in [
+                    Status::Available(release()),
+                    Status::Failed {
+                        message: "Download interrupted".into(),
+                        release: Some(release()),
+                    },
+                ] {
+                    view.status = status;
+                    let generation = view.generation;
+                    view.check_on_open(cx);
+                    assert!(matches!(view.status, Status::Checking));
+                    assert_eq!(view.generation, generation + 1);
+                    assert!(view.check_kind == CheckKind::Manual);
+                    view.check_on_open(cx);
+                    assert_eq!(view.generation, generation + 1, "reuse the pending check");
+                    view.cancel(cx);
+                }
+                for status in [
+                    Status::Idle,
+                    Status::Current,
+                    Status::Failed {
+                        message: "Offline".into(),
+                        release: None,
+                    },
+                    Status::Downloading {
+                        release: release(),
+                        received: 512,
+                        total: 1024,
+                    },
+                    Status::Installing,
+                ] {
+                    view.status = status;
+                    let generation = view.generation;
+                    let state = std::mem::discriminant(&view.status);
+                    view.check_on_open(cx);
+                    assert_eq!(view.generation, generation);
+                    assert_eq!(std::mem::discriminant(&view.status), state);
+                    if let Status::Downloading {
+                        received, total, ..
+                    } = view.status
+                    {
+                        assert_eq!((received, total), (512, 1024));
+                    }
+                }
+            });
+        });
+    }
+
+    #[::core::prelude::v1::test]
+    fn updates_navigation_rechecks_on_entry_and_never_during_rendering() {
+        let directory = tempfile::tempdir().unwrap();
+        let cx = &mut TestAppContext::single();
+        cx.update(|cx| {
+            initialize(false, directory.path(), cx);
+            store(cx).update(cx, |view, _| view.status = Status::Available(release()));
+            crate::preferences::updates(cx);
+        });
+        cx.run_until_parked();
+        cx.update(|cx| assert_eq!(store(cx).read(cx).generation, 1));
+        let window = cx.windows()[0];
+        // Both explicitly reopening Updates and reopening Settings while Updates
+        // is selected must refresh the existing window's discovered release.
+        for open in [
+            crate::preferences::updates as fn(&mut App),
+            crate::preferences::application,
+        ] {
+            let generation = cx.update(|cx| {
+                store(cx).update(cx, |view, cx| {
+                    view.cancel(cx);
+                    view.status = Status::Available(release());
+                    cx.notify();
+                });
+                let generation = store(cx).read(cx).generation;
+                open(cx);
+                generation
+            });
+            cx.run_until_parked();
+            assert_eq!(cx.windows(), vec![window], "reuse the settings window");
+            cx.update(|cx| assert_eq!(store(cx).read(cx).generation, generation + 1));
+        }
+        cx.update_window(window, |_, window, cx| {
+            window.set_view_retention(false);
+            window.render_frame(cx);
+            window.click("settings-appearance", cx);
+            store(cx).update(cx, |view, cx| {
+                view.cancel(cx);
+                view.status = Status::Available(release());
+                cx.notify();
+            });
+            let generation = store(cx).read(cx).generation;
+            window.click("settings-updates", cx);
+            assert!(matches!(store(cx).read(cx).status, Status::Checking));
+            assert_eq!(store(cx).read(cx).generation, generation + 1);
+
+            store(cx).update(cx, |view, cx| {
+                view.cancel(cx);
+                view.status = Status::Available(release());
+                cx.notify();
+            });
+            let generation = store(cx).read(cx).generation;
+            window.render_frame(cx);
+            window.render_frame(cx);
+            assert!(matches!(store(cx).read(cx).status, Status::Available(_)));
+            assert_eq!(store(cx).read(cx).generation, generation);
+        })
+        .unwrap();
     }
 
     #[::core::prelude::v1::test]

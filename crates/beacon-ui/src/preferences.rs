@@ -99,10 +99,10 @@ fn open_section(id: Option<ClusterId>, section: Option<Section>, cx: &mut App) {
         if let Some(handle) = handle
             && handle
                 .update(cx, |root, window, cx| {
-                    if let Some(section) = section
-                        && let Ok(view) = root.view().clone().downcast::<PreferencesView>()
-                    {
-                        view.update(cx, |view, cx| view.select_section(section, window, cx));
+                    if let Ok(view) = root.view().clone().downcast::<PreferencesView>() {
+                        view.update(cx, |view, cx| {
+                            view.select_section(section.unwrap_or(view.section), window, cx)
+                        });
                     }
                     window.activate_window();
                 })
@@ -671,6 +671,11 @@ impl PreferencesView {
     fn select_section(&mut self, section: Section, window: &mut Window, cx: &mut Context<Self>) {
         self.focus.focus(window, cx);
         self.section = section;
+        if section == Section::Updates
+            && let Some(updater) = crate::updates::maybe_store(cx)
+        {
+            updater.update(cx, |updater, cx| updater.check_on_open(cx));
+        }
         if section == Section::Sources && self.sources.is_none() {
             self.sources = Some(cx.new(|cx| crate::sources::SourcesView::new(window, cx)));
         }
