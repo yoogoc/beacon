@@ -56,15 +56,6 @@ pub(crate) enum Format {
     Json,
     Logfmt,
 }
-impl Format {
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::Text => "Text",
-            Self::Json => "JSON",
-            Self::Logfmt => "logfmt",
-        }
-    }
-}
 
 #[derive(Clone, Debug)]
 pub(crate) struct Record {

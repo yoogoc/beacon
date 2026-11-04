@@ -78,6 +78,7 @@ impl FilesView {
             return;
         }
         self.preview = None;
+        self.text_preview.update(cx, |view, cx| view.close(cx));
         self.editor = None;
         self._editor_changes = None;
         cx.notify();
@@ -847,10 +848,10 @@ impl FilesView {
                 .child(h_flex().w_full().h(px(28.)).px_3().flex_shrink_0()
                     .text_size(cx.theme().font_size * 0.6875).text_color(cx.theme().muted_foreground)
                     .child(crate::i18n::text("Text preview")).child(div().flex_1()).child("UTF-8"))
-                .child(div().id("file-preview-scroll").test_support().flex_1().min_size_0()
-                    .overflow_scrollbar().p_3().pt_1().font_family(cx.theme().mono_font_family.clone()).text_size(cx.theme().mono_font_size)
-                    .line_height(relative(1.6)).whitespace_nowrap()
-                    .child(copyable_text("file-content", text.clone())))
+                .child({
+                    self.text_preview.update(cx, |view,cx| view.set_text(text,cx));
+                    self.text_preview.clone()
+                })
                 .into_any_element()
         } else {
             v_flex().flex_1().min_size_0().justify_center().items_center().gap_3().p_6().text_center()

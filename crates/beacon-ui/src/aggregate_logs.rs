@@ -119,7 +119,7 @@ pub(crate) fn open(
             |view, _, event: &SelectEvent<SearchableVec<String>>, window, cx| {
                 if let SelectEvent::Confirm(Some(name)) = event {
                     view.selected_container = (name != ALL).then(|| name.clone());
-                    view.clear_logs();
+                    view.clear_logs(cx);
                     view.streams.clear();
                     view.sync(window, cx);
                 }
@@ -137,7 +137,7 @@ pub(crate) fn open(
                     crate::log_workbench::Changed::Range(since, until) => {
                         view.since = *since;
                         view.until = *until;
-                        view.clear_logs();
+                        view.clear_logs(cx);
                         view.streams.clear();
                         view.sync(window, cx);
                     }
@@ -160,7 +160,12 @@ pub(crate) fn open(
 }
 
 impl AggregateLogs {
-    fn clear_logs(&mut self) {
+    fn clear_logs(&mut self, cx: &mut Context<Self>) {
+        self.workbench
+            .read(cx)
+            .line_preview
+            .clone()
+            .update(cx, |view, cx| view.close(cx));
         self.logs.clear();
         self.display.borrow_mut().reset_stream();
         self.widths = LogLineWidths::default();
@@ -190,7 +195,7 @@ impl AggregateLogs {
         self._lists.clear();
         self._watches.clear();
         self.streams.clear();
-        self.clear_logs();
+        self.clear_logs(cx);
         self.message = None;
         self.pods = self
             .namespaces
@@ -497,7 +502,7 @@ impl Render for AggregateLogs {
                 .child(Button::new("aggregate-pause").small().ghost().label(crate::i18n::text(if self.follow { "Pause follow" } else { "Resume follow" })).on_click(cx.listener(|view, _, _, cx| { view.follow = !view.follow; if view.follow { view.latest(); } cx.notify(); })))
                 .child(Button::new("aggregate-latest").small().ghost().label(crate::i18n::text("Latest")).on_click(cx.listener(|view, _, _, cx| { view.follow = true; view.latest(); cx.notify(); })))
                 .child(Button::new("aggregate-wrap").small().ghost().label(crate::i18n::text("Wrap")).on_click(cx.listener(|view, _, _, cx| { view.wrap = !view.wrap; if view.follow { view.latest(); } cx.notify(); })))
-                .child(Button::new("aggregate-previous").small().ghost().label(if self.previous { "Previous: on" } else { "Previous" }).on_click(cx.listener(|view, _, window, cx| { view.previous = !view.previous; view.clear_logs(); view.streams.clear(); view.sync(window, cx); })))
+                .child(Button::new("aggregate-previous").small().ghost().label(if self.previous { "Previous: on" } else { "Previous" }).on_click(cx.listener(|view, _, window, cx| { view.previous = !view.previous; view.clear_logs(cx); view.streams.clear(); view.sync(window, cx); })))
                 .child(Button::new("aggregate-copy").small().ghost().label(crate::i18n::text("Copy")).tooltip(crate::i18n::text("Copy matching retained raw lines; field projection does not remove original data")).on_click(cx.listener(|view, _, _, cx| cx.write_to_clipboard(ClipboardItem::new_string(view.display.borrow().text())))))
                 .child(Button::new("aggregate-download").small().ghost().label(crate::i18n::text("Export all…")).tooltip(crate::i18n::text("Download complete available logs for every current source; active time bounds apply")).disabled(self.downloading || self.streams.is_empty()).on_click(cx.listener(|view, _, window, cx| view.download(window, cx))))
                 .when(self.downloading, |bar| bar.child(Button::new("aggregate-cancel-download").small().ghost().label(crate::i18n::text("Cancel download")).on_click(cx.listener(|view, _, _, cx| { view._download = None; view.downloading = false; view.message = Some("Download cancelled. Completed files remain in the selected folder.".into()); cx.notify(); }))))
@@ -507,7 +512,6 @@ impl Render for AggregateLogs {
             .when(self.loading > 0, |view| view.child(crate::i18n::text("Loading matching Pods…")))
             .children(self.errors.iter().enumerate().map(|(index, (source, error))| copyable_text(("aggregate-stream-error", index), format!("{} {error}", source.prefix()))))
             .child(div().flex_1().min_size_0().child(body))
-            .children(self.workbench.read(cx).inspector())
     }
 }
 

@@ -35,6 +35,7 @@ mod i18n;
 mod icons;
 mod ingress_links;
 mod job_actions;
+mod line_preview;
 mod log_workbench;
 mod network;
 mod node_actions;

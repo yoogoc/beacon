@@ -53,6 +53,7 @@ pub(crate) struct FilesView {
     visible: Arc<Vec<usize>>,
     preview: Option<Preview>,
     editor: Option<Entity<TextareaState>>,
+    text_preview: Entity<crate::line_preview::TextLines>,
     selected: BTreeSet<String>,
     busy: bool,
     message: Option<String>,
@@ -159,6 +160,7 @@ impl FilesView {
             visible: Arc::new(Vec::new()),
             preview: None,
             editor: None,
+            text_preview: crate::line_preview::TextLines::new(cx),
             selected: BTreeSet::new(),
             busy: false,
             message: None,
@@ -359,6 +361,7 @@ impl FilesView {
             return;
         };
         self._review = None;
+        self.text_preview.update(cx, |view, cx| view.close(cx));
         self._prompt = None;
         self.busy = true;
         self.message = None;
@@ -522,6 +525,7 @@ impl FilesView {
         if let Some(p) = &self.preview
             && p.editable()
         {
+            self.text_preview.update(cx, |view, cx| view.close(cx));
             self.editor = Some(cx.new(|cx| {
                 let mut editor = TextareaState::new(window, cx).auto_grow(15, 30);
                 editor.set_value(p.text.clone().unwrap(), window, cx);

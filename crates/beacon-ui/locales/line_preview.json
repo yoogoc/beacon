@@ -1,0 +1,71 @@
+{
+  "_version": 2,
+  "line_preview.formatted": {
+    "en": "Formatted",
+    "zh-CN": "格式化"
+  },
+  "line_preview.pin": {
+    "en": "Pin preview",
+    "zh-CN": "固定预览"
+  },
+  "line_preview.unpin": {
+    "en": "Unpin preview",
+    "zh-CN": "取消固定预览"
+  },
+  "line_preview.pinned": {
+    "en": "Pinned",
+    "zh-CN": "已固定"
+  },
+  "line_preview.hover": {
+    "en": "Hover preview",
+    "zh-CN": "悬停预览"
+  },
+  "line_preview.copy_raw": {
+    "en": "Copy raw line",
+    "zh-CN": "复制原始行"
+  },
+  "line_preview.copied": {
+    "en": "Line copied",
+    "zh-CN": "已复制当前行"
+  },
+  "line_preview.copy_formatted": {
+    "en": "Copy formatted line",
+    "zh-CN": "复制格式化内容"
+  },
+  "line_preview.copy_file": {
+    "en": "Copy file contents",
+    "zh-CN": "复制文件内容"
+  },
+  "line_preview.contents": {
+    "en": "Line preview contents",
+    "zh-CN": "当前行预览内容"
+  },
+  "line_preview.escape": {
+    "en": "Esc to close",
+    "zh-CN": "Esc 关闭"
+  },
+  "line_preview.raw_limit": {
+    "en": "Line preview limited to 256 KiB. Copy the raw line for its complete contents.",
+    "zh-CN": "当前行预览限于 256 KiB，可复制原始行获取完整内容。"
+  },
+  "line_preview.format_limit": {
+    "en": "Formatted line is too large. Showing the original text.",
+    "zh-CN": "格式化后的内容过大，显示原文。"
+  },
+  "line_preview.invalid": {
+    "en": "Invalid or unsupported structured data. Showing the original text.",
+    "zh-CN": "结构化数据无效或暂不支持，显示原文。"
+  },
+  "line_preview.key_value": {
+    "en": "Key/value",
+    "zh-CN": "键值对"
+  },
+  "line_preview.query": {
+    "en": "URL query",
+    "zh-CN": "URL 查询参数"
+  },
+  "line_preview.fields": {
+    "en": "Fields",
+    "zh-CN": "字段"
+  }
+}

@@ -1,9 +1,8 @@
-//! Shared controls and a nonmodal inspector for Pod and aggregated logs.
+//! Shared controls and floating entry details for Pod and aggregated logs.
 use crate::scroll::OverflowScrollbars as _;
 use crate::{
     copyable_text::copyable_text,
-    pod_logs::{Display, Filter, Level, Record},
-    theme::{BeaconTheme as _, Tone},
+    pod_logs::{Display, Filter, Level},
 };
 use beacon_columns::Timestamp;
 use gpui_kit::base::TestSupportExt as _;
@@ -24,6 +23,7 @@ pub(crate) enum Changed {
     Range(Option<Timestamp>, Option<Timestamp>),
 }
 pub(crate) struct LogWorkbench {
+    pub(crate) line_preview: Entity<crate::line_preview::LinePreview>,
     display: Rc<RefCell<Display>>,
     search: Entity<InputState>,
     field_filter: Entity<InputState>,
@@ -40,7 +40,6 @@ pub(crate) struct LogWorkbench {
     message: Option<String>,
     exporting: bool,
     compact_controls: bool,
-    inspector: Option<Entity<LogInspector>>,
     _subscriptions: Vec<Subscription>,
     _export: Option<Task<()>>,
 }
@@ -153,6 +152,7 @@ impl LogWorkbench {
                 ),
             ];
             Self {
+                line_preview: crate::line_preview::LinePreview::new(cx),
                 display,
                 search,
                 field_filter,
@@ -169,7 +169,6 @@ impl LogWorkbench {
                 message: None,
                 exporting: false,
             compact_controls: false,
-                inspector: None,
                 _subscriptions: subscriptions,
                 _export: None,
             }
@@ -183,22 +182,34 @@ impl LogWorkbench {
     pub fn refresh(&mut self, cx: &mut Context<Self>) {
         cx.notify();
     }
-    pub fn inspect(&mut self, id: usize, window: &mut Window, cx: &mut Context<Self>) {
+    pub fn inspect(
+        &mut self,
+        id: usize,
+        bounds: Bounds<Pixels>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let Some(record) = self.display.borrow().record(id) else {
             return;
         };
+        let fields = Arc::new(
+            record
+                .fields
+                .iter()
+                .map(|(key, value)| (key.clone(), value.clone()))
+                .collect(),
+        );
         let workbench = cx.entity().downgrade();
-        self.inspector = Some(cx.new(|_| LogInspector {
+        let details = cx.new(|_| LogFields {
             id,
-            record,
+            fields,
             workbench,
-        }));
-        cx.emit(Changed::Filter);
-        cx.notify();
-        let _ = window;
-    }
-    pub fn inspector(&self) -> Option<Entity<LogInspector>> {
-        self.inspector.clone()
+            scroll: UniformListScrollHandle::new(),
+        });
+        self.line_preview.update(cx, |view, cx| {
+            view.show(id, record.raw.clone(), bounds, window, cx);
+            view.set_details(details.into(), cx);
+        });
     }
     pub fn bookmark(&mut self, id: usize, cx: &mut Context<Self>) {
         self.display.borrow_mut().toggle_bookmark(id);
@@ -357,165 +368,139 @@ impl Render for LogWorkbench {
     }
 }
 
-pub(crate) struct LogInspector {
+struct LogFields {
     id: usize,
-    record: Arc<Record>,
+    fields: Arc<Vec<(String, String)>>,
     workbench: WeakEntity<LogWorkbench>,
+    scroll: UniformListScrollHandle,
 }
-impl Render for LogInspector {
+impl Render for LogFields {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let workbench = self.workbench.clone();
-        let bookmark = self.workbench.clone();
+        let owner = self.workbench.clone();
         let id = self.id;
+        let fields = self.fields.clone();
+        let workbench = self.workbench.clone();
         v_flex()
-            .id("log-inspector")
+            .id("log-preview-fields")
             .test_support()
-            .w_full()
-            .h(px(250.))
-            .min_h(px(130.))
-            .flex_shrink_0()
-            .border_t_1()
-            .border_color(cx.theme().border)
-            .bg(cx.theme().background)
+            .size_full()
+            .min_size_0()
+            .overflow_hidden()
             .child(
                 h_flex()
-                    .px_3()
+                    .px_2()
                     .py_1()
-                    .gap_2()
-                    .child(
-                        div()
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .child(crate::i18n::text("Log entry")),
-                    )
-                    .child(
-                        div()
-                            .text_color(cx.theme().muted_foreground)
-                            .child(self.record.format.label()),
-                    )
-                    .child(
-                        div()
-                            .text_color(cx.theme().tone(match self.record.level {
-                                Level::Error => Tone::Critical,
-                                Level::Warning => Tone::Warning,
-                                Level::Info => Tone::Healthy,
-                                _ => Tone::Unknown,
-                            }))
-                            .child(crate::i18n::text(self.record.level.label())),
-                    )
+                    .flex_shrink_0()
                     .child(div().flex_1())
                     .child(
                         Button::new("log-inspector-bookmark")
                             .xsmall()
                             .ghost()
-                            .label(crate::i18n::text("Toggle bookmark"))
+                            .icon(gpui_kit::assets::IconName::Bookmark)
+                            .accessibility_label(crate::i18n::text("Toggle bookmark"))
+                            .tooltip(crate::i18n::text("Toggle bookmark"))
                             .on_click(move |_, _, cx| {
-                                let _ = bookmark.update(cx, |view, cx| view.bookmark(id, cx));
-                            }),
-                    )
-                    .child(
-                        Button::new("log-inspector-close")
-                            .xsmall()
-                            .ghost()
-                            .label(crate::i18n::text("Close"))
-                            .on_click(move |_, _, cx| {
-                                let _ = workbench.update(cx, |view, cx| {
-                                    view.inspector = None;
-                                    cx.emit(Changed::Filter);
-                                    cx.notify();
-                                });
+                                let _ = owner.update(cx, |view, cx| view.bookmark(id, cx));
                             }),
                     ),
             )
+            .when(self.fields.is_empty(), |body| {
+                body.child(
+                    div()
+                        .p_3()
+                        .text_sm()
+                        .text_color(cx.theme().muted_foreground)
+                        .child(crate::i18n::text("No structured fields in this line.")),
+                )
+            })
             .child(
-                h_flex()
-                    .size_full()
+                div()
+                    .relative()
+                    .flex_1()
                     .min_size_0()
-                    .gap_3()
-                    .px_3()
-                    .pb_2()
                     .child(
-                        v_flex()
-                            .id("log-inspector-fields")
-                            .flex_1()
-                            .min_w_0()
-                            .overflow_y_scrollbar()
-                            .gap_1()
-                            .children(self.record.fields.iter().enumerate().map(
-                                |(index, (field, value))| {
-                                    let workbench = self.workbench.clone();
-                                    let field = field.clone();
-                                    let value = value.clone();
-                                    h_flex()
-                                        .items_start()
-                                        .gap_2()
-                                        .child(
-                                            div()
-                                                .w(px(140.))
-                                                .flex_shrink_0()
-                                                .text_color(cx.theme().muted_foreground)
-                                                .child(copyable_text(
-                                                    ("log-field-key", index),
-                                                    field.clone(),
-                                                )),
-                                        )
-                                        .child(div().flex_1().min_w_0().child(copyable_text(
-                                            ("log-field-value", index),
-                                            value.clone(),
-                                        )))
-                                        .child(
-                                            Button::new(("log-filter-value", index))
-                                                .xsmall()
-                                                .ghost()
-                                                .label(crate::i18n::text("Filter"))
-                                                .tooltip(crate::i18n::text(
-                                                    "Add this exact field value to the filter",
-                                                ))
-                                                .on_click(move |_, window, cx| {
-                                                    let _ = workbench.update(cx, |view, cx| {
-                                                        view.filter
-                                                            .predicates
-                                                            .insert(field.clone(), value.clone());
-                                                        let text = crate::pod_logs::predicate_text(
-                                                            &view.filter.predicates,
-                                                        );
-                                                        view.field_filter.update(
-                                                            cx,
-                                                            |input, cx| {
-                                                                input.set_value(text, window, cx)
-                                                            },
-                                                        );
-                                                        view.fields_open = true;
-                                                        cx.emit(Changed::Filter);
-                                                        cx.notify();
-                                                    });
-                                                }),
-                                        )
-                                },
-                            ))
-                            .when(self.record.fields.is_empty(), |view| {
-                                view.child(crate::i18n::text("No structured fields in this line."))
-                            }),
+                        uniform_list(
+                            "log-preview-field-list",
+                            fields.len(),
+                            move |range, _, _| {
+                                range
+                                    .map(|index| {
+                                        let (field, value) = fields[index].clone();
+                                        let owner = workbench.clone();
+                                        let key = field.clone();
+                                        let exact = value.clone();
+                                        h_flex()
+                                            .id(("log-preview-field", index))
+                                            .h(px(34.))
+                                            .px_3()
+                                            .gap_2()
+                                            .items_center()
+                                            .min_w_0()
+                                            .child(
+                                                div()
+                                                    .w(px(112.))
+                                                    .flex_shrink_0()
+                                                    .overflow_hidden()
+                                                    .whitespace_nowrap()
+                                                    .child(copyable_text(
+                                                        ("log-field-key", index),
+                                                        field,
+                                                    )),
+                                            )
+                                            .child(
+                                                div()
+                                                    .flex_1()
+                                                    .min_w_0()
+                                                    .overflow_hidden()
+                                                    .whitespace_nowrap()
+                                                    .child(copyable_text(
+                                                        ("log-field-value", index),
+                                                        value,
+                                                    )),
+                                            )
+                                            .child(
+                                                Button::new(("log-filter-value", index))
+                                                    .xsmall()
+                                                    .ghost()
+                                                    .icon(gpui_kit::assets::IconName::ListFilter)
+                                                    .accessibility_label(crate::i18n::text(
+                                                        "Filter",
+                                                    ))
+                                                    .tooltip(crate::i18n::text(
+                                                        "Add this exact field value to the filter",
+                                                    ))
+                                                    .on_click(move |_, window, cx| {
+                                                        let _ = owner.update(cx, |view, cx| {
+                                                            view.filter
+                                                                .predicates
+                                                                .insert(key.clone(), exact.clone());
+                                                            let text =
+                                                                crate::pod_logs::predicate_text(
+                                                                    &view.filter.predicates,
+                                                                );
+                                                            view.field_filter.update(
+                                                                cx,
+                                                                |input, cx| {
+                                                                    input
+                                                                        .set_value(text, window, cx)
+                                                                },
+                                                            );
+                                                            view.fields_open = true;
+                                                            cx.emit(Changed::Filter);
+                                                            cx.notify();
+                                                        });
+                                                    }),
+                                            )
+                                    })
+                                    .collect()
+                            },
+                        )
+                        .track_scroll(&self.scroll)
+                        .size_full(),
                     )
-                    .child(
-                        v_flex()
-                            .flex_1()
-                            .min_w_0()
-                            .gap_1()
-                            .child(
-                                div()
-                                    .text_color(cx.theme().muted_foreground)
-                                    .child(crate::i18n::text("Raw log · unchanged")),
-                            )
-                            .child(
-                                div()
-                                    .id("log-inspector-raw")
-                                    .flex_1()
-                                    .min_size_0()
-                                    .overflow_y_scrollbar()
-                                    .font_family("monospace")
-                                    .child(copyable_text("log-raw-text", self.record.raw.clone())),
-                            ),
-                    ),
+                    .child(gpui_kit::component::scroll::Scrollbar::vertical(
+                        &self.scroll,
+                    )),
             )
     }
 }
@@ -570,7 +555,6 @@ mod tests {
                 )
                 .child(self.controls.clone())
                 .child(div().flex_1().min_size_0().child(canvas))
-                .children(self.controls.read(cx).inspector())
         }
     }
     fn pane(cx: &mut TestAppContext) -> (AnyWindowHandle, Entity<Pane>) {
@@ -596,7 +580,17 @@ mod tests {
             window.render_frame(cx);
             window.click(("inspect-log", 0usize), cx);
             window.render_frame(cx);
-            assert!(window.find("log-inspector").visible());
+        })
+        .unwrap();
+        support::render_until(cx, window, |window| {
+            window
+                .try_find("line-preview")
+                .is_some_and(|view| view.visible())
+        });
+        cx.update_window(window, |_, window, cx| {
+            assert!(window.try_find("log-inspector").is_none());
+            window.click("line-preview-fields", cx);
+            window.render_frame(cx);
             window.click(("log-filter-value", 2usize), cx);
             window.render_frame(cx); // status=503
         })
@@ -607,7 +601,7 @@ mod tests {
         );
         cx.update_window(window, |_, window, cx| {
             window.click("log-inspector-bookmark", cx);
-            window.click("log-inspector-close", cx);
+            window.click("line-preview-close", cx);
             window.render_frame(cx);
             window.click("log-compact", cx);
             window.render_frame(cx);

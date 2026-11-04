@@ -3,12 +3,17 @@
 use crate::scroll::OverflowScrollbars as _;
 #[cfg(test)]
 use std::collections::VecDeque;
-use std::{cell::RefCell, path::PathBuf, rc::Rc, sync::Arc};
+use std::{
+    cell::{Cell, RefCell},
+    path::PathBuf,
+    rc::Rc,
+    sync::Arc,
+};
 
 use beacon_kube::{
     ClusterSession, DynamicObject, LogBuffer, LogEvent, LogOptions, ObjectRef, Rules,
 };
-use gpui_kit::base::TestSupportExt as _;
+use gpui_kit::base::{ElementExt as _, TestSupportExt as _};
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::component::scroll::{Scrollbar, ScrollbarMode};
@@ -224,7 +229,10 @@ fn render_log_row(
         })
         .collect();
     let id = row.id;
-    h_flex()
+    let preview = workbench
+        .as_ref()
+        .map(|view| view.read(cx).line_preview.clone());
+    let line = h_flex()
         .id(("pod-log-line", row.id))
         .gap_1()
         .items_start()
@@ -236,15 +244,23 @@ fn render_log_row(
         .when(!wrap, |row| row.whitespace_nowrap())
         .when_some(workbench, |line, workbench| {
             let inspect = workbench.clone();
+            let anchor = Rc::new(Cell::new(Bounds::default()));
+            let measured = anchor.clone();
             line.child(
-                Button::new(("inspect-log", id))
-                    .xsmall()
-                    .ghost()
-                    .label("›")
-                    .tooltip(crate::i18n::text("Inspect fields and raw log"))
-                    .on_click(move |_, window, cx| {
-                        inspect.update(cx, |view, cx| view.inspect(id, window, cx))
-                    }),
+                div()
+                    .on_prepaint(move |bounds, _, _| measured.set(bounds))
+                    .child(
+                        Button::new(("inspect-log", id))
+                            .xsmall()
+                            .ghost()
+                            .label("›")
+                            .tooltip(crate::i18n::text("Inspect fields and raw log"))
+                            .on_click(move |_, window, cx| {
+                                inspect.update(cx, |view, cx| {
+                                    view.inspect(id, anchor.get(), window, cx)
+                                })
+                            }),
+                    ),
             )
             .child(
                 Button::new(("bookmark-log", id))
@@ -272,7 +288,14 @@ fn render_log_row(
             crate::copyable_text::highlighted_text("line", row.text.clone(), highlights),
         ))
         .test_support()
-        .into_any_element()
+        .into_any_element();
+    if let Some(preview) = preview {
+        crate::line_preview::trigger(&preview, id, row.record.raw.clone(), line, cx)
+            .when(wrap, |row| row.w_full())
+            .into_any_element()
+    } else {
+        line
+    }
 }
 
 pub(crate) struct LogCanvas<'a> {
@@ -294,8 +317,13 @@ impl LogCanvas<'_> {
         }
         let display = self.display.clone();
         let workbench = self.workbench.clone();
+        let overlay = workbench
+            .as_ref()
+            .map(|view| view.read(cx).line_preview.clone());
         if self.wrap {
             div()
+                .id("pod-log-canvas")
+                .test_support()
                 .relative()
                 .size_full()
                 .min_w_0()
@@ -313,6 +341,7 @@ impl LogCanvas<'_> {
                     .pr_3(),
                 )
                 .child(Scrollbar::vertical(self.wrapped))
+                .children(overlay)
                 .into_any_element()
         } else {
             let font = Font {
@@ -356,6 +385,8 @@ impl LogCanvas<'_> {
             .size_full()
             .pb_3();
             div()
+                .id("pod-log-canvas")
+                .test_support()
                 .relative()
                 .size_full()
                 .min_w_0()
@@ -363,6 +394,7 @@ impl LogCanvas<'_> {
                 .child(list)
                 .child(Scrollbar::horizontal(self.unwrapped).mode(ScrollbarMode::Always))
                 .child(Scrollbar::vertical(self.unwrapped))
+                .children(overlay)
                 .into_any_element()
         }
     }
@@ -871,6 +903,11 @@ impl PodToolsView {
         };
 
         self.logs.clear();
+        self.log_workbench
+            .read(cx)
+            .line_preview
+            .clone()
+            .update(cx, |view, cx| view.close(cx));
         self.log_widths = LogLineWidths::default();
         self.log_scroll = UniformListScrollHandle::new();
         self.log_display.borrow_mut().reset_stream();
@@ -1205,7 +1242,6 @@ impl PodToolsView {
             .children(self.render_download_status(cx))
             .child(div().flex_1().min_size_0().overflow_hidden().child(body))
             .when(self.embedded.is_some(), |pane| pane.child(self.workspace_log_footer(cx)))
-            .children(self.log_workbench.read(cx).inspector())
             .into_any_element()
     }
 
@@ -1438,6 +1474,7 @@ impl Render for PodToolsView {
 #[cfg(all(test, feature = "ui-tests"))]
 mod rendering_tests {
     use super::*;
+    use gpui_kit::InputEvent as _;
     use gpui_kit::test::TestWindowExt as _;
 
     #[::core::prelude::v1::test]
@@ -1569,6 +1606,138 @@ mod rendering_tests {
                 }
                 .render(window, cx),
             )
+        }
+    }
+
+    #[::core::prelude::v1::test]
+    fn compact_pod_logs_hover_and_click_share_a_floating_preview_without_resizing_the_canvas() {
+        use crate::feature_test_support as support;
+        let cx = &mut support::context();
+        let directory = tempfile::tempdir().unwrap();
+        support::workspace(cx, directory.path());
+        let object = serde_json::json!({"apiVersion":"v1","kind":"Pod","metadata":{"name":"demo","namespace":"default","uid":"hover-pod"},"spec":{"containers":[{"name":"app"}]}});
+        let (_fixture, session) = support::fixture(cx, "hover-pod", vec![object.clone()]);
+        let object = Arc::new(serde_json::from_value(object).unwrap());
+        let (window, view) = cx.update(|cx| {
+            gpui_kit::open_window(
+                WindowOptions {
+                    window_bounds: Some(WindowBounds::Windowed(Bounds::new(
+                        point(px(0.), px(0.)),
+                        size(px(1200.), px(800.)),
+                    ))),
+                    ..Default::default()
+                },
+                cx,
+                |window, cx| {
+                    window.set_view_retention(false);
+                    cx.new(|cx| {
+                        PodToolsView::new(session, object, None, PodToolTab::Logs, window, cx)
+                    })
+                },
+            )
+            .unwrap()
+        });
+        support::settle(cx, |cx| {
+            view.read_with(cx, |view, _| view.log_status == LogStatus::Ended)
+        });
+        view.update(cx, |view, cx| {
+            view.embed(true, cx);
+            view.logs.clear();
+            view.log_display.borrow_mut().reset_stream();
+            view.logs.extend(
+                [
+                    r#"{"level":"info","msg":"first","nested":{"key":"value"}}"#,
+                    r#"{"level":"info","msg":"second"}"#,
+                ]
+                .map(str::to_owned),
+            );
+            view.update_log_display(cx);
+        });
+        let (first, second) = view.read_with(cx, |view, _| {
+            let display = view.log_display.borrow();
+            (display.rows[0].id, display.rows[1].id)
+        });
+        for retained in [false, true] {
+            for wrapped in [false, true] {
+                view.update(cx, |view, cx| {
+                    view.log_wrap = wrapped;
+                    view.log_wrap_scroll.reset(2);
+                    cx.notify();
+                });
+                let before = cx
+                    .update_window(window, |_, window, cx| {
+                        window.set_view_retention(retained);
+                        window.render_frame(cx);
+                        assert!(window.try_find("structured-log-toolbar").is_none());
+                        assert!(window.try_find("log-inspector").is_none());
+                        let row = window.find(("pod-log-line", first)).bounds();
+                        window.dispatch_event(
+                            MouseMoveEvent {
+                                position: row.origin + point(px(190.), px(10.)),
+                                pressed_button: None,
+                                modifiers: Default::default(),
+                            }
+                            .to_platform_input(),
+                            cx,
+                        );
+                        window.find("pod-log-canvas").bounds()
+                    })
+                    .unwrap();
+                cx.run_until_parked();
+                cx.executor()
+                    .advance_clock(std::time::Duration::from_millis(240));
+                support::render_until(cx, window, |window| {
+                    window
+                        .try_find("line-preview")
+                        .is_some_and(|preview| preview.visible())
+                });
+                cx.update_window(window, |_, window, cx| {
+                    assert_eq!(window.find("pod-log-canvas").bounds(), before);
+                    window.click(("inspect-log", first), cx);
+                })
+                .unwrap();
+                support::render_until(cx, window, |window| {
+                    window
+                        .try_find("line-preview-fields")
+                        .is_some_and(|tab| tab.visible())
+                });
+                cx.update_window(window, |_, window, cx| {
+                    window.render_frame(cx);
+                    assert_eq!(window.find("pod-log-canvas").bounds(), before);
+                    assert!(window.try_find("log-inspector").is_none());
+                    let row = window.find(("pod-log-line", second)).bounds();
+                    window.dispatch_event(
+                        MouseMoveEvent {
+                            position: row.origin + point(px(760.), px(10.)),
+                            pressed_button: None,
+                            modifiers: Default::default(),
+                        }
+                        .to_platform_input(),
+                        cx,
+                    );
+                })
+                .unwrap();
+                cx.run_until_parked();
+                cx.executor()
+                    .advance_clock(std::time::Duration::from_secs(1));
+                cx.run_until_parked();
+                cx.update_window(window, |_, window, cx| {
+                    window.render_frame(cx);
+                    window.click("line-preview-copy", cx);
+                    let copied = cx.read_from_clipboard().unwrap().text().unwrap();
+                    assert_eq!(
+                        serde_json::from_str::<serde_json::Value>(&copied).unwrap()["msg"],
+                        "first"
+                    );
+                    window.click("line-preview-fields", cx);
+                    window.render_frame(cx);
+                    assert!(window.find("log-preview-fields").visible());
+                    window.press("escape", cx);
+                    window.render_frame(cx);
+                    assert!(window.try_find("line-preview").is_none());
+                })
+                .unwrap();
+            }
         }
     }
 
