@@ -307,6 +307,7 @@ impl PreferencesView {
                 .gap_1p5()
                 .items_center()
                 .text_xs()
+                .when(grouped, |row| row.pl(px(21.)))
                 .child(Icon::new(IconName::ChevronRight).size_3())
                 .child(crate::icons::kubernetes().size_3())
                 .child(div().flex_1().min_w_0().truncate().child(name))

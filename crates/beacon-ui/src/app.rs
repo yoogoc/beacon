@@ -3742,6 +3742,15 @@ mod rendering_tests {
             });
         }
         cx.update_window(windows[0], |_, window, cx| {
+            let header = window.find("toggle-source-local").bounds();
+            let cluster = window.find("source-rows-local-0").bounds();
+            let next_header = window.find("toggle-source-team").bounds();
+            assert!(
+                cluster.left() >= header.left() + px(20.),
+                "clusters must be nested below their source: {header:?}, {cluster:?}"
+            );
+            assert!(cluster.right() <= header.right() + px(1.));
+            assert_eq!(next_header.left(), header.left());
             window.click("toggle-source-team", cx);
             assert!(window.find("source-rows-local-0").visible());
             assert!(window.try_find("source-rows-team-0").is_none());

@@ -103,11 +103,20 @@ impl SidebarItem for SourceGroup {
             )
             .on_click(move |event, window, cx| toggle(event, window, cx));
         v_flex().gap_1().child(header).when(!self.closed, |group| {
-            group.child(self.menu.collapsed(self.collapsed).render(
-                format!("source-rows-{}", self.id),
-                window,
-                cx,
-            ))
+            group.child(
+                div()
+                    .when(!self.collapsed, |list| {
+                        list.ml(px(14.))
+                            .pl(px(6.))
+                            .border_l_1()
+                            .border_color(cx.theme().border)
+                    })
+                    .child(self.menu.collapsed(self.collapsed).render(
+                        format!("source-rows-{}", self.id),
+                        window,
+                        cx,
+                    )),
+            )
         })
     }
 }
