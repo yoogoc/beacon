@@ -256,6 +256,10 @@
     "en": "Containers",
     "zh-CN": "容器"
   },
+  "common.pod_ip": {
+    "en": "Pod IP",
+    "zh-CN": "Pod IP"
+  },
   "common.init_containers": {
     "en": "Init containers",
     "zh-CN": "初始化容器"

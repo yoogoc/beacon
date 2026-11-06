@@ -223,14 +223,32 @@ impl ResourceTable {
         }
     }
 
+    fn ordered_column_ids(&self) -> Vec<String> {
+        let mut order = self.layout.order.clone();
+        for (index, id) in self.column_ids.iter().enumerate() {
+            if order.contains(id) {
+                continue;
+            }
+            // New columns follow their default predecessor while existing
+            // custom order and IDs for temporarily absent columns survive.
+            let position = self.column_ids[..index]
+                .iter()
+                .rev()
+                .find_map(|previous| order.iter().position(|id| id == previous))
+                .map_or(0, |position| position + 1);
+            order.insert(position, id.clone());
+        }
+        order
+    }
+
     fn ordered_columns(&self) -> Vec<usize> {
+        let order = self.ordered_column_ids();
         let mut columns: Vec<_> = (0..self.columns.len()).collect();
         columns.sort_by_key(|index| {
-            self.layout
-                .order
+            order
                 .iter()
                 .position(|id| id == &self.column_ids[*index])
-                .unwrap_or(self.layout.order.len() + *index)
+                .expect("every current column has an order")
         });
         columns
     }
@@ -268,11 +286,7 @@ impl ResourceTable {
 
     pub(crate) fn layout_snapshot(&self) -> ColumnLayout {
         let mut layout = self.layout.clone();
-        for id in &self.column_ids {
-            if !layout.order.contains(id) {
-                layout.order.push(id.clone());
-            }
-        }
+        layout.order = self.ordered_column_ids();
         layout.sort = match self.sort {
             Sort::Natural => None,
             Sort::ByColumn { index, descending } => {
@@ -1996,6 +2010,60 @@ mod tests {
         let mut table = ResourceTable::new(ColumnSet::for_kind("", "Pod", true));
         table.apply(vec![Delta::Reset((0..count).map(pod).collect())]);
         table
+    }
+
+    #[test]
+    fn new_pod_columns_follow_containers_in_saved_layouts() {
+        let mut old_columns = ColumnSet::for_kind("", "Pod", true);
+        old_columns
+            .columns
+            .retain(|column| !matches!(column.header.as_str(), "Owner" | "Pod IP"));
+        let mut old = ResourceTable::new(old_columns);
+        let memory = old
+            .columns
+            .columns
+            .iter()
+            .position(|column| column.header == "Memory")
+            .unwrap();
+        old.toggle_column(&old.column_ids[memory].clone());
+        old.reorder_column(4, 1);
+        let layout = old.layout_snapshot();
+        let previous_order = layout.order.clone();
+        let mut table = ResourceTable::new(ColumnSet::for_kind("", "Pod", true));
+        table.apply_layout(layout);
+        let headers: Vec<_> = table
+            .ordered_columns()
+            .into_iter()
+            .map(|index| table.columns.columns[index].header.as_str())
+            .collect();
+        let containers = headers
+            .iter()
+            .position(|header| *header == "Containers")
+            .unwrap();
+        assert_eq!(
+            &headers[containers + 1..containers + 3],
+            &["Owner", "Pod IP"]
+        );
+        let snapshot = table.layout_snapshot();
+        assert_eq!(
+            snapshot
+                .order
+                .iter()
+                .filter(|id| previous_order.contains(id))
+                .cloned()
+                .collect::<Vec<_>>(),
+            previous_order
+        );
+        table.apply_layout(snapshot.clone());
+        assert_eq!(table.layout_snapshot(), snapshot);
+        assert!(
+            !table
+                .column_choices()
+                .iter()
+                .find(|(_, name, _, _)| name == "Memory")
+                .unwrap()
+                .2
+        );
     }
 
     #[test]

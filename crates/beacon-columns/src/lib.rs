@@ -514,6 +514,8 @@ mod tests {
                 "Name",
                 "Namespace",
                 "Containers",
+                "Owner",
+                "Pod IP",
                 "Ready",
                 "Status",
                 "Restarts",
@@ -582,6 +584,8 @@ mod tests {
                 "api-7f9",
                 "payments",
                 "api: Running · Ready · 0 restarts\nworker: Running · Ready · 0 restarts",
+                "<none>",
+                "<none>",
                 "2/2",
                 "Running",
                 "0",
@@ -590,5 +594,56 @@ mod tests {
                 "3d"
             ]
         );
+    }
+
+    #[test]
+    fn pod_owner_prefers_the_controller_and_pod_ip_handles_unassigned_and_ipv6() {
+        let columns = ColumnSet::for_kind("", "Pod", true);
+        let owner = columns
+            .columns
+            .iter()
+            .find(|column| column.header == "Owner")
+            .unwrap();
+        let ip = columns
+            .columns
+            .iter()
+            .find(|column| column.header == "Pod IP")
+            .unwrap();
+        let mut metadata = metadata();
+        metadata.owner_references = Some(serde_json::from_value(json!([
+            {"apiVersion":"v1","kind":"ConfigMap","name":"settings","uid":"settings"},
+            {"apiVersion":"apps/v1","kind":"ReplicaSet","name":"api-7f9","uid":"rs","controller":true}
+        ])).unwrap());
+        for address in ["10.0.1.23", "fd00::123"] {
+            let data = json!({"status":{"podIP":address}});
+            let cell = Cell {
+                metadata: &metadata,
+                data: &data,
+                now: now(),
+                usage: None,
+            };
+            assert_eq!(owner.resolve(&cell).display(), "ReplicaSet/api-7f9");
+            assert_eq!(ip.resolve(&cell).display(), address);
+        }
+        metadata.owner_references.as_mut().unwrap().pop();
+        let data = json!({"status": {"podIP":""}});
+        let cell = Cell {
+            metadata: &metadata,
+            data: &data,
+            now: now(),
+            usage: None,
+        };
+        assert_eq!(owner.resolve(&cell).display(), "ConfigMap/settings");
+        assert!(ip.resolve(&cell).is_missing());
+        metadata.owner_references = None;
+        let data = json!({});
+        let cell = Cell {
+            metadata: &metadata,
+            data: &data,
+            now: now(),
+            usage: None,
+        };
+        assert!(owner.resolve(&cell).is_missing());
+        assert!(ip.resolve(&cell).is_missing());
     }
 }

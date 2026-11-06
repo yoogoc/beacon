@@ -141,6 +141,26 @@ fn pod_columns() -> Vec<ColumnDef> {
             ColumnWidth::Fixed(120.0),
             ColumnSource::Containers,
         ),
+        computed("Owner", 220.0, |cell| {
+            let owners = cell
+                .metadata
+                .owner_references
+                .as_deref()
+                .unwrap_or_default();
+            owners
+                .iter()
+                .find(|owner| owner.controller == Some(true))
+                .or_else(|| owners.first())
+                .map(|owner| CellValue::text(format!("{}/{}", owner.kind, owner.name)))
+                .unwrap_or_default()
+        }),
+        computed("Pod IP", 170.0, |cell| {
+            CellValue::from(
+                at(cell.data, &["status", "podIP"])
+                    .and_then(Value::as_str)
+                    .filter(|ip| !ip.is_empty()),
+            )
+        }),
         computed("Ready", 68.0, |cell| {
             CellValue::text(pod::summarize(cell.metadata, cell.data, cell.now).ready)
         }),
