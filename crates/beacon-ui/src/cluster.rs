@@ -1856,6 +1856,7 @@ impl ClusterView {
                         let listed = batch.iter().any(|delta| matches!(delta, Delta::Reset(_)));
                         view.table.update(cx, |state, cx| {
                             state.delegate_mut().apply_from(namespace.as_deref(), batch);
+                            state.delegate_mut().resolve_pod_owners(&view.session, cx);
                             cx.notify();
                         });
                         view.refresh_detail(cx);
@@ -3212,6 +3213,89 @@ mod integration_tests {
     use crate::feature_test_support as support;
     use gpui_kit::test::TestWindowExt as _;
     use serde_json::json;
+
+    #[::core::prelude::v1::test]
+    fn pod_list_resolves_shared_replica_set_owners_and_keeps_stale_references() {
+        use gpui_kit::component::table::TableDelegate as _;
+
+        let cx = &mut support::context();
+        let directory = tempfile::tempdir().unwrap();
+        support::workspace(cx, directory.path());
+        let pod = |name: &str, owner: &str, uid: &str| {
+            json!({
+                "apiVersion": "v1", "kind": "Pod",
+                "metadata": {"name": name, "namespace": "default", "uid": name, "resourceVersion": "1",
+                    "ownerReferences": [{"apiVersion": "apps/v1", "kind": "ReplicaSet", "name": owner, "uid": uid}]}
+            })
+        };
+        let replica_set = |name: &str, uid: &str, deployment: &str| {
+            json!({
+                "apiVersion": "apps/v1", "kind": "ReplicaSet",
+                "metadata": {"name": name, "namespace": "default", "uid": uid, "resourceVersion": "1",
+                    "ownerReferences": [{"apiVersion": "apps/v1", "kind": "Deployment", "name": deployment, "uid": deployment}]}
+            })
+        };
+        let (fixture, session) = support::fixture(
+            cx,
+            "pod-owners",
+            vec![
+                pod("web-a", "web-rs", "rs-uid"),
+                pod("web-b", "web-rs", "rs-uid"),
+                pod("stale", "replaced-rs", "old-uid"),
+                replica_set("web-rs", "rs-uid", "web"),
+                replica_set("replaced-rs", "new-uid", "replacement"),
+            ],
+        );
+        let (_, view) = cx.update(|cx| {
+            gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
+                cx.new(|cx| {
+                    ClusterView::new(
+                        session,
+                        Some("default".into()),
+                        Some(Arc::new(support::kind("", "Pod", "pods"))),
+                        None,
+                        false,
+                        window,
+                        cx,
+                    )
+                })
+            })
+            .unwrap()
+        });
+        support::settle(cx, |cx| {
+            view.read_with(cx, |view, cx| {
+                let table = view.table.read(cx).delegate();
+                let Some(column) = (0..table.columns_count(cx))
+                    .find(|&index| table.column(index, cx).name == "Owner")
+                else {
+                    return false;
+                };
+                [
+                    ("web-a", "Deployment/web"),
+                    ("web-b", "Deployment/web"),
+                    ("stale", "ReplicaSet/replaced-rs"),
+                ]
+                .into_iter()
+                .all(|(name, expected)| {
+                    table
+                        .row_of(&ObjectRef::new(Some("default".into()), name))
+                        .is_some_and(|row| table.cell_text(row, column, cx) == expected)
+                })
+            })
+        });
+        assert_eq!(
+            fixture
+                .requests
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|(line, _)| {
+                    line.starts_with("GET /apis/apps/v1/namespaces/default/replicasets/web-rs ")
+                })
+                .count(),
+            1
+        );
+    }
 
     #[::core::prelude::v1::test]
     fn pod_sessions_survive_namespace_and_resource_navigation() {

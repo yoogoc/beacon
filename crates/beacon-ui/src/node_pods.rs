@@ -153,6 +153,7 @@ impl NodePodsView {
                         table
                             .delegate_mut()
                             .apply(vec![Delta::Reset(objects.clone())]);
+                        table.delegate_mut().resolve_pod_owners(&view.session, cx);
                     }
                     table.refresh(cx);
                     cx.notify();
@@ -165,6 +166,7 @@ impl NodePodsView {
                             |view, batch, _, cx| {
                                 view.table.update(cx, |table, cx| {
                                     table.delegate_mut().apply(batch);
+                                    table.delegate_mut().resolve_pod_owners(&view.session, cx);
                                     table.refresh(cx);
                                     cx.notify();
                                 });

@@ -16,7 +16,8 @@ use beacon_columns::{
 };
 use beacon_kube::labels::LabelSelector;
 use beacon_kube::{
-    DeleteTarget, Delta, DeltaBatch, DynamicObject, Metrics, ObjectRef, ResourceStore, data,
+    ClusterSession, DeleteTarget, Delta, DeltaBatch, DynamicObject, Metrics, ObjectRef,
+    ResourceStore, data,
 };
 use gpui_kit::assets::IconName;
 use gpui_kit::base::TestSupportExt as _;
@@ -107,6 +108,8 @@ pub struct ResourceTable {
     display_columns: Vec<usize>,
     layout: ColumnLayout,
     store: ResourceStore,
+    pod_owners: crate::owners::ResolvedOwners,
+    owner_lookup: Option<Task<()>>,
     /// The store in display order. Rebuilt whenever the store or the sort
     /// changes; everything else reads it.
     rows: Vec<ObjectRef>,
@@ -208,6 +211,8 @@ impl ResourceTable {
             display_columns,
             layout: ColumnLayout::default(),
             store: ResourceStore::new(),
+            pod_owners: Default::default(),
+            owner_lookup: None,
             rows: Vec::new(),
             checked: BTreeMap::new(),
             sort: Sort::Natural,
@@ -1005,6 +1010,8 @@ impl ResourceTable {
         self.layout = Default::default();
         self.columns = columns;
         self.store = ResourceStore::new();
+        self.pod_owners.clear();
+        self.owner_lookup = None;
         self.rows.clear();
         self.checked.clear();
         self.sort = Sort::Natural;
@@ -1195,12 +1202,33 @@ impl ResourceTable {
                 .unwrap_or(SortKey::Missing);
         }
 
-        SortKey::of(&column.resolve(&Cell {
+        SortKey::of(&self.resolve_cell(column, key, object))
+    }
+
+    fn resolve_cell(
+        &self,
+        column: &ColumnDef,
+        key: &ObjectRef,
+        object: &DynamicObject,
+    ) -> CellValue {
+        if is_pod_owner_column(column) && !self.pod_owners.is_empty() {
+            let owners = crate::owners::displayed_owners(object, &self.pod_owners);
+            if !owners.is_empty() {
+                return CellValue::text(
+                    owners
+                        .iter()
+                        .map(|owner| owner.label())
+                        .collect::<Vec<_>>()
+                        .join(", "),
+                );
+            }
+        }
+        column.resolve(&Cell {
             metadata: &object.metadata,
             data: &object.data,
             now: self.now,
             usage: self.usage(key),
-        }))
+        })
     }
 
     fn cell(&self, row: usize, column: usize) -> Option<(&ColumnDef, CellValue)> {
@@ -1208,16 +1236,54 @@ impl ResourceTable {
         let key = self.rows.get(row)?;
         let object = self.store.get(key)?;
 
-        Some((
-            column,
-            column.resolve(&Cell {
-                metadata: &object.metadata,
-                data: &object.data,
-                now: self.now,
-                usage: self.usage(key),
-            }),
-        ))
+        Some((column, self.resolve_cell(column, key, object)))
     }
+
+    pub(crate) fn resolve_pod_owners(
+        &mut self,
+        session: &Arc<ClusterSession>,
+        cx: &mut Context<TableState<Self>>,
+    ) {
+        use crate::owners;
+        if self.owner_lookup.is_some() || !self.columns.columns.iter().any(is_pod_owner_column) {
+            return;
+        }
+        let Some(resource) = owners::replica_set_resource(session) else {
+            return;
+        };
+        let mut targets: BTreeSet<_> = self
+            .store
+            .iter()
+            .flat_map(|(_, pod)| owners::replica_set_targets(pod))
+            .collect();
+        self.pod_owners.retain(|key, _| targets.contains(key));
+        targets.retain(|key| !self.pod_owners.contains_key(key));
+        if targets.is_empty() {
+            return;
+        }
+        let session = session.clone();
+        let fetching = crate::bridge::Bridge::global(cx).run_cancellable(
+            owners::resolve_replica_sets(session.clone(), resource, targets),
+        );
+        self.owner_lookup = Some(cx.spawn(async move |this, cx| {
+            let result = fetching.result().await;
+            let _ = this.update(cx, |state, cx| {
+                let table = state.delegate_mut();
+                table.owner_lookup = None;
+                if let Ok(resolved) = result {
+                    table.pod_owners.extend(resolved);
+                    // Another Pod batch may have arrived while the GETs were in flight.
+                    table.resolve_pod_owners(&session, cx);
+                    table.reindex();
+                    cx.notify();
+                }
+            });
+        }));
+    }
+}
+
+fn is_pod_owner_column(column: &ColumnDef) -> bool {
+    column.header == "Owner" && matches!(column.source, ColumnSource::Computed(_))
 }
 
 /// What a cell sorts by.

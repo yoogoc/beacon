@@ -14,6 +14,7 @@ use std::{
 };
 
 use crate::copyable_text::copyable_text;
+use crate::owners::{self, OwnerLink, ResolvedOwners, owner_kind, owner_links};
 use beacon_columns::{EventSummary, Timestamp, format_age, format_duration};
 use beacon_kube::{
     Applied, ClusterSession, Conflict, DataEntry, DynamicObject, Kind, ObjectRef, Operation,
@@ -222,7 +223,7 @@ pub struct DetailView {
     argo_runs: ResourceStore,
     argo_runs_listed: bool,
     _argo_runs_task: Option<Task<()>>,
-    resolved_owners: BTreeMap<String, Vec<OwnerLink>>,
+    resolved_owners: ResolvedOwners,
     owner_sources: Vec<OwnerLink>,
     _owners_task: Option<Task<()>>,
 
@@ -2712,16 +2713,7 @@ impl DetailView {
     // MARK: reading the object
 
     fn render_owners(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let direct = owner_links(&self.object);
-        let owners: Vec<_> = direct
-            .into_iter()
-            .flat_map(|owner| {
-                self.resolved_owners
-                    .get(&owner.uid)
-                    .cloned()
-                    .unwrap_or_else(|| vec![owner])
-            })
-            .collect();
+        let owners = owners::displayed_owners(&self.object, &self.resolved_owners);
         v_flex()
             .w_full()
             .gap_0p5()
@@ -2748,7 +2740,7 @@ impl DetailView {
                 )
                 .cloned()
                 .map(Arc::new);
-                let label = format!("{}/{}", owner.kind, owner.name);
+                let label = owner.label();
                 let target = kind.as_ref().map(|kind| {
                     ObjectRef::new(
                         if kind.namespaced {
@@ -2868,44 +2860,21 @@ impl DetailView {
         self.owner_sources = owners.clone();
         self.resolved_owners.clear();
         self._owners_task = None;
-        let targets: Vec<_> = owners
-            .into_iter()
-            .filter(|owner| owner.kind == "ReplicaSet" && owner.api_version.starts_with("apps/"))
-            .filter_map(|owner| {
-                owner_kind(
-                    self.session.discovery().kinds(),
-                    &owner.api_version,
-                    &owner.kind,
-                )
-                .cloned()
-                .map(|kind| (owner, kind.resource))
-            })
-            .collect();
+        let targets: BTreeSet<_> = owners::replica_set_targets(&self.object).collect();
         if targets.is_empty() {
             return;
         }
-        let session = self.session.clone();
-        let namespace = self.target.namespace.clone();
-        let fetching = Bridge::global(cx).run(async move {
-            let mut resolved = BTreeMap::new();
-            for (owner, resource) in targets {
-                if let Ok(replica_set) = session
-                    .clone()
-                    .get_object(resource, namespace.clone(), owner.name.clone())
-                    .await
-                {
-                    // A replacement with the same name is not this Pod's owner.
-                    let parents = replica_set_parents(&owner, &replica_set);
-                    if !parents.is_empty() {
-                        resolved.insert(owner.uid, parents);
-                    }
-                }
-            }
-            resolved
-        });
+        let Some(resource) = owners::replica_set_resource(&self.session) else {
+            return;
+        };
+        let fetching = Bridge::global(cx).run_cancellable(owners::resolve_replica_sets(
+            self.session.clone(),
+            resource,
+            targets,
+        ));
         let sources = self.owner_sources.clone();
         self._owners_task = Some(cx.spawn(async move |this, cx| {
-            if let Ok(resolved) = fetching.await {
+            if let Ok(resolved) = fetching.result().await {
                 let _ = this.update(cx, |view, cx| {
                     if view.owner_sources == sources {
                         view.resolved_owners = resolved;
@@ -3019,46 +2988,6 @@ impl Render for DetailView {
                     .child(body),
             )
     }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct OwnerLink {
-    api_version: String,
-    kind: String,
-    name: String,
-    uid: String,
-}
-
-fn replica_set_parents(owner: &OwnerLink, replica_set: &DynamicObject) -> Vec<OwnerLink> {
-    if replica_set.metadata.uid.as_deref() != Some(owner.uid.as_str()) {
-        return Vec::new();
-    }
-    owner_links(replica_set)
-}
-
-fn owner_links(object: &DynamicObject) -> Vec<OwnerLink> {
-    object
-        .metadata
-        .owner_references
-        .as_deref()
-        .unwrap_or_default()
-        .iter()
-        .map(|owner| OwnerLink {
-            api_version: owner.api_version.clone(),
-            kind: owner.kind.clone(),
-            name: owner.name.clone(),
-            uid: owner.uid.clone(),
-        })
-        .collect()
-}
-
-/// Owner references may use an older API version; navigation uses the served
-/// preferred version but must still match the API group, including for CRDs.
-fn owner_kind<'a>(kinds: &'a [Kind], api_version: &str, name: &str) -> Option<&'a Kind> {
-    let group = api_version.rsplit_once('/').map_or("", |(group, _)| group);
-    kinds
-        .iter()
-        .find(|kind| kind.resource.group == group && kind.resource.kind == name)
 }
 
 fn tls_certificates(
@@ -3573,7 +3502,8 @@ mod integration_tests {
 
 #[cfg(test)]
 mod tests {
-    use super::{container_state, owner_kind, owner_links, reformat, replica_set_parents};
+    use super::{container_state, owner_kind, owner_links, reformat};
+    use crate::owners::replica_set_parents;
     use beacon_kube::{ApiResource, GroupVersionKind, Kind};
     use serde_json::json;
 
@@ -3621,14 +3551,14 @@ mod tests {
         let owner = owner_links(&pod).remove(0);
         let mut replica_set = serde_json::from_value(json!({"apiVersion":"apps/v1","kind":"ReplicaSet","metadata":{"name":"rs","uid":"rs-uid","ownerReferences":[{"apiVersion":"apps/v1","kind":"Deployment","name":"app","uid":"app-uid"}]}})).unwrap();
         assert_eq!(
-            replica_set_parents(&owner, &replica_set)[0].kind,
+            replica_set_parents(&owner.uid, &replica_set)[0].kind,
             "Deployment"
         );
         replica_set.metadata.uid = Some("replacement".into());
-        assert!(replica_set_parents(&owner, &replica_set).is_empty());
+        assert!(replica_set_parents(&owner.uid, &replica_set).is_empty());
         replica_set.metadata.uid = Some("rs-uid".into());
         replica_set.metadata.owner_references = None;
-        assert!(replica_set_parents(&owner, &replica_set).is_empty());
+        assert!(replica_set_parents(&owner.uid, &replica_set).is_empty());
     }
 
     #[test]

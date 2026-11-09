@@ -179,6 +179,7 @@ impl RelatedView {
         for (table, objects) in self.tables.iter().zip(groups) {
             table.update(cx, |table, cx| {
                 table.delegate_mut().apply(vec![Delta::Reset(objects)]);
+                table.delegate_mut().resolve_pod_owners(&self.session, cx);
                 table.delegate_mut().finish_loading();
                 cx.notify();
             });

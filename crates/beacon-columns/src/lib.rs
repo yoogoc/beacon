@@ -597,7 +597,7 @@ mod tests {
     }
 
     #[test]
-    fn pod_owner_prefers_the_controller_and_pod_ip_handles_unassigned_and_ipv6() {
+    fn pod_owner_lists_direct_references_and_pod_ip_handles_unassigned_and_ipv6() {
         let columns = ColumnSet::for_kind("", "Pod", true);
         let owner = columns
             .columns
@@ -622,7 +622,10 @@ mod tests {
                 now: now(),
                 usage: None,
             };
-            assert_eq!(owner.resolve(&cell).display(), "ReplicaSet/api-7f9");
+            assert_eq!(
+                owner.resolve(&cell).display(),
+                "ConfigMap/settings, ReplicaSet/api-7f9"
+            );
             assert_eq!(ip.resolve(&cell).display(), address);
         }
         metadata.owner_references.as_mut().unwrap().pop();

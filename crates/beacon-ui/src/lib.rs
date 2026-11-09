@@ -41,6 +41,7 @@ mod network;
 mod node_actions;
 mod node_pods;
 mod overview;
+mod owners;
 pub mod palette;
 mod permissions;
 mod pod_files;

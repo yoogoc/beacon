@@ -147,12 +147,15 @@ fn pod_columns() -> Vec<ColumnDef> {
                 .owner_references
                 .as_deref()
                 .unwrap_or_default();
-            owners
-                .iter()
-                .find(|owner| owner.controller == Some(true))
-                .or_else(|| owners.first())
-                .map(|owner| CellValue::text(format!("{}/{}", owner.kind, owner.name)))
-                .unwrap_or_default()
+            if owners.is_empty() {
+                CellValue::Missing
+            } else {
+                let labels: Vec<_> = owners
+                    .iter()
+                    .map(|owner| format!("{}/{}", owner.kind, owner.name))
+                    .collect();
+                CellValue::text(labels.join(", "))
+            }
         }),
         computed("Pod IP", 170.0, |cell| {
             CellValue::from(
