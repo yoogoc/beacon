@@ -286,6 +286,7 @@ impl Render for LinePreview {
         let width = px(520.).min((window.viewport_size().width - px(16.)).max(px(200.)));
         let height = px(460.).min((window.viewport_size().height - px(16.)).max(px(180.)));
         let weak = cx.entity().downgrade();
+        let scroll_owner = weak.clone();
         let caption = i18n::message("messages.line", &[("value0", (id + 1).to_string())]);
         let surface = v_flex()
             .id("line-preview")
@@ -490,6 +491,7 @@ impl Render for LinePreview {
                 div()
                     .id("line-preview-content")
                     .test_support()
+                    .relative()
                     .flex_1()
                     .min_size_0()
                     .overflow_hidden()
@@ -505,7 +507,32 @@ impl Render for LinePreview {
                                 .readonly(true)
                                 .aria_label(i18n::text("Line preview contents"))
                         }))
-                    }),
+                    })
+                    .child(
+                        canvas(
+                            |bounds, window, _| {
+                                window.insert_hitbox(bounds, HitboxBehavior::Normal)
+                            },
+                            move |_, hitbox, window, _| {
+                                // The editor consumes wheel events while it can scroll.
+                                // Pin in capture so reading the preview survives hover loss.
+                                window.on_mouse_event(
+                                    move |event: &ScrollWheelEvent, phase, window, cx| {
+                                        if phase == DispatchPhase::Capture
+                                            && hitbox.should_handle_scroll(window)
+                                            && event.delta.pixel_delta(window.line_height())
+                                                != Point::default()
+                                        {
+                                            let _ =
+                                                scroll_owner.update(cx, |view, cx| view.pin(cx));
+                                        }
+                                    },
+                                );
+                            },
+                        )
+                        .absolute()
+                        .inset_0(),
+                    ),
             )
             .child(
                 h_flex()

@@ -37,6 +37,95 @@ impl Render for Pane {
 }
 
 #[::core::prelude::v1::test]
+fn scrolling_to_the_end_of_a_hover_preview_keeps_it_open() {
+    struct LastLine {
+        preview: Entity<LinePreview>,
+        raw: SharedString,
+    }
+    impl Render for LastLine {
+        fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            v_flex()
+                .size_full()
+                .p_4()
+                .child(div().flex_1())
+                .child(trigger(
+                    &self.preview,
+                    0,
+                    self.raw.clone(),
+                    div().h(px(32.)).child("JSON log"),
+                    cx,
+                ))
+                .child(self.preview.clone())
+        }
+    }
+
+    let cx = &mut support::context();
+    let dir = tempfile::tempdir().unwrap();
+    support::workspace(cx, dir.path());
+    let (window, preview) = cx.update(|cx| {
+        let preview = LinePreview::new(cx);
+        let (window, _) = gpui_kit::open_window(WindowOptions::default(), cx, |_, cx| {
+            cx.new(|_| LastLine {
+                preview: preview.clone(),
+                raw: serde_json::json!({"items": (0..200).collect::<Vec<_>>()})
+                    .to_string()
+                    .into(),
+            })
+        })
+        .unwrap();
+        (window, preview)
+    });
+    hover(cx, window, 0);
+    cx.run_until_parked();
+    cx.executor().advance_clock(OPEN_DELAY);
+    support::render_until(cx, window, |window| {
+        window
+            .try_find("line-preview-content")
+            .is_some_and(|body| body.visible())
+    });
+    cx.update_window(window, |_, window, cx| {
+        assert!(!preview.read(cx).pinned);
+        let editor = preview.read(cx).editor.clone().unwrap();
+        let initial = editor.read(cx).scroll_offset().y;
+        window.scroll(
+            "line-preview-content",
+            ScrollDelta::Pixels(point(px(0.), px(-10000.))),
+            cx,
+        );
+        let end = editor.read(cx).scroll_offset().y;
+        assert!(end < initial);
+        window.scroll(
+            "line-preview-content",
+            ScrollDelta::Pixels(point(px(0.), px(-10000.))),
+            cx,
+        );
+        assert_eq!(editor.read(cx).scroll_offset().y, end);
+        assert!(preview.read(cx).pinned);
+        let outside = point(window.viewport_size().width - px(2.), px(2.));
+        window.dispatch_event(
+            MouseMoveEvent {
+                position: outside,
+                pressed_button: None,
+                modifiers: Default::default(),
+            }
+            .to_platform_input(),
+            cx,
+        );
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.executor().advance_clock(CLOSE_DELAY * 2);
+    cx.update_window(window, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.find("line-preview").visible());
+        window.press("escape", cx);
+        window.render_frame(cx);
+        assert!(window.try_find("line-preview").is_none());
+    })
+    .unwrap();
+}
+
+#[::core::prelude::v1::test]
 fn non_json_formats_use_the_same_preview_and_raw_copy_stays_exact() {
     let cx = &mut support::context();
     let dir = tempfile::tempdir().unwrap();
