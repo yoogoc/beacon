@@ -1,11 +1,8 @@
 //! The detail panel: everything about one object.
 //!
-//! Three tabs, and they answer three different questions. Overview is what the
-//! object *is*, read out of the copy the table already has. YAML is what the
-//! API server would hand you, which means fetching it again -- the store holds
-//! slimmed objects and the whole point of this tab is the parts that were
-//! stripped. Events is what the cluster has *said* about it, which is almost
-//! always where the answer is when something is wrong.
+//! Overview describes the object using the copy the table already has.
+//! YAML fetches the full object from the API server, including fields the store
+//! strips. Events shows what the cluster has reported about the object.
 
 use crate::scroll::OverflowScrollbars as _;
 use std::{
@@ -42,6 +39,7 @@ use crate::tls::{self, CertificateInfo};
 mod containers;
 mod data_editors;
 mod data_presentation;
+mod docker_config;
 mod header;
 mod service_account_data;
 
@@ -51,6 +49,7 @@ mod save_tests;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DetailTab {
     Overview,
+    Data,
     Pods,
     Metrics,
     Related,
@@ -64,8 +63,11 @@ pub enum DetailTab {
 
 impl DetailTab {
     /// Pod streams and terminals belong to the independent bottom panel.
-    fn for_kind(kind: &Kind) -> Vec<Self> {
+    fn for_kind(kind: &Kind, has_data_tab: bool) -> Vec<Self> {
         let mut tabs = vec![Self::Overview];
+        if has_data_tab {
+            tabs.push(Self::Data);
+        }
         if crate::network::supported(&kind.resource.group, &kind.resource.kind) {
             tabs.push(Self::Network);
         }
@@ -99,6 +101,7 @@ impl DetailTab {
     fn label(&self) -> &'static str {
         match self {
             Self::Overview => "Overview",
+            Self::Data => "Data",
             Self::Pods => "Pods",
             Self::Metrics => "Metrics",
             Self::Related => "Related",
@@ -131,6 +134,24 @@ enum Data {
     /// Nobody has opened the tab yet, so no editors have been built.
     Unopened,
     Ready(Vec<DataKey>),
+}
+
+enum SecretOverview {
+    Tls(Result<Vec<CertificateInfo>, String>),
+    Docker(Result<Vec<docker_config::Registry>, &'static str>),
+}
+
+impl SecretOverview {
+    fn inspect(kind: &Kind, object: &DynamicObject) -> Option<Self> {
+        if !kind.resource.group.is_empty() || kind.resource.kind != "Secret" {
+            return None;
+        }
+        match object.data.get("type").and_then(Value::as_str)? {
+            "kubernetes.io/tls" => Some(Self::Tls(tls::inspect(object))),
+            "kubernetes.io/dockerconfigjson" => Some(Self::Docker(docker_config::inspect(object))),
+            _ => None,
+        }
+    }
 }
 
 /// What the YAML tab has to show.
@@ -195,9 +216,7 @@ pub struct DetailView {
     /// The slimmed copy from the table's store, replaced as the watch updates
     /// it so that Overview stays live.
     object: Arc<DynamicObject>,
-    /// Parsed only for Secrets of type `kubernetes.io/tls`; never includes the
-    /// private key.
-    certificates: Option<Result<Vec<CertificateInfo>, String>>,
+    secret_overview: Option<SecretOverview>,
 
     header: header::HeaderState,
     tabs: Vec<DetailTab>,
@@ -284,7 +303,7 @@ impl DetailView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let certificates = tls_certificates(&kind, &object);
+        let secret_overview = SecretOverview::inspect(&kind, &object);
         let overview = crate::overview::project(&kind.resource.group, &kind.resource.kind, &object);
         let yaml_editor = cx.new(|cx| {
             EditorState::new(window, cx)
@@ -302,10 +321,10 @@ impl DetailView {
             target: ObjectRef::of(&object),
             session,
             header: header::HeaderState::default(),
-            tabs: DetailTab::for_kind(&kind),
+            tabs: DetailTab::for_kind(&kind, secret_overview.is_some()),
             kind,
             object,
-            certificates,
+            secret_overview,
             tab: DetailTab::Overview,
             labels_expanded: false,
             annotations_expanded: false,
@@ -387,10 +406,6 @@ impl DetailView {
         this.watch_events(window, cx);
         if this.data_visible() {
             this.load_data(window, cx);
-            if this.certificates.is_some() {
-                this.expanded_sections
-                    .insert("data-resource-details".into());
-            }
         }
         this.start_clock(cx);
         this
@@ -426,13 +441,21 @@ impl DetailView {
     }
 
     fn data_visible(&self) -> bool {
-        self.tab == DetailTab::Overview
+        self.tab == self.data_tab()
             && data::is_keyed(&self.kind.resource.group, &self.kind.resource.kind)
+    }
+
+    fn data_tab(&self) -> DetailTab {
+        if self.secret_overview.is_some() {
+            DetailTab::Data
+        } else {
+            DetailTab::Overview
+        }
     }
 
     pub(crate) fn focus_pending_edits(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.data_changed(cx) {
-            self.select(DetailTab::Overview, window, cx);
+            self.select(self.data_tab(), window, cx);
         } else if self.yaml_changed(cx) {
             self.select(DetailTab::Yaml, window, cx);
             self.yaml_editor.read(cx).focus_handle(cx).focus(window, cx);
@@ -469,10 +492,19 @@ impl DetailView {
             self.data_browser.modified.clear();
             self.data_resize = None;
         }
-        self.certificates = tls_certificates(&self.kind, &object);
+        let changed = !Arc::ptr_eq(&self.object, &object);
+        if changed {
+            let secret_overview = SecretOverview::inspect(&self.kind, &object);
+            if self.secret_overview.is_some() != secret_overview.is_some() {
+                self.tabs = DetailTab::for_kind(&self.kind, secret_overview.is_some());
+                if !self.tabs.contains(&self.tab) {
+                    self.tab = DetailTab::Overview;
+                }
+            }
+            self.secret_overview = secret_overview;
+        }
         self.overview =
             crate::overview::project(&self.kind.resource.group, &self.kind.resource.kind, &object);
-        let changed = !Arc::ptr_eq(&self.object, &object);
         self.object = object;
         self.defer_header_refresh(cx);
         if let Some(network) = &self.network {
@@ -509,10 +541,15 @@ impl DetailView {
             return;
         }
         self.tab = tab;
-        if self.data_visible() && !self.data_browser.deleted.is_empty() && !self.busy() {
-            self.save_method = SaveMethod::Patch;
-        }
         self.data_resize = None;
+        if self.data_visible() {
+            if !self.data_browser.deleted.is_empty() && !self.busy() {
+                self.save_method = SaveMethod::Patch;
+            }
+            if matches!(self.data, Data::Unopened) {
+                self.load_data(window, cx);
+            }
+        }
         if let Some(metrics) = &self.metrics {
             metrics.update(cx, |view, cx| {
                 view.set_visible(tab == DetailTab::Metrics, window, cx)
@@ -556,9 +593,6 @@ impl DetailView {
                 self.rollout = Some(cx.new(|cx| {
                     crate::rollout::RolloutView::new(session, object, may_patch, window, cx)
                 }));
-            }
-            DetailTab::Overview if self.data_visible() && matches!(self.data, Data::Unopened) => {
-                self.load_data(window, cx)
             }
             DetailTab::Yaml if matches!(self.yaml, Yaml::Unopened) => self.load_yaml(window, cx),
             _ => {}
@@ -855,11 +889,10 @@ impl DetailView {
                         view.data = Data::Unopened;
                         view.data_browser.modified.clear();
                         view.data_browser.deleted.clear();
-                        match view.tab {
-                            DetailTab::Overview if view.data_visible() => {
-                                view.load_data(window, cx)
-                            }
-                            _ => view.load_yaml(window, cx),
+                        if view.data_visible() {
+                            view.load_data(window, cx);
+                        } else {
+                            view.load_yaml(window, cx);
                         }
                         Apply::Done
                     }
@@ -1398,11 +1431,17 @@ impl DetailView {
                     .child(self.container_section(containers, cx)),
             );
         }
-        if let Some(certificates) = &self.certificates {
-            content = content.child(
-                self.overview_block("tls-section", cx)
+        if let Some(overview) = &self.secret_overview {
+            content = content.child(match overview {
+                SecretOverview::Tls(certificates) => self
+                    .overview_block("tls-section", cx)
+                    .test_support()
                     .child(self.render_certificates(certificates, cx)),
-            );
+                SecretOverview::Docker(registries) => self
+                    .overview_block("docker-config-section", cx)
+                    .test_support()
+                    .child(self.render_docker_config(registries, cx)),
+            });
         }
         if !self.overview.conditions.is_empty() {
             let fields = self.field_rows(&self.overview.conditions, cx);
@@ -2933,6 +2972,7 @@ impl Render for DetailView {
         let body = match self.tab {
             DetailTab::Overview if self.data_visible() => self.render_data_overview(cx),
             DetailTab::Overview => self.render_overview(cx),
+            DetailTab::Data => self.render_data(cx),
             DetailTab::Network => self
                 .network
                 .clone()
@@ -2976,16 +3016,6 @@ impl Render for DetailView {
                     .child(body),
             )
     }
-}
-
-fn tls_certificates(
-    kind: &Kind,
-    object: &DynamicObject,
-) -> Option<Result<Vec<CertificateInfo>, String>> {
-    (kind.resource.group.is_empty()
-        && kind.resource.kind == "Secret"
-        && object.data.get("type").and_then(Value::as_str) == Some("kubernetes.io/tls"))
-    .then(|| tls::inspect(object))
 }
 
 /// Reads a YAML document into the value the rest of this works with.

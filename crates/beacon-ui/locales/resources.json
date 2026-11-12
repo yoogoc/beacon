@@ -72,6 +72,58 @@
     "en": "TLS Certificate",
     "zh-CN": "TLS 证书"
   },
+  "resources.docker_registry_configuration": {
+    "en": "Docker registry configuration",
+    "zh-CN": "Docker 镜像仓库配置"
+  },
+  "resources.registry": {
+    "en": "Registry",
+    "zh-CN": "镜像仓库"
+  },
+  "resources.username": {
+    "en": "Username",
+    "zh-CN": "用户名"
+  },
+  "resources.email": {
+    "en": "Email",
+    "zh-CN": "电子邮件"
+  },
+  "resources.credentials": {
+    "en": "Credentials",
+    "zh-CN": "凭据"
+  },
+  "resources.password": {
+    "en": "Password",
+    "zh-CN": "密码"
+  },
+  "resources.token": {
+    "en": "Token",
+    "zh-CN": "令牌"
+  },
+  "resources.password_and_token": {
+    "en": "Password and token",
+    "zh-CN": "密码和令牌"
+  },
+  "resources.invalid_docker_auth": {
+    "en": "Invalid auth field",
+    "zh-CN": "auth 字段格式无效"
+  },
+  "resources.no_registry_entries": {
+    "en": "No registry entries",
+    "zh-CN": "没有镜像仓库条目"
+  },
+  "resources.docker_config_missing": {
+    "en": "This Docker config Secret has no .dockerconfigjson entry.",
+    "zh-CN": "此 Docker 配置 Secret 缺少 .dockerconfigjson 键。"
+  },
+  "resources.docker_config_invalid_base64": {
+    "en": ".dockerconfigjson is not valid base64.",
+    "zh-CN": ".dockerconfigjson 的 Base64 编码无效。"
+  },
+  "resources.docker_config_invalid": {
+    "en": ".dockerconfigjson is not a valid Docker configuration.",
+    "zh-CN": ".dockerconfigjson 的 Docker 配置格式无效。"
+  },
   "resources.expiry_checks_time_only_issuer_trust_and_hostname_are_not_verified": {
     "en": "Expiry checks time only; issuer trust and hostname are not verified.",
     "zh-CN": "仅检查有效期，不验证签发者信任链和主机名。"

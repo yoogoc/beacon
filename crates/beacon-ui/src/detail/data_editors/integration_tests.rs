@@ -714,6 +714,56 @@ fn open_width(
 }
 
 #[::core::prelude::v1::test]
+fn tls_and_docker_config_secrets_separate_overview_from_covered_values() {
+    use base64::{Engine as _, engine::general_purpose::STANDARD};
+
+    let cx = &mut support::context();
+    let tls = json!({
+        "apiVersion": "v1", "kind": "Secret",
+        "metadata": {"name": "tls", "namespace": "default", "uid": "tls"},
+        "type": "kubernetes.io/tls",
+        "data": {
+            "tls.crt": STANDARD.encode(include_bytes!("../../testdata/tls.crt")),
+            "tls.key": STANDARD.encode("private-key-fixture")
+        }
+    });
+    let docker = json!({
+        "apiVersion": "v1", "kind": "Secret",
+        "metadata": {"name": "registry", "namespace": "default", "uid": "registry"},
+        "type": "kubernetes.io/dockerconfigjson",
+        "data": {".dockerconfigjson": STANDARD.encode(
+            br#"{"auths":{"registry.example":{"username":"reader","password":"example"}}}"#
+        )}
+    });
+    let (_fixture, session) =
+        support::fixture(cx, "secret-overviews", vec![tls.clone(), docker.clone()]);
+    for (object, section, key) in [
+        (tls, "tls-section", "tls.crt"),
+        (docker, "docker-config-section", ".dockerconfigjson"),
+    ] {
+        let (window, view) = open(cx, session.clone(), "Secret", object);
+        let editor = SharedString::from(format!("data-editor-data:{key}"));
+        cx.update_window(window, |_, window, cx| {
+            window.render_frame(cx);
+            assert!(view.read(cx).tabs.contains(&DetailTab::Data));
+            assert!(window.find(section).visible());
+            assert!(window.try_find("data-browser").is_none());
+
+            view.update(cx, |view, cx| view.select(DetailTab::Data, window, cx));
+            window.render_frame(cx);
+            assert!(window.try_find(section).is_none());
+            assert!(window.find("data-browser").visible());
+            assert!(window.try_find(editor.clone()).is_none());
+
+            window.click("reveal", cx);
+            window.render_frame(cx);
+            assert!(window.find(editor).visible());
+        })
+        .unwrap();
+    }
+}
+
+#[::core::prelude::v1::test]
 fn key_list_and_value_fit_narrow_and_wide_panels_without_overlap() {
     let cx = &mut support::context();
     let object = json!({"apiVersion":"v1", "kind":"ConfigMap", "metadata":{"name":"layout-keys", "namespace":"default", "uid":"layout-keys"}, "data":{"settings.yaml":"enabled: true\n"}});
