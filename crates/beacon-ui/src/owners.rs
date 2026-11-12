@@ -18,6 +18,23 @@ impl OwnerLink {
     pub fn label(&self) -> String {
         format!("{}/{}", self.kind, self.name)
     }
+
+    pub fn destination(
+        &self,
+        kinds: &[Kind],
+        namespace: Option<&str>,
+    ) -> Option<(Arc<Kind>, ObjectRef)> {
+        let kind = owner_kind(kinds, &self.api_version, &self.kind)?;
+        let namespace = if kind.namespaced {
+            namespace.map(str::to_owned)
+        } else {
+            None
+        };
+        Some((
+            Arc::new(kind.clone()),
+            ObjectRef::new(namespace, self.name.clone()),
+        ))
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]

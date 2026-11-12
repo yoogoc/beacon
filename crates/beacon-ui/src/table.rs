@@ -20,7 +20,7 @@ use beacon_kube::{
     ResourceStore, data,
 };
 use gpui_kit::assets::IconName;
-use gpui_kit::base::TestSupportExt as _;
+use gpui_kit::base::{Link, TestSupportExt as _};
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::menu::{DropdownMenu as _, PopupMenu, PopupMenuItem};
 use gpui_kit::component::scroll::{Scrollbar, ScrollbarMode};
@@ -40,7 +40,7 @@ use std::{
 
 use crate::actions;
 use crate::cluster::ClusterView;
-use crate::detail::DetailTab;
+use crate::detail::{DetailTab, OwnerRequested};
 use crate::filters::Field;
 use crate::pod_tools::PodToolTab;
 use crate::status;
@@ -109,6 +109,7 @@ pub struct ResourceTable {
     layout: ColumnLayout,
     store: ResourceStore,
     pod_owners: crate::owners::ResolvedOwners,
+    owner_session: Option<Arc<ClusterSession>>,
     owner_lookup: Option<Task<()>>,
     /// The store in display order. Rebuilt whenever the store or the sort
     /// changes; everything else reads it.
@@ -164,6 +165,7 @@ pub(crate) struct ViewFilters {
 
 pub(crate) struct TableLayoutChanged(pub ColumnLayout);
 impl EventEmitter<TableLayoutChanged> for TableState<ResourceTable> {}
+impl EventEmitter<OwnerRequested> for TableState<ResourceTable> {}
 
 fn column_ids(columns: &ColumnSet) -> Vec<String> {
     let mut occurrences = BTreeMap::<String, usize>::new();
@@ -212,6 +214,7 @@ impl ResourceTable {
             layout: ColumnLayout::default(),
             store: ResourceStore::new(),
             pod_owners: Default::default(),
+            owner_session: None,
             owner_lookup: None,
             rows: Vec::new(),
             checked: BTreeMap::new(),
@@ -1239,15 +1242,19 @@ impl ResourceTable {
         Some((column, self.resolve_cell(column, key, object)))
     }
 
-    pub(crate) fn resolve_pod_owners(
-        &mut self,
-        session: &Arc<ClusterSession>,
-        cx: &mut Context<TableState<Self>>,
-    ) {
+    pub(crate) fn with_owner_session(mut self, session: Arc<ClusterSession>) -> Self {
+        self.owner_session = Some(session);
+        self
+    }
+
+    pub(crate) fn resolve_pod_owners(&mut self, cx: &mut Context<TableState<Self>>) {
         use crate::owners;
         if self.owner_lookup.is_some() || !self.columns.columns.iter().any(is_pod_owner_column) {
             return;
         }
+        let Some(session) = &self.owner_session else {
+            return;
+        };
         let Some(resource) = owners::replica_set_resource(session) else {
             return;
         };
@@ -1261,7 +1268,6 @@ impl ResourceTable {
         if targets.is_empty() {
             return;
         }
-        let session = session.clone();
         let fetching = crate::bridge::Bridge::global(cx).run_cancellable(
             owners::resolve_replica_sets(session.clone(), resource, targets),
         );
@@ -1273,12 +1279,71 @@ impl ResourceTable {
                 if let Ok(resolved) = result {
                     table.pod_owners.extend(resolved);
                     // Another Pod batch may have arrived while the GETs were in flight.
-                    table.resolve_pod_owners(&session, cx);
+                    table.resolve_pod_owners(cx);
                     table.reindex();
                     cx.notify();
                 }
             });
         }));
+    }
+
+    fn render_owner_links(
+        &self,
+        row: usize,
+        cx: &mut Context<TableState<Self>>,
+    ) -> Option<AnyElement> {
+        let session = self.owner_session.as_ref()?;
+        let key = self.key_at(row)?;
+        let object = self.object(key)?;
+        let owners = crate::owners::displayed_owners(object, &self.pod_owners);
+        if owners.is_empty() {
+            return None;
+        }
+        Some(
+            h_flex()
+                .size_full()
+                .min_w_0()
+                .overflow_hidden()
+                .items_center()
+                .text_color(cx.theme().muted_foreground)
+                .children(owners.into_iter().enumerate().flat_map(|(index, owner)| {
+                    let separator =
+                        (index > 0).then(|| div().flex_shrink_0().child(", ").into_any_element());
+                    let label = owner.label();
+                    let content = match owner
+                        .destination(session.discovery().kinds(), key.namespace.as_deref())
+                    {
+                        Some((kind, target)) => div()
+                            .id(format!("pod-owner-{row}-{index}"))
+                            .test_support()
+                            .min_w_0()
+                            .child(
+                                Link::new("open-owner")
+                                    .accessibility_label(label.clone())
+                                    .w_full()
+                                    .truncate()
+                                    .cursor_pointer()
+                                    .text_color(cx.theme().resource_link())
+                                    .hover(|link| link.underline())
+                                    .tooltip(move |window, cx| {
+                                        Tooltip::new(owner.label()).build(window, cx)
+                                    })
+                                    .child(label)
+                                    .on_activate(cx.listener(move |_, _, _, cx| {
+                                        cx.stop_propagation();
+                                        cx.emit(OwnerRequested {
+                                            kind: kind.clone(),
+                                            target: target.clone(),
+                                        });
+                                    })),
+                            )
+                            .into_any_element(),
+                        None => div().min_w_0().truncate().child(label).into_any_element(),
+                    };
+                    separator.into_iter().chain(std::iter::once(content))
+                }))
+                .into_any_element(),
+        )
     }
 }
 
@@ -1567,6 +1632,12 @@ impl TableDelegate for ResourceTable {
         else {
             return h_flex().into_any_element();
         };
+
+        if is_pod_owner_column(definition)
+            && let Some(links) = self.render_owner_links(row, cx)
+        {
+            return links;
+        }
 
         if matches!(definition.header.as_str(), "Hosts" | "Address")
             && let Some(object) = self.key_at(row).and_then(|key| self.object(key))

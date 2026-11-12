@@ -97,7 +97,9 @@ impl RelatedView {
             .map(|(group, kind)| {
                 cx.new(|cx| {
                     crate::i18n::table(
-                        ResourceTable::new(columns(group, kind)).without_selection(),
+                        ResourceTable::new(columns(group, kind))
+                            .without_selection()
+                            .with_owner_session(session.clone()),
                         window,
                         cx,
                     )
@@ -106,6 +108,9 @@ impl RelatedView {
             .collect();
         let mut subscriptions = Vec::new();
         for (index, table) in tables.iter().enumerate() {
+            subscriptions.push(cx.subscribe(table, |_, _, event: &OwnerRequested, cx| {
+                cx.emit(event.clone());
+            }));
             subscriptions.push(
                 cx.subscribe(table, move |view, table, event: &TableEvent, cx| {
                     if let TableEvent::SelectRow(row) = event
@@ -179,7 +184,7 @@ impl RelatedView {
         for (table, objects) in self.tables.iter().zip(groups) {
             table.update(cx, |table, cx| {
                 table.delegate_mut().apply(vec![Delta::Reset(objects)]);
-                table.delegate_mut().resolve_pod_owners(&self.session, cx);
+                table.delegate_mut().resolve_pod_owners(cx);
                 table.delegate_mut().finish_loading();
                 cx.notify();
             });

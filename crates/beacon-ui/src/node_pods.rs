@@ -28,6 +28,7 @@ pub(crate) struct NodePodsView {
     _clock: Task<()>,
     _search_subscription: Subscription,
     _table_subscription: Subscription,
+    _owner_subscription: Subscription,
 }
 
 impl EventEmitter<OwnerRequested> for NodePodsView {}
@@ -61,7 +62,9 @@ impl NodePodsView {
     ) -> Self {
         let table = cx.new(|cx| {
             crate::i18n::table(
-                ResourceTable::new(columns()).without_selection(),
+                ResourceTable::new(columns())
+                    .without_selection()
+                    .with_owner_session(session.clone()),
                 window,
                 cx,
             )
@@ -90,6 +93,9 @@ impl NodePodsView {
                 });
             }
         });
+        let owner_subscription = cx.subscribe(&table, |_, _, event: &OwnerRequested, cx| {
+            cx.emit(event.clone())
+        });
         let mut this = Self {
             session,
             kind,
@@ -102,6 +108,7 @@ impl NodePodsView {
             _clock: Task::ready(()),
             _search_subscription: search_subscription,
             _table_subscription: table_subscription,
+            _owner_subscription: owner_subscription,
         };
         this.load(window, cx);
         this._clock = cx.spawn(async move |this, cx| {
@@ -153,7 +160,7 @@ impl NodePodsView {
                         table
                             .delegate_mut()
                             .apply(vec![Delta::Reset(objects.clone())]);
-                        table.delegate_mut().resolve_pod_owners(&view.session, cx);
+                        table.delegate_mut().resolve_pod_owners(cx);
                     }
                     table.refresh(cx);
                     cx.notify();
@@ -166,7 +173,7 @@ impl NodePodsView {
                             |view, batch, _, cx| {
                                 view.table.update(cx, |table, cx| {
                                     table.delegate_mut().apply(batch);
-                                    table.delegate_mut().resolve_pod_owners(&view.session, cx);
+                                    table.delegate_mut().resolve_pod_owners(cx);
                                     table.refresh(cx);
                                     cx.notify();
                                 });

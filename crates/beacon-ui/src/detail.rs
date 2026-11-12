@@ -14,7 +14,7 @@ use std::{
 };
 
 use crate::copyable_text::copyable_text;
-use crate::owners::{self, OwnerLink, ResolvedOwners, owner_kind, owner_links};
+use crate::owners::{self, OwnerLink, ResolvedOwners, owner_links};
 use beacon_columns::{EventSummary, Timestamp, format_age, format_duration};
 use beacon_kube::{
     Applied, ClusterSession, Conflict, DataEntry, DynamicObject, Kind, ObjectRef, Operation,
@@ -267,6 +267,7 @@ pub struct DetailClosed;
 
 impl EventEmitter<DetailClosed> for DetailView {}
 
+#[derive(Clone)]
 pub(crate) struct OwnerRequested {
     pub kind: Arc<Kind>,
     pub target: ObjectRef,
@@ -2733,30 +2734,17 @@ impl DetailView {
                 )
             })
             .children(owners.iter().enumerate().map(|(index, owner)| {
-                let kind = owner_kind(
+                let destination = owner.destination(
                     self.session.discovery().kinds(),
-                    &owner.api_version,
-                    &owner.kind,
-                )
-                .cloned()
-                .map(Arc::new);
+                    self.target.namespace.as_deref(),
+                );
                 let label = owner.label();
-                let target = kind.as_ref().map(|kind| {
-                    ObjectRef::new(
-                        if kind.namespaced {
-                            self.target.namespace.clone()
-                        } else {
-                            None
-                        },
-                        owner.name.clone(),
-                    )
-                });
                 div()
                     .id(("owner", index))
                     .w_full()
                     .text_sm()
                     .whitespace_normal()
-                    .child(match kind.zip(target) {
+                    .child(match destination {
                         Some((kind, target)) => Link::new("open-owner")
                             .accessibility_label(label.clone())
                             .cursor_pointer()
@@ -3502,8 +3490,8 @@ mod integration_tests {
 
 #[cfg(test)]
 mod tests {
-    use super::{container_state, owner_kind, owner_links, reformat};
-    use crate::owners::replica_set_parents;
+    use super::{container_state, owner_links, reformat};
+    use crate::owners::{owner_kind, replica_set_parents};
     use beacon_kube::{ApiResource, GroupVersionKind, Kind};
     use serde_json::json;
 

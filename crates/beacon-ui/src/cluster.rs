@@ -221,6 +221,18 @@ pub(crate) struct ResourceRequested {
 }
 
 impl EventEmitter<ResourceRequested> for ClusterView {}
+
+impl From<&OwnerRequested> for ResourceRequested {
+    fn from(event: &OwnerRequested) -> Self {
+        Self {
+            kind: event.kind.clone(),
+            scope: event.target.namespace.iter().cloned().collect(),
+            new_tab: false,
+            target: Some(event.target.clone()),
+        }
+    }
+}
+
 pub(crate) struct OverviewRequested {
     pub new_tab: bool,
 }
@@ -325,8 +337,12 @@ impl ClusterView {
             cx.new(|cx| crate::i18n::input("Search options", window, cx).clean_on_escape());
 
         let table = cx.new(|cx| {
-            crate::i18n::table(ResourceTable::new(ColumnSet::fallback(true)), window, cx)
-                .row_selectable(true)
+            crate::i18n::table(
+                ResourceTable::new(ColumnSet::fallback(true)).with_owner_session(session.clone()),
+                window,
+                cx,
+            )
+            .row_selectable(true)
         });
         let split = cx.new(|_| ResizableState::default());
 
@@ -1710,12 +1726,7 @@ impl ClusterView {
         .detach();
 
         cx.subscribe(&detail, |_, _, event: &OwnerRequested, cx| {
-            cx.emit(ResourceRequested {
-                kind: event.kind.clone(),
-                scope: event.target.namespace.iter().cloned().collect(),
-                new_tab: false,
-                target: Some(event.target.clone()),
-            });
+            cx.emit(ResourceRequested::from(event));
         })
         .detach();
 
@@ -1856,7 +1867,7 @@ impl ClusterView {
                         let listed = batch.iter().any(|delta| matches!(delta, Delta::Reset(_)));
                         view.table.update(cx, |state, cx| {
                             state.delegate_mut().apply_from(namespace.as_deref(), batch);
-                            state.delegate_mut().resolve_pod_owners(&view.session, cx);
+                            state.delegate_mut().resolve_pod_owners(cx);
                             cx.notify();
                         });
                         view.refresh_detail(cx);
@@ -2067,6 +2078,9 @@ impl ClusterView {
                 view.persist_layout(event.0.clone(), cx);
             },
         );
+        let owner = cx.subscribe(&self.table, |_, _, event: &OwnerRequested, cx| {
+            cx.emit(ResourceRequested::from(event));
+        });
 
         let sidebar_search = cx.subscribe(
             &self.sidebar_search.clone(),
@@ -2124,6 +2138,7 @@ impl ClusterView {
             picker_search,
             table,
             layout,
+            owner,
         ];
         self.listen_list_settings(window, cx);
     }
@@ -3215,7 +3230,7 @@ mod integration_tests {
     use serde_json::json;
 
     #[::core::prelude::v1::test]
-    fn pod_list_resolves_shared_replica_set_owners_and_keeps_stale_references() {
+    fn pod_list_resolves_and_opens_owners_without_opening_the_pod_row() {
         use gpui_kit::component::table::TableDelegate as _;
 
         let cx = &mut support::context();
@@ -3246,8 +3261,15 @@ mod integration_tests {
                 replica_set("replaced-rs", "new-uid", "replacement"),
             ],
         );
-        let (_, view) = cx.update(|cx| {
-            gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
+        let (window, view) = cx.update(|cx| {
+            let options = WindowOptions {
+                window_bounds: Some(WindowBounds::Windowed(Bounds::new(
+                    Point::default(),
+                    size(px(1280.), px(600.)),
+                ))),
+                ..Default::default()
+            };
+            gpui_kit::open_window(options, cx, |window, cx| {
                 cx.new(|cx| {
                     ClusterView::new(
                         session,
@@ -3294,6 +3316,42 @@ mod integration_tests {
                 })
                 .count(),
             1
+        );
+        let requested = Arc::new(std::sync::Mutex::new(None));
+        let observed = requested.clone();
+        cx.update(|cx| {
+            cx.subscribe(&view, move |_, event: &ResourceRequested, _| {
+                *observed.lock().unwrap() = Some((
+                    event.kind.resource.kind.clone(),
+                    event.scope.clone(),
+                    event.target.clone(),
+                    event.new_tab,
+                ));
+            })
+            .detach();
+        });
+        cx.update_window(window, |_, window, cx| {
+            window.render_frame(cx);
+            let key = ObjectRef::new(Some("default".into()), "web-a");
+            let row = view
+                .read(cx)
+                .table
+                .read(cx)
+                .delegate()
+                .row_of(&key)
+                .unwrap();
+            window.click(format!("pod-owner-{row}-0"), cx);
+            assert!(view.read(cx).detail.is_none());
+        })
+        .unwrap();
+        assert_eq!(
+            *requested.lock().unwrap(),
+            Some((
+                "Deployment".into(),
+                BTreeSet::from(["default".into()]),
+                Some(ObjectRef::new(Some("default".into()), "web")),
+                false,
+            ))
         );
     }
 
