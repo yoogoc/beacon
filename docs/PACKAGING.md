@@ -51,26 +51,34 @@ CI 与发布打包前运行 `scripts/check-windows-icon.py`，逐个校验嵌入
 
 ## 签名与公证
 
-**证书。** 这台机器上没有 **Developer ID Application** 证书，所以 app 目前**没签名** ——
-在别人的 Mac 上过不了 Gatekeeper，也**不能公证**。拿到证书（Apple Developer Program，
-99 美元/年）之后把配置里那行注释打开：
+GitHub Actions 用 **Developer ID Application** 签署 Beacon 的 `.app` 和 `.dmg`。
+在生成证书签名请求的 Mac 上导入 Apple 发放的 `.cer`，然后在「钥匙串访问 → 我的证书」
+中找到带私钥的 **Developer ID Application**，右键导出为有密码的 `.p12`。可以在终端
+运行 `security find-identity -v -p codesigning` 查看完整签名身份。
 
-```toml
-[package.metadata.packager.macos]
-signing-identity = "Developer ID Application: NAME (TEAMID)"
-```
+在仓库 **Settings → Secrets and variables → Actions** 下创建以下 **Secrets**。
 
-身份**字符串本身不是秘密** —— 任何签过名的二进制里都能读到它，所以它属于仓库；私钥
-（`.p12`）永远不属于。
+| Secret | 值 |
+| --- | --- |
+| `APPLE_CERTIFICATE` | `.p12` 的 Base64 内容，用 `base64 -i /path/to/DeveloperID.p12 \| pbcopy` 复制 |
+| `APPLE_CERTIFICATE_PASSWORD` | 导出 `.p12` 时设置的密码 |
+| `APPLE_ID` | 有公证权限的 Apple 账户邮箱 |
+| `APPLE_PASSWORD` | 为公证生成的[应用专用密码][apple-app-password] |
+| `APPLE_TEAM_ID` | Apple Developer Team ID，即签名身份括号内的 ID |
 
-**公证是凭据驱动的，不写在配置里。** cargo-packager 找到下面任一组就自动公证，找不到
-就打一行警告继续走：
+在同一页面的 **Variables** 标签页添加仓库变量 `APPLE_SIGNING_IDENTITY`，值为完整的
+`Developer ID Application: NAME (TEAMID)`。将 `.p12` 和导出密码保存在仓库之外。
 
-- `APPLE_ID` + `APPLE_PASSWORD` + `APPLE_TEAM_ID`（应用专用密码）
-- `APPLE_API_KEY` + `APPLE_API_ISSUER` + `APPLE_API_KEY_PATH`（App Store Connect API key）
-- `APPLE_KEYCHAIN_PROFILE`（`notarytool store-credentials` 存好的 profile）
+配置后，从 **Actions → package → Run workflow** 手动运行，检查
+`macos-arm64` 和 `macos-amd64` 的 **Notarize macOS disk image and app** 步骤。
+工作流提交 `.dmg` 公证，把票据附到磁盘映像和用于自动更新的独立 `.app` 上，再生成更新
+归档及其 Minisign 签名。手动运行只上传构建产物。发布标签要求完整的签名和公证配置。
+完全未配置 Apple 凭据时，手动运行仍可生成未签名的 macOS 安装包。
 
-CI 上导入证书用 `APPLE_CERTIFICATE`（base64 的 .p12）+ `APPLE_CERTIFICATE_PASSWORD`。
+本地打包时，可在 `crates/beacon/Cargo.toml` 的 macOS 配置中设置钥匙串里的
+`signing-identity`。
+
+[apple-app-password]: https://support.apple.com/zh-cn/102654
 
 **不开 App Sandbox。** cargo-packager 对原生二进制总是传 `--options runtime`，只在配置了
 `entitlements` 时才传 `--entitlements`，所以"不写 entitlements"就是保持不沙箱的全部操作。
@@ -312,8 +320,8 @@ Linux 的 DEB 单独读取发布脚本生成的配置，以适配 Debian 的 `~d
 
 **未验证**：
 
-- **签名、公证与 Gatekeeper**。没有 Developer ID 证书，这条路一次都没跑过；"在别人的
-  Mac 上双击能打开"同理未验证。
+- **签名、公证与 Gatekeeper**。需要配置 GitHub Secrets 后运行打包，并在另一台 Mac
+  上验证下载的安装包。
 - Linux 与 Windows 的构建与打包（`deb`/`appimage`/`nsis` 一个都没跑过）。
 - `.deb` 的 `depends` 列表是从构建依赖推出来的，**没有在干净的 Debian 系统上装过**。
 
