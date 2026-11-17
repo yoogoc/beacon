@@ -520,13 +520,10 @@ impl Coalescer {
         self.pending.is_empty()
     }
 
-    fn failed(&mut self) -> bool {
+    fn failed(&mut self) {
         if self.relisting.take().is_some() && self.reported_loading != Some(false) {
             self.pending.push(Delta::Loading(false));
             self.reported_loading = Some(false);
-            true
-        } else {
-            false
         }
     }
 
@@ -545,8 +542,10 @@ async fn run(
     health: Arc<HealthState>,
 ) {
     let mut reporter = HealthState::reporter(&health, key.describe());
-    let stream = watcher::watcher(api, key.watcher_config());
-    futures::pin_mut!(stream);
+    let config = key.watcher_config();
+    let make_stream = || watcher::watcher(api.clone(), config.clone());
+    let mut stream = std::pin::pin!(make_stream());
+    let mut backoff = watcher::DefaultBackoff::default();
 
     let mut coalescer = Coalescer::default();
     let mut ticker = tokio::time::interval(BATCH_WINDOW);
@@ -555,26 +554,40 @@ async fn run(
     ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
 
     loop {
-        let flush_now = tokio::select! {
+        let (flush_now, retry_after) = tokio::select! {
             event = stream.next() => match event {
                 Some(Ok(event)) => {
-                    reporter.healthy();
-                    coalescer.ingest(event)
+                    // Init is emitted before the first request. Wait for the
+                    // complete snapshot before reporting that data is fresh.
+                    if matches!(event, Event::InitDone) {
+                        reporter.healthy();
+                    }
+                    (coalescer.ingest(event), None)
                 }
                 Some(Err(error)) => {
-                    // `watcher` restarts itself on the next poll; this is a
-                    // report, not a reason to stop.
                     reporter.failed(&error);
-                    coalescer.failed()
+                    coalescer.failed();
+                    (
+                        true,
+                        Some(backoff.next().expect("default watcher backoff retries indefinitely")),
+                    )
                 }
                 None => break,
             },
-            _ = ticker.tick(), if !coalescer.is_empty() => true,
+            _ = ticker.tick(), if !coalescer.is_empty() => (true, None),
         };
 
         if flush_now {
             let batch = coalescer.take();
             flush(&store, &subscribers, &progress, batch);
+        }
+
+        if let Some(delay) = retry_after {
+            // kube may retry with the previous resourceVersion after a failed
+            // request. A fresh list also lets a quiet resource recover without
+            // waiting for an object to change.
+            stream.set(make_stream());
+            tokio::time::sleep(delay).await;
         }
     }
 
@@ -623,9 +636,9 @@ mod tests {
     use super::*;
     use crate::resources;
 
-    async fn snapshot_server(
+    async fn api_server(
         responses: Vec<(&'static str, serde_json::Value)>,
-    ) -> (kube::Client, tokio::task::JoinHandle<Vec<String>>) {
+    ) -> (String, tokio::task::JoinHandle<Vec<String>>) {
         use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
@@ -645,11 +658,7 @@ mod tests {
             }
             requests
         });
-        let client = kube::Client::try_from(kube::Config::new(
-            format!("http://{address}").parse().unwrap(),
-        ))
-        .unwrap();
-        (client, server)
+        (format!("http://{address}"), server)
     }
 
     #[tokio::test]
@@ -664,11 +673,12 @@ mod tests {
                 }, "spec":{"nodeName":"worker-a"}}]
             })
         };
-        let (client, server) = snapshot_server(vec![
+        let (url, server) = api_server(vec![
             ("200 OK", page("default", "next/page")),
             ("200 OK", page("kube-system", "")),
         ])
         .await;
+        let client = kube::Client::try_from(kube::Config::new(url.parse().unwrap())).unwrap();
         let key = WatchKey::pods_on_node("worker-a").with_labels("app=web");
         assert!(key.namespace.is_none());
         assert_eq!(key.describe(), "Pod on node worker-a");
@@ -711,7 +721,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_denied_node_pod_list_returns_the_api_error_instead_of_an_empty_list() {
-        let (client, server) = snapshot_server(vec![(
+        let (url, server) = api_server(vec![(
             "403 Forbidden",
             serde_json::json!({
                 "apiVersion":"v1", "kind":"Status", "status":"Failure",
@@ -719,6 +729,7 @@ mod tests {
             }),
         )])
         .await;
+        let client = kube::Client::try_from(kube::Config::new(url.parse().unwrap())).unwrap();
         let error = tokio::time::timeout(
             Duration::from_secs(10),
             snapshot(client, WatchKey::pods_on_node("worker-a")),
@@ -728,6 +739,63 @@ mod tests {
         .unwrap_err();
         assert_eq!(error.user_message(), "pods is forbidden (HTTP 403)");
         server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn expired_watch_relists_and_recovers_even_without_resource_changes() {
+        use serde_json::json;
+
+        let list = |version, name| {
+            json!({
+                "apiVersion": "v1", "kind": "PodList",
+                "metadata": {"resourceVersion": version},
+                "items": [{"apiVersion": "v1", "kind": "Pod", "metadata": {
+                    "name": name, "namespace": "default", "resourceVersion": version
+                }}]
+            })
+        };
+        let (url, server) = api_server(vec![
+            ("200 OK", list("1", "old")),
+            (
+                "410 Gone",
+                json!({"apiVersion": "v1", "kind": "Status", "status": "Failure",
+                    "reason": "Expired", "message": "too old resource version", "code": 410}),
+            ),
+            ("200 OK", list("2", "current")),
+        ])
+        .await;
+        let session =
+            crate::ClusterSession::for_testing(crate::ClusterId::new("fixture"), url, vec![]);
+        let mut status = session.health();
+        let mut subscription = session.subscribe(WatchKey::namespaced(resources::pod(), "default"));
+
+        tokio::time::timeout(Duration::from_secs(5), async {
+            status
+                .wait_for(|health| health.label() == "Degraded")
+                .await
+                .unwrap();
+            let requests = server.await.unwrap();
+            assert!(requests[1].contains("watch=true"));
+            assert!(requests[1].contains("resourceVersion=1"));
+            assert!(
+                !requests[2].contains("watch=true"),
+                "expired version must trigger a list"
+            );
+
+            loop {
+                let batch = subscription
+                    .next()
+                    .await
+                    .expect("subscription is still active");
+                if names(&batch).iter().any(|delta| delta == "reset[current]") {
+                    break;
+                }
+            }
+            assert_eq!(*status.borrow(), crate::Health::Connected);
+        })
+        .await
+        .unwrap();
+        session.disconnect();
     }
 
     #[tokio::test]
@@ -829,11 +897,12 @@ mod tests {
         coalescer.ingest(Event::InitApply(pod("partial")));
         store.apply_batch(coalescer.take());
         assert_eq!(store.len(), 2);
-        assert!(coalescer.failed());
+        coalescer.failed();
         assert_eq!(names(&coalescer.take()), ["loading:false"]);
         coalescer.ingest(Event::Init);
+        coalescer.failed();
         assert!(
-            !coalescer.failed(),
+            coalescer.is_empty(),
             "repeated failures do not flood subscribers"
         );
         coalescer.ingest(Event::Init);
