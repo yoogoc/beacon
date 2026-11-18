@@ -118,7 +118,7 @@ Manually triggered packaging runs publish artifacts in
 
 | Platform | Package formats | Verification |
 | --- | --- | --- |
-| macOS · Apple Silicon / Intel | `.app`, `.dmg` | Building, packaging, and launch verified locally. CI code signing verified. Apple notarization is pending. |
+| macOS · Apple Silicon / Intel | `.app`, `.dmg` | Building, packaging, and launch verified locally. CI signing and notarization verified. Downloaded packages passed Gatekeeper. |
 | Linux · x86_64 / ARM64 | `.deb`, AppImage | Packaging jobs configured; not yet verified locally. |
 | Windows · x86_64 / ARM64 | NSIS installer | Packaging jobs configured; not yet verified locally. |
 

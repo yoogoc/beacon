@@ -303,7 +303,7 @@ Linux 的 DEB 单独读取发布脚本生成的配置，以适配 Debian 的 `~d
 
 **AppImage 的 `APPIMAGE_EXTRACT_AND_RUN: 1` 是从姊妹项目 roam 抄过来的**：linuxdeploy 要
 挂载自己的 AppImage 来运行，没有 FUSE 就死在 `std::logic_error` 里，让它解压而不是挂载能
-绕开。这条在 Beacon 这边**一次都没跑过**，所以 linux 两项都还是 unproven。
+绕开。该设置已在 `v1.4.59` 的两个 Linux CI 打包任务中验证。
 
 ## 已验证 / 未验证
 
@@ -321,11 +321,14 @@ Linux 的 DEB 单独读取发布脚本生成的配置，以适配 Debian 的 `~d
 - **从 bundle 启动能开窗口**，连上 k3s 集群并列出 Pod（arm64 与 Rosetta 下的 x86_64 都试过）；
 - 交叉编译 `--target x86_64-apple-darwin` 打包通过，产出 12.5 MB 的 `Beacon_0.1.0_x64.dmg`。
 
+`v1.4.59` 的六个平台打包任务和更新清单签名验证全部通过。两个 macOS 架构均完成
+Developer ID 签名、Apple 公证和票据附加。下载的 DMG 及自动更新归档解压后的 App
+通过 `codesign --verify`、`stapler validate` 和 `spctl --assess`，Gatekeeper 结果为
+`Notarized Developer ID`。[发布记录](https://github.com/yoogoc/beacon/releases/tag/v1.4.59)
+
 **未验证**：
 
-- **公证票据与 Gatekeeper**。CI 已验证两个 macOS 架构的证书导入、签名与签名校验，
-  Apple 的公证申请仍在处理中。公证通过后需验证票据及下载的安装包。
-- Linux 与 Windows 的构建与打包（`deb`/`appimage`/`nsis` 一个都没跑过）。
+- Linux 与 Windows 安装包的本机安装、启动和运行验证。
 - `.deb` 的 `depends` 列表是从构建依赖推出来的，**没有在干净的 Debian 系统上装过**。
 
 [cargo-packager]: https://github.com/crabnebula-dev/cargo-packager

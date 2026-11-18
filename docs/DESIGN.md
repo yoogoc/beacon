@@ -756,6 +756,8 @@ API server 写列表键用 `containers[name="app"]` 这种语法，`beacon-colum
   **从 bundle 启动开了窗口并连上 k3s 集群**（截了图）。
 - macOS x86_64：交叉编译 + 打包通过，产出 12.5 MB 的 `Beacon_0.1.0_x64.dmg`，
   Rosetta 下启动同样出界面、连上集群。所以 CI 里 macOS 两项都不是 `unproven`。
+- `v1.4.59` 的两个 macOS 架构通过 CI 签名与 Apple 公证，下载的 DMG 和自动更新
+  App 归档通过签名、公证票据及 Gatekeeper 检查。
 
 ### 踩到的坑
 
@@ -771,11 +773,8 @@ API server 写列表键用 `containers[name="app"]` 这种语法，`beacon-colum
 
 ### 明确没做 / 没验的
 
-- **公证票据与 Gatekeeper**。CI 已接入 Developer ID 并验证签名，待 Apple 公证通过后
-  验证票据与安装包。
-- **Linux 与 Windows 的打包一次都没跑过**，所以 package.yml 里这四项标了
-  `continue-on-error: true`。AppImage 的 `APPIMAGE_EXTRACT_AND_RUN` 是从 roam 抄来的修法，
-  在这里没验证过。
+- **Linux 与 Windows 安装包的本机安装和启动仍未验证**。开发构建中的这四项标为
+  `unproven`。AppImage 的 `APPIMAGE_EXTRACT_AND_RUN` 已在 CI 打包中验证。
 - `.deb` 的 depends **没有在干净的 Debian 上装过**。
 - 两个 arm64 runner label（`ubuntu-24.04-arm` / `windows-11-arm`）在本机无从验证；
   拿不到 runner 时的失败长得很像构建失败。
