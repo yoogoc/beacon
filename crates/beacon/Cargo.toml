@@ -73,22 +73,14 @@ minimum-system-version = "11.0"
 # the application and package filename retain the complete development version.
 info-plist-path = "../../assets/packaging/Info.plist"
 
-# Uncomment when a Developer ID Application certificate exists. The identity
-# *string* is not a secret -- it is readable out of any signed binary -- so it
-# belongs in the repo; the .p12 never does. Without it the bundle is unsigned,
-# which runs on this machine and nowhere else.
-#
 # cargo-packager always passes `--options runtime`, and passes `--entitlements`
 # only when one is configured, so leaving `entitlements` unset is what keeps the
 # app out of the App Sandbox. Beacon reads ~/.kube/config and runs kubeconfig
 # `exec` credential plugins, neither of which a sandboxed app can do without
 # entitlements nobody has asked for yet.
+# The package workflow sets this locally on the runner from a GitHub variable.
+# For local signing, set the identity stored in your keychain.
 # signing-identity = "Developer ID Application: NAME (TEAMID)"
-
-# Notarization is credential-driven rather than config-driven: cargo-packager
-# notarizes when it finds APPLE_ID + APPLE_PASSWORD + APPLE_TEAM_ID, or
-# APPLE_API_KEY + APPLE_API_ISSUER + APPLE_API_KEY_PATH, or
-# APPLE_KEYCHAIN_PROFILE. With none of them it logs a warning and carries on.
 
 [package.metadata.packager.deb]
 # cargo-packager does not derive these. It writes exactly what is listed and

@@ -117,7 +117,7 @@ push 到 `main` 不会自动构建或发布安装包。
 
 | 平台 | 打包格式 | 验证情况 |
 | --- | --- | --- |
-| macOS · Apple Silicon / Intel | `.app`、`.dmg` | 已在本机验证构建、打包与启动；签名和公证尚未验证。 |
+| macOS · Apple Silicon / Intel | `.app`、`.dmg` | 已在本机验证构建、打包与启动，并在 CI 验证签名。Apple 公证处理中。 |
 | Linux · x86_64 / ARM64 | `.deb`、AppImage | 已配置打包任务，本机尚未验证。 |
 | Windows · x86_64 / ARM64 | NSIS 安装包 | 已配置打包任务，本机尚未验证。 |
 

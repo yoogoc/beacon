@@ -127,6 +127,58 @@ jobs:
               raise SystemExit("The GitHub public key must match the public key checked into packaging assets")
           PYKEY
 
+      - name: Configure macOS signing
+        if: runner.os == 'macOS'
+        id: apple-signing
+        shell: bash
+        env:
+          RELEASE_PUBLISH: ${{ needs.prepare.outputs.publish }}
+          APPLE_SIGNING_IDENTITY: ${{ vars.APPLE_SIGNING_IDENTITY }}
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          names = ("APPLE_SIGNING_IDENTITY", "APPLE_CERTIFICATE", "APPLE_CERTIFICATE_PASSWORD",
+                   "APPLE_ID", "APPLE_PASSWORD", "APPLE_TEAM_ID")
+          missing = [name for name in names if not os.environ[name].strip()]
+          if len(missing) == len(names) and os.environ["RELEASE_PUBLISH"] != "true":
+              print("Apple credentials are unset. Building unsigned macOS artifacts.")
+              raise SystemExit(0)
+          if missing:
+              raise SystemExit(f"::error::Configure macOS signing and notarization: {', '.join(missing)}")
+
+          identity = os.environ["APPLE_SIGNING_IDENTITY"].strip()
+          team = os.environ["APPLE_TEAM_ID"]
+          if not identity.startswith("Developer ID Application: ") or not identity.endswith(f" ({team})"):
+              raise SystemExit("::error::APPLE_SIGNING_IDENTITY must be a Developer ID Application identity for APPLE_TEAM_ID.")
+
+          path = Path("crates/beacon/Cargo.toml")
+          header = "[package.metadata.packager.macos]\n"
+          manifest = path.read_text(encoding="utf-8")
+          if header not in manifest:
+              raise SystemExit("::error::The macOS packager configuration is missing.")
+          path.write_text(manifest.replace(header, f"{header}signing-identity = {json.dumps(identity, ensure_ascii=False)}\n",
+                                           1), encoding="utf-8")
+          with Path(os.environ["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as output:
+              print("enabled=true", file=output)
+          PY
+
+      - name: Validate Apple notarization credentials
+        if: steps.apple-signing.outputs.enabled == 'true'
+        shell: bash
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: xcrun notarytool history --apple-id "$APPLE_ID" --password "$APPLE_PASSWORD" --team-id "$APPLE_TEAM_ID" --output-format json > /dev/null
+
       # rust-toolchain.toml pins the channel; this only adds the cross target.
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -194,19 +246,67 @@ jobs:
         if: runner.os == 'Windows'
         run: python scripts/check-windows-icon.py "target/${{ matrix.target }}/release/beacon.exe"
 
-      - name: Package
-        if: runner.os != 'Linux'
+      - name: Package macOS
+        if: runner.os == 'macOS'
+        shell: bash
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+        run: python scripts/retry-macos-packaging.py -- cargo packager -p beacon --release --target ${{ matrix.target }} --formats ${{ matrix.formats }}
+
+      - name: Notarize macOS disk image and app
+        if: steps.apple-signing.outputs.enabled == 'true'
+        shell: bash
+        env:
+          PACKAGE_TARGET: ${{ matrix.target }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          shopt -s nullglob
+          output="target/$PACKAGE_TARGET/release"
+          images=("$output"/*.dmg)
+          if [[ "${#images[@]}" != 1 ]]; then
+            echo "::error::Expected one macOS disk image in $output."
+            exit 1
+          fi
+          dmg="${images[0]}"
+          app="$output/Beacon.app"
+          requirement="anchor apple generic and certificate leaf[subject.OU] = \"$APPLE_TEAM_ID\""
+          codesign --verify --deep --strict --test-requirement "=$requirement" "$app"
+          codesign --verify --strict --test-requirement "=$requirement" "$dmg"
+
+          auth=(--apple-id "$APPLE_ID" --password "$APPLE_PASSWORD" --team-id "$APPLE_TEAM_ID")
+          submission=$(xcrun notarytool submit "$dmg" --output-format json "${auth[@]}")
+          printf '%s\n' "$submission"
+          id=$(python -c 'import json, sys; print(json.load(sys.stdin)["id"])' <<< "$submission")
+          result=$(xcrun notarytool wait "$id" --output-format json "${auth[@]}") || {
+            printf '%s\n' "$result"
+            exit 1
+          }
+          printf '%s\n' "$result"
+          status=$(python -c 'import json, sys; print(json.load(sys.stdin)["status"])' <<< "$result")
+          if [[ "$status" != Accepted ]]; then
+            id=$(python -c 'import json, sys; print(json.load(sys.stdin)["id"])' <<< "$result")
+            xcrun notarytool log "$id" "${auth[@]}"
+            exit 1
+          fi
+
+          # Apple issues tickets for the disk image and the app it contains.
+          for artifact in "$dmg" "$app"; do
+            xcrun stapler staple "$artifact"
+            xcrun stapler validate "$artifact"
+          done
+
+      - name: Package Windows
+        if: runner.os == 'Windows'
         shell: bash
         env:
           CARGO_PACKAGER_SIGN_PRIVATE_KEY: ${{ secrets.BEACON_UPDATE_PRIVATE_KEY }}
           CARGO_PACKAGER_SIGN_PRIVATE_KEY_PASSWORD: ${{ secrets.BEACON_UPDATE_PRIVATE_KEY_PASSWORD }}
         run: |
           if [ -z "$CARGO_PACKAGER_SIGN_PRIVATE_KEY" ]; then unset CARGO_PACKAGER_SIGN_PRIVATE_KEY CARGO_PACKAGER_SIGN_PRIVATE_KEY_PASSWORD; fi
-          if [ "$RUNNER_OS" = "macOS" ]; then
-            python scripts/retry-macos-packaging.py -- cargo packager -p beacon --release --target ${{ matrix.target }} --formats ${{ matrix.formats }}
-          else
-            cargo packager -p beacon --release --target ${{ matrix.target }} --formats ${{ matrix.formats }}
-          fi
+          cargo packager -p beacon --release --target ${{ matrix.target }} --formats ${{ matrix.formats }}
 
       - name: Package Linux
         if: runner.os == 'Linux'
@@ -224,16 +324,24 @@ jobs:
           cargo packager --config "$DEB_CONFIG" --formats deb
           cargo packager -p beacon --release --target "$PACKAGE_TARGET" --formats appimage
 
-      - name: Give signed macOS archives unique release names
+      - name: Archive and sign macOS update packages
         if: runner.os == 'macOS'
         shell: bash
         env:
+          PACKAGE_TARGET: ${{ matrix.target }}
+          PACKAGE_PLATFORM: ${{ matrix.name }}
           RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
-          RELEASE_PUBLISH: ${{ needs.prepare.outputs.publish }}
+          CARGO_PACKAGER_SIGN_PRIVATE_KEY: ${{ secrets.BEACON_UPDATE_PRIVATE_KEY }}
+          CARGO_PACKAGER_SIGN_PRIVATE_KEY_PASSWORD: ${{ secrets.BEACON_UPDATE_PRIVATE_KEY_PASSWORD }}
         run: |
-          UPDATE_FLAGS=()
-          if [ "$RELEASE_PUBLISH" != "true" ]; then UPDATE_FLAGS+=(--unsigned); fi
-          python scripts/updates.py stage-macos --directory "target/${{ matrix.target }}/release" --platform "${{ matrix.name }}" --version "$RELEASE_VERSION" "${UPDATE_FLAGS[@]}"
+          if [[ -z "$CARGO_PACKAGER_SIGN_PRIVATE_KEY" ]]; then exit 0; fi
+          output="target/$PACKAGE_TARGET/release"
+          archive="$output/Beacon.app.tar.gz"
+          COPYFILE_DISABLE=1 tar -czf "$archive" -C "$output" Beacon.app
+          for artifact in "$archive" "$output"/*.dmg; do
+            cargo-packager packager signer sign "$artifact"
+          done
+          python scripts/updates.py stage-macos --directory "$output" --platform "$PACKAGE_PLATFORM" --version "$RELEASE_VERSION"
 
       - uses: actions/upload-artifact@v4
         with:
