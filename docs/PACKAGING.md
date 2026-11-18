@@ -75,6 +75,9 @@ GitHub Actions 用 **Developer ID Application** 签署 Beacon 的 `.app` 和 `.d
 归档及其 Minisign 签名。手动运行只上传构建产物。发布标签要求完整的签名和公证配置。
 完全未配置 Apple 凭据时，手动运行仍可生成未签名的 macOS 安装包。
 
+公证步骤会先输出 Apple 的申请编号，再等待处理完成。等待时间受 GitHub Actions 的任务
+时限约束。可用 `xcrun notarytool info <申请编号>` 和相应账户凭据查询已有申请的状态。
+
 本地打包时，可在 `crates/beacon/Cargo.toml` 的 macOS 配置中设置钥匙串里的
 `signing-identity`。
 
@@ -320,8 +323,8 @@ Linux 的 DEB 单独读取发布脚本生成的配置，以适配 Debian 的 `~d
 
 **未验证**：
 
-- **签名、公证与 Gatekeeper**。需要配置 GitHub Secrets 后运行打包，并在另一台 Mac
-  上验证下载的安装包。
+- **公证票据与 Gatekeeper**。CI 已验证两个 macOS 架构的证书导入、签名与签名校验，
+  Apple 的公证申请仍在处理中。公证通过后需验证票据及下载的安装包。
 - Linux 与 Windows 的构建与打包（`deb`/`appimage`/`nsis` 一个都没跑过）。
 - `.deb` 的 `depends` 列表是从构建依赖推出来的，**没有在干净的 Debian 系统上装过**。
 

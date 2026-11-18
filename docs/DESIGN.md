@@ -771,8 +771,8 @@ API server 写列表键用 `containers[name="app"]` 这种语法，`beacon-colum
 
 ### 明确没做 / 没验的
 
-- **签名与公证**：没有 Developer ID 证书，整条路一次都没跑过；配置里那行
-  `signing-identity` 是注释掉的。
+- **公证票据与 Gatekeeper**。CI 已接入 Developer ID 并验证签名，待 Apple 公证通过后
+  验证票据与安装包。
 - **Linux 与 Windows 的打包一次都没跑过**，所以 package.yml 里这四项标了
   `continue-on-error: true`。AppImage 的 `APPIMAGE_EXTRACT_AND_RUN` 是从 roam 抄来的修法，
   在这里没验证过。
