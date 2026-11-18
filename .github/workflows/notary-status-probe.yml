@@ -1,0 +1,23 @@
+name: Apple notarization status probe
+
+on:
+  push:
+    branches: [codex/macos-signing]
+
+permissions:
+  contents: read
+
+jobs:
+  status:
+    runs-on: xcode-27
+    env:
+      APPLE_ID: ${{ secrets.APPLE_ID }}
+      APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+    steps:
+      - name: Check existing Apple submissions
+        shell: bash
+        run: |
+          for id in 79715007-a777-475d-b7c1-956849d16376 a238fe79-fd41-484e-bb0b-286806e0d211; do
+            xcrun notarytool info "$id" --apple-id "$APPLE_ID" --password "$APPLE_PASSWORD" --team-id "$APPLE_TEAM_ID" --output-format json
+          done

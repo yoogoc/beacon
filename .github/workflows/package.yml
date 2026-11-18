@@ -277,7 +277,10 @@ jobs:
           codesign --verify --strict --test-requirement "=$requirement" "$dmg"
 
           auth=(--apple-id "$APPLE_ID" --password "$APPLE_PASSWORD" --team-id "$APPLE_TEAM_ID")
-          result=$(xcrun notarytool submit "$dmg" --wait --timeout 20m --output-format json "${auth[@]}") || {
+          submission=$(xcrun notarytool submit "$dmg" --output-format json "${auth[@]}")
+          printf '%s\n' "$submission"
+          id=$(python -c 'import json, sys; print(json.load(sys.stdin)["id"])' <<< "$submission")
+          result=$(xcrun notarytool wait "$id" --output-format json "${auth[@]}") || {
             printf '%s\n' "$result"
             exit 1
           }
