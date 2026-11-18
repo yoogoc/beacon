@@ -280,10 +280,13 @@ jobs:
           submission=$(xcrun notarytool submit "$dmg" --output-format json "${auth[@]}")
           printf '%s\n' "$submission"
           id=$(python -c 'import json, sys; print(json.load(sys.stdin)["id"])' <<< "$submission")
-          result=$(xcrun notarytool wait "$id" --output-format json "${auth[@]}") || {
+          for attempt in 1 2 3; do
+            if result=$(xcrun notarytool wait "$id" --output-format json "${auth[@]}"); then break; fi
             printf '%s\n' "$result"
-            exit 1
-          }
+            if [[ "$attempt" == 3 ]]; then exit 1; fi
+            echo "::warning::Notarization status lookup failed. Retrying the existing submission in 30s."
+            sleep 30
+          done
           printf '%s\n' "$result"
           status=$(python -c 'import json, sys; print(json.load(sys.stdin)["status"])' <<< "$result")
           if [[ "$status" != Accepted ]]; then
