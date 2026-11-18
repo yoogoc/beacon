@@ -10,6 +10,9 @@ description = "A cross-platform Kubernetes client built with Rust and GPUI"
 name = "beacon"
 path = "src/main.rs"
 
+[features]
+app-store = ["beacon-ui/app-store", "beacon-updater/app-store"]
+
 [dependencies]
 beacon-kube.workspace = true
 beacon-ui.workspace = true
@@ -32,6 +35,7 @@ embed-resource = "3.0.11"
 # not.
 [package.metadata.packager]
 product-name = "Beacon"
+copyright = "© 2026 Beacon Team"
 # Has to stay in step with `ProjectDirs::from("dev", "beacon", "Beacon")` in
 # crates/beacon/src/logging.rs, which is what decides where the log directory
 # lives. Changing it strands whatever is already on disk.
@@ -75,9 +79,8 @@ info-plist-path = "../../assets/packaging/Info.plist"
 
 # cargo-packager always passes `--options runtime`, and passes `--entitlements`
 # only when one is configured, so leaving `entitlements` unset is what keeps the
-# app out of the App Sandbox. Beacon reads ~/.kube/config and runs kubeconfig
-# `exec` credential plugins, neither of which a sandboxed app can do without
-# entitlements nobody has asked for yet.
+# standalone app out of the App Sandbox. The App Store workflow builds a
+# separate app-store feature with sandbox entitlements and scoped file access.
 # The package workflow sets this locally on the runner from a GitHub variable.
 # For local signing, set the identity stored in your keychain.
 # signing-identity = "Developer ID Application: NAME (TEAMID)"

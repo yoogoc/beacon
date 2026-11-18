@@ -84,11 +84,16 @@ def set_version(root, version, build_number=0):
     tomllib.loads(new_lock_text)
     # Apple requires numeric bundle versions. Keep the full SemVer in the app
     # and a custom plist key, with the CI run encoded as a 4.2.2-digit number.
-    plist = plistlib.dumps({
+    info = {
         "CFBundleShortVersionString": version.split("-")[0],
         "CFBundleVersion": f"{1 + build_number // 10000}.{build_number // 100 % 100}.{build_number % 100}",
         "BeaconVersion": version,
-    })
+    }
+    package = tomllib.loads((root / "crates/beacon/Cargo.toml").read_text(encoding="utf-8"))
+    copyright = package["package"].get("metadata", {}).get("packager", {}).get("copyright")
+    if copyright:
+        info["NSHumanReadableCopyright"] = copyright
+    plist = plistlib.dumps(info)
     plist_path = root / "assets" / "packaging" / "Info.plist"
     plist_path.parent.mkdir(parents=True, exist_ok=True)
     manifest_path.write_text(new_manifest_text, encoding="utf-8")

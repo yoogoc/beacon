@@ -297,6 +297,12 @@ impl SourceEditor {
             {
                 let _ = cx.update(|window, cx| {
                     this.update(cx, |view, cx| {
+                        #[cfg(all(feature = "app-store", target_os = "macos"))]
+                        if let Err(error) = crate::app_store::remember(&paths, cx) {
+                            view.message = Some(error);
+                            cx.notify();
+                            return;
+                        }
                         if !base && view.kind == Kind::File {
                             view.add_files(paths, window, cx);
                             return;

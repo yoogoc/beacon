@@ -1,0 +1,152 @@
+name: App Store Connect
+
+on:
+  workflow_call:
+    inputs:
+      version:
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  upload:
+    runs-on: xcode-27
+    timeout-minutes: 120
+    concurrency:
+      group: app-store-${{ inputs.version }}
+      cancel-in-progress: false
+    env:
+      CARGO_TERM_COLOR: always
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      APP_STORE_APP_IDENTITY: ${{ vars.APP_STORE_APP_IDENTITY }}
+      APP_STORE_INSTALLER_IDENTITY: ${{ vars.APP_STORE_INSTALLER_IDENTITY }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/macos-sdk
+        id: macos-sdk
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Validate App Store configuration
+        env:
+          APP_STORE_CERTIFICATE: ${{ secrets.APP_STORE_CERTIFICATE }}
+          APP_STORE_CERTIFICATE_PASSWORD: ${{ secrets.APP_STORE_CERTIFICATE_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+        run: |
+          python scripts/app-store.py preflight
+          python - <<'PY'
+          import os
+          required = ("APP_STORE_CERTIFICATE", "APP_STORE_CERTIFICATE_PASSWORD", "APPLE_ID", "APPLE_PASSWORD")
+          missing = [name for name in required if not os.environ.get(name)]
+          if missing:
+              raise SystemExit("Missing GitHub Secrets: " + ", ".join(missing))
+          with open(os.environ["GITHUB_ENV"], "a") as output:
+              output.write("APP_STORE_KEYCHAIN=" + os.environ["RUNNER_TEMP"] + "/beacon-app-store.keychain-db\n")
+          PY
+      - name: Apply release version
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+        # Encode the attempt too, so an upload rerun never reuses a build number.
+        run: |
+          test "$GITHUB_RUN_ATTEMPT" -lt 100
+          export GITHUB_RUN_NUMBER=$((GITHUB_RUN_NUMBER * 100 + GITHUB_RUN_ATTEMPT))
+          python scripts/release.py set "$RELEASE_VERSION"
+      - uses: dtolnay/rust-toolchain@1.98
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: app-store${{ steps.macos-sdk.outputs.cache-suffix }}
+      - name: Install cargo-packager
+        run: |
+          if ! cargo packager --version 2>/dev/null | grep -q '0.11.8'; then
+            cargo install cargo-packager --version 0.11.8 --locked --force
+          fi
+      - name: Build sandboxed universal application
+        run: |
+          cargo build --locked --release -p beacon --features app-store --target aarch64-apple-darwin
+          cargo build --locked --release -p beacon --features app-store --target x86_64-apple-darwin
+          python scripts/check-macos-sdk.py target/aarch64-apple-darwin/release/beacon --sdk-version "$BEACON_MACOS_SDK_VERSION"
+          python scripts/check-macos-sdk.py target/x86_64-apple-darwin/release/beacon --sdk-version "$BEACON_MACOS_SDK_VERSION"
+          mkdir -p target/app-store
+          lipo -create target/aarch64-apple-darwin/release/beacon target/x86_64-apple-darwin/release/beacon -output target/app-store/beacon
+      - name: Import App Store signing identities
+        env:
+          APP_STORE_CERTIFICATE: ${{ secrets.APP_STORE_CERTIFICATE }}
+          APP_STORE_CERTIFICATE_PASSWORD: ${{ secrets.APP_STORE_CERTIFICATE_PASSWORD }}
+          APP_STORE_PROVISIONING_PROFILE: ${{ secrets.APP_STORE_PROVISIONING_PROFILE }}
+        run: |
+          python - <<'PY'
+          import base64, json, os, secrets, shlex, subprocess
+          from pathlib import Path
+          def run(*args, **kwargs):
+              return subprocess.run(args, check=True, **kwargs)
+          directory = Path(os.environ["RUNNER_TEMP"])
+          previous = shlex.split(run("security", "list-keychains", "-d", "user", capture_output=True, text=True).stdout)
+          (directory / "beacon-keychains.json").write_text(json.dumps(previous))
+          password = secrets.token_urlsafe(32)
+          print("::add-mask::" + password)
+          keychain = os.environ["APP_STORE_KEYCHAIN"]
+          certificate = directory / "beacon-app-store.p12"
+          certificate.write_bytes(base64.b64decode(os.environ["APP_STORE_CERTIFICATE"], validate=True))
+          certificate.chmod(0o600)
+          try:
+              run("security", "create-keychain", "-p", password, keychain)
+              run("security", "set-keychain-settings", "-lut", "21600", keychain)
+              run("security", "unlock-keychain", "-p", password, keychain)
+              run("security", "list-keychains", "-d", "user", "-s", keychain, *previous)
+              run("security", "import", str(certificate), "-k", keychain, "-P", os.environ["APP_STORE_CERTIFICATE_PASSWORD"], "-T", "/usr/bin/codesign", "-T", "/usr/bin/productbuild", stdout=subprocess.DEVNULL)
+              run("security", "set-key-partition-list", "-S", "apple-tool:,apple:,codesign:", "-s", "-k", password, keychain, stdout=subprocess.DEVNULL)
+              identities = run("security", "find-identity", "-v", keychain, capture_output=True, text=True).stdout
+              for name in ("APP_STORE_APP_IDENTITY", "APP_STORE_INSTALLER_IDENTITY"):
+                  if '"' + os.environ[name] + '"' not in identities:
+                      raise SystemExit(name + " is missing from the imported p12")
+          finally:
+              certificate.unlink(missing_ok=True)
+          profile = os.environ.get("APP_STORE_PROVISIONING_PROFILE")
+          if profile:
+              (directory / "beacon-app-store.provisionprofile").write_bytes(base64.b64decode(profile, validate=True))
+          PY
+      - name: Sign application and installer
+        run: |
+          PROFILE_ARGS=()
+          if [ -f "$RUNNER_TEMP/beacon-app-store.provisionprofile" ]; then
+            PROFILE_ARGS=(--profile "$RUNNER_TEMP/beacon-app-store.provisionprofile")
+          fi
+          python scripts/app-store.py package --keychain "$APP_STORE_KEYCHAIN" "${PROFILE_ARGS[@]}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: app-store-${{ inputs.version }}
+          path: target/app-store/*.pkg
+          if-no-files-found: error
+      - name: Upload to App Store Connect and wait for processing
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APP_STORE_PROVIDER_ID: ${{ vars.APP_STORE_PROVIDER_ID }}
+        run: |
+          PROVIDER_ARGS=()
+          if [ -n "$APP_STORE_PROVIDER_ID" ]; then
+            PROVIDER_ARGS=(--provider-public-id "$APP_STORE_PROVIDER_ID")
+          fi
+          xcrun altool --upload-package target/app-store/*.pkg --username "$APPLE_ID" --app-password '@env:APPLE_PASSWORD' --wait "${PROVIDER_ARGS[@]}"
+      - name: Remove temporary signing material
+        if: always()
+        run: |
+          python - <<'PY'
+          import json, os, subprocess
+          from pathlib import Path
+          directory = Path(os.environ["RUNNER_TEMP"])
+          previous = directory / "beacon-keychains.json"
+          if previous.exists():
+              subprocess.run(["security", "list-keychains", "-d", "user", "-s", *json.loads(previous.read_text())], check=True)
+              previous.unlink()
+          keychain = directory / "beacon-app-store.keychain-db"
+          if keychain.exists():
+              subprocess.run(["security", "delete-keychain", str(keychain)], check=True)
+          for name in ("beacon-app-store.p12", "beacon-app-store.provisionprofile"):
+              (directory / name).unlink(missing_ok=True)
+          PY

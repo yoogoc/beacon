@@ -115,6 +115,9 @@ pub fn init(cx: &mut App) {
         }
     });
     cx.set_global(SharedUpdater(updater.clone()));
+    if cfg!(feature = "app-store") {
+        return;
+    }
     updater.update(cx, |view, cx| {
         let reading = Bridge::global(cx).run(async move {
             tokio::task::spawn_blocking(move || beacon_updater::read_install_result(&cache))
@@ -219,6 +222,12 @@ impl Updater {
         }
     }
     fn start_check(&mut self, kind: CheckKind, cx: &mut Context<Self>) {
+        if cfg!(feature = "app-store") {
+            if kind == CheckKind::Manual {
+                cx.open_url("macappstore://showUpdates");
+            }
+            return;
+        }
         if matches!(self.status, Status::Checking) {
             // A manual request may reuse the running background check, but its
             // result must now report errors to the user who requested it.

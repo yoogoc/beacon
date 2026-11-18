@@ -360,6 +360,14 @@ jobs:
             target/${{ matrix.target }}/release/*.sig
           if-no-files-found: error
 
+  app-store:
+    if: needs.prepare.outputs.publish == 'true' && vars.APP_STORE_ENABLED == 'true'
+    needs: [prepare, release]
+    uses: ./.github/workflows/app-store.yml
+    with:
+      version: ${{ needs.prepare.outputs.version }}
+    secrets: inherit
+
   release:
     if: needs.prepare.outputs.publish == 'true'
     needs: [prepare, checks, package]

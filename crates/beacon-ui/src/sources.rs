@@ -42,6 +42,8 @@ pub(crate) fn kubeconfig_path(id: &beacon_kube::ClusterId, cx: &App) -> Option<P
         .map(|context| context.file.clone())
 }
 pub(crate) fn init(cx: &mut App) {
+    #[cfg(all(feature = "app-store", target_os = "macos"))]
+    crate::app_store::init(cx);
     let state = cx.new(|_| State {
         catalog: Arc::default(),
         labels: Default::default(),

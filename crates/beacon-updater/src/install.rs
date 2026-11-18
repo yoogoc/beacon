@@ -26,6 +26,9 @@ pub enum Installation {
 }
 impl Installation {
     pub fn detect() -> Self {
+        if cfg!(feature = "app-store") {
+            return Self::Managed;
+        }
         let Ok(executable) = std::env::current_exe() else {
             return Self::Managed;
         };
@@ -51,7 +54,7 @@ impl Installation {
         Self::Managed
     }
     pub fn can_install(&self) -> bool {
-        !matches!(self, Self::Managed)
+        !cfg!(feature = "app-store") && !matches!(self, Self::Managed)
     }
     pub fn platform(&self) -> String {
         let format = match self {
@@ -177,6 +180,9 @@ pub fn prepare_install(
 }
 /// Must be called before logging workers, Tokio or GPUI are initialized.
 pub fn helper_main() -> Option<Result<()>> {
+    if cfg!(feature = "app-store") {
+        return None;
+    }
     let mut args = std::env::args_os().skip(1);
     if args.next().as_deref() != Some(std::ffi::OsStr::new("--beacon-update")) {
         return None;

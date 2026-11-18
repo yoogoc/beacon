@@ -27,7 +27,10 @@ fn main() -> anyhow::Result<()> {
 
     // PATH also has to be updated before the logging worker starts, and
     // before kubeconfig exec credential plugins are looked up on PATH.
-    beacon_kube::shell_env::merge_login_shell_path();
+    // A sandboxed app cannot source the user's login-shell configuration.
+    if !cfg!(feature = "app-store") {
+        beacon_kube::shell_env::merge_login_shell_path();
+    }
     let logging = logging::init()?;
     let log_directory = logging.directory.clone();
 
