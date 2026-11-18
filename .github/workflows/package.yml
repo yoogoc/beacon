@@ -170,6 +170,15 @@ jobs:
               print("enabled=true", file=output)
           PY
 
+      - name: Validate Apple notarization credentials
+        if: steps.apple-signing.outputs.enabled == 'true'
+        shell: bash
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: xcrun notarytool history --apple-id "$APPLE_ID" --password "$APPLE_PASSWORD" --team-id "$APPLE_TEAM_ID" --output-format json > /dev/null
+
       # rust-toolchain.toml pins the channel; this only adds the cross target.
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -264,8 +273,8 @@ jobs:
           dmg="${images[0]}"
           app="$output/Beacon.app"
           requirement="anchor apple generic and certificate leaf[subject.OU] = \"$APPLE_TEAM_ID\""
-          codesign --verify --deep --strict --test-requirement "$requirement" "$app"
-          codesign --verify --strict --test-requirement "$requirement" "$dmg"
+          codesign --verify --deep --strict --test-requirement "=$requirement" "$app"
+          codesign --verify --strict --test-requirement "=$requirement" "$dmg"
 
           auth=(--apple-id "$APPLE_ID" --password "$APPLE_PASSWORD" --team-id "$APPLE_TEAM_ID")
           result=$(xcrun notarytool submit "$dmg" --wait --timeout 20m --output-format json "${auth[@]}") || {
