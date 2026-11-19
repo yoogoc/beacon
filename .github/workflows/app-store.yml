@@ -1,6 +1,13 @@
 name: App Store Connect
 
 on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Formal version to validate (defaults to the workspace version); does not upload
+        required: false
+        default: ""
+        type: string
   workflow_call:
     inputs:
       version:
@@ -15,7 +22,7 @@ jobs:
     runs-on: xcode-27
     timeout-minutes: 120
     concurrency:
-      group: app-store-${{ inputs.version }}
+      group: app-store-${{ inputs.version || github.ref_name }}
       cancel-in-progress: false
     env:
       CARGO_TERM_COLOR: always
@@ -46,14 +53,24 @@ jobs:
           with open(os.environ["GITHUB_ENV"], "a") as output:
               output.write("APP_STORE_KEYCHAIN=" + os.environ["RUNNER_TEMP"] + "/beacon-app-store.keychain-db\n")
           PY
+      - name: Validate App Store Connect authentication
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+        run: xcrun altool --list-providers --username "$APPLE_ID" --app-password '@env:APPLE_PASSWORD' > /dev/null
       - name: Apply release version
+        id: version
         env:
           RELEASE_VERSION: ${{ inputs.version }}
         # Encode the attempt too, so an upload rerun never reuses a build number.
         run: |
           test "$GITHUB_RUN_ATTEMPT" -lt 100
           export GITHUB_RUN_NUMBER=$((GITHUB_RUN_NUMBER * 100 + GITHUB_RUN_ATTEMPT))
+          if [ -z "$RELEASE_VERSION" ]; then
+            RELEASE_VERSION="$(python -c 'import pathlib, tomllib; print(tomllib.loads(pathlib.Path("Cargo.toml").read_text())["workspace"]["package"]["version"])')"
+          fi
           python scripts/release.py set "$RELEASE_VERSION"
+          echo "version=$RELEASE_VERSION" >> "$GITHUB_OUTPUT"
       - uses: dtolnay/rust-toolchain@1.98
         with:
           targets: aarch64-apple-darwin,x86_64-apple-darwin
@@ -119,10 +136,22 @@ jobs:
           python scripts/app-store.py package --keychain "$APP_STORE_KEYCHAIN" "${PROFILE_ARGS[@]}"
       - uses: actions/upload-artifact@v4
         with:
-          name: app-store-${{ inputs.version }}
+          name: app-store-${{ steps.version.outputs.version }}
           path: target/app-store/*.pkg
           if-no-files-found: error
+      - name: Validate package with App Store Connect
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APP_STORE_PROVIDER_ID: ${{ vars.APP_STORE_PROVIDER_ID }}
+        run: |
+          PROVIDER_ARGS=()
+          if [ -n "$APP_STORE_PROVIDER_ID" ]; then
+            PROVIDER_ARGS=(--provider-public-id "$APP_STORE_PROVIDER_ID")
+          fi
+          xcrun altool --validate-app target/app-store/*.pkg --username "$APPLE_ID" --app-password '@env:APPLE_PASSWORD' "${PROVIDER_ARGS[@]}"
       - name: Upload to App Store Connect and wait for processing
+        if: github.event_name == 'push'
         env:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
@@ -133,6 +162,11 @@ jobs:
             PROVIDER_ARGS=(--provider-public-id "$APP_STORE_PROVIDER_ID")
           fi
           xcrun altool --upload-package target/app-store/*.pkg --username "$APPLE_ID" --app-password '@env:APPLE_PASSWORD' --wait "${PROVIDER_ARGS[@]}"
+      - name: Record validation result
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          RELEASE_VERSION: ${{ steps.version.outputs.version }}
+        run: echo "Validated the signed universal package for Beacon $RELEASE_VERSION with App Store Connect. No build was uploaded." >> "$GITHUB_STEP_SUMMARY"
       - name: Remove temporary signing material
         if: always()
         run: |

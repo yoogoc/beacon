@@ -96,6 +96,10 @@ GitHub Actions 用 **Developer ID Application** 签署 Beacon 的 `.app` 和 `.d
 Actions 的 `app-store-<版本>` artifact 中。这个流程只上传构建，不自动提交审核或上架。
 手动运行 `package` 仍只生成普通开发版产物。
 
+手动运行 **App Store Connect** 工作流会构建并签署商店安装包，再使用 Apple 的服务
+验证安装包和上传凭据，产物保存在 Actions 中。这个手动入口不会上传构建，适合首次配置
+证书或轮换证书后验证流程。只有正式标签触发的发布才会执行上传步骤。
+
 在 Xcode 的 Accounts → Manage Certificates 或 Apple Developer 网站创建
 **Apple Distribution / Mac App Distribution** 和 **Mac Installer Distribution**，
 将带有私钥的两个身份一起导出为有密码的 `.p12`。可用 `security find-identity -v`
