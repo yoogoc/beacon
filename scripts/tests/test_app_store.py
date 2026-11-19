@@ -24,7 +24,7 @@ class AppStoreTests(unittest.TestCase):
             "ExpirationDate": self.now + timedelta(days=30),
             "TeamIdentifier": [self.team],
             "Entitlements": {
-                "com.apple.application-identifier": f"{self.team}.dev.beacon.Beacon",
+                "com.apple.application-identifier": f"{self.team}.top.yoogo.Beacon",
                 "com.apple.developer.team-identifier": self.team,
             },
         }
@@ -44,18 +44,18 @@ class AppStoreTests(unittest.TestCase):
                 app_store.identities(invalid)
 
     def test_profile_matches_bundle_and_team(self):
-        result = app_store.provisioning_entitlements(self.profile, self.team, "dev.beacon.Beacon", self.now)
+        result = app_store.provisioning_entitlements(self.profile, self.team, "top.yoogo.Beacon", self.now)
         self.assertEqual(result, self.profile["Entitlements"])
-        for team, identifier in (("OTHERTTEAM", "dev.beacon.Beacon"), (self.team, "other.bundle")):
+        for team, identifier in (("OTHERTTEAM", "top.yoogo.Beacon"), (self.team, "other.bundle")):
             with self.subTest(team=team, identifier=identifier), self.assertRaises(ValueError):
                 app_store.provisioning_entitlements(self.profile, team, identifier, self.now)
 
     def test_store_identifier_is_configurable_without_changing_standalone_identifier(self):
-        self.assertEqual(app_store.bundle_identifier("dev.beacon.Beacon", {}), "dev.beacon.Beacon")
-        self.assertEqual(app_store.bundle_identifier("dev.beacon.Beacon", {"APP_STORE_BUNDLE_ID": "top.yoogo.Beacon"}), "top.yoogo.Beacon")
+        self.assertEqual(app_store.bundle_identifier("top.yoogo.Beacon", {}), "top.yoogo.Beacon")
+        self.assertEqual(app_store.bundle_identifier("top.yoogo.Beacon", {"APP_STORE_BUNDLE_ID": "com.example.Beacon"}), "com.example.Beacon")
         for identifier in ("invalid", "top.yoogo/Beacon", "top..Beacon", "top.yoogo.Beacon\n"):
             with self.subTest(identifier=identifier), self.assertRaises(ValueError):
-                app_store.bundle_identifier("dev.beacon.Beacon", {"APP_STORE_BUNDLE_ID": identifier})
+                app_store.bundle_identifier("top.yoogo.Beacon", {"APP_STORE_BUNDLE_ID": identifier})
         with self.assertRaisesRegex(ValueError, "numeric"):
             app_store.identities(dict(self.environment, APP_STORE_APP_ID="account@example.com"))
 
@@ -68,14 +68,14 @@ class AppStoreTests(unittest.TestCase):
             {"Entitlements": dict(self.profile["Entitlements"], **{"com.apple.security.get-task-allow": True})},
         ):
             with self.subTest(change=change), self.assertRaises(ValueError):
-                app_store.provisioning_entitlements(dict(self.profile, **change), self.team, "dev.beacon.Beacon", self.now)
+                app_store.provisioning_entitlements(dict(self.profile, **change), self.team, "top.yoogo.Beacon", self.now)
 
     def test_store_config_uses_formal_version_and_separate_output(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             manifest = root / "crates/beacon/Cargo.toml"
             manifest.parent.mkdir(parents=True)
-            manifest.write_text('[package]\nname = "beacon"\n[package.metadata.packager]\nidentifier = "dev.beacon.Beacon"\ncopyright = "© 2026 Beacon Team"\nicons = ["../../assets/icon.icns"]\n[package.metadata.packager.macos]\ninfo-plist-path = "../../assets/packaging/Info.plist"\nsigning-identity = "Developer ID Application: Example"\n', encoding="utf-8")
+            manifest.write_text('[package]\nname = "beacon"\n[package.metadata.packager]\nidentifier = "top.yoogo.Beacon"\ncopyright = "© 2026 Beacon Team"\nicons = ["../../assets/icon.icns"]\n[package.metadata.packager.macos]\ninfo-plist-path = "../../assets/packaging/Info.plist"\nsigning-identity = "Developer ID Application: Example"\n', encoding="utf-8")
             workspace = root / "Cargo.toml"
             workspace.write_text('[workspace.package]\nversion = "1.4.60"\n')
             output = root / "target/app-store"
@@ -85,10 +85,10 @@ class AppStoreTests(unittest.TestCase):
             self.assertEqual(config["copyright"], "© 2026 Beacon Team")
             self.assertNotIn("signing-identity", config["macos"])
             self.assertEqual(config["icons"], [str((root / "assets/icon.icns").resolve())])
-            with patch.dict(os.environ, {"APP_STORE_BUNDLE_ID": "top.yoogo.Beacon"}):
+            with patch.dict(os.environ, {"APP_STORE_BUNDLE_ID": "com.example.Beacon"}):
                 store = app_store.packager_config(root, output)
-                self.assertEqual(store["identifier"], "top.yoogo.Beacon")
-            self.assertIn('identifier = "dev.beacon.Beacon"', manifest.read_text())
+                self.assertEqual(store["identifier"], "com.example.Beacon")
+            self.assertIn('identifier = "top.yoogo.Beacon"', manifest.read_text())
             workspace.write_text('[workspace.package]\nversion = "1.4.60-dev.123"\n')
             with self.assertRaisesRegex(ValueError, "formal"):
                 app_store.packager_config(root, output)

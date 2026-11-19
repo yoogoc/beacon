@@ -137,7 +137,7 @@ Actions 的 `app-store-<版本>` artifact 中。这个流程只上传构建，�
 商店签名构建中逐项验证。商店版不运行 GitHub 更新检查或安装器，更新入口打开 Mac App Store。
 
 App Store Connect 的 App 记录必须与 `APP_STORE_BUNDLE_ID` 一致，版本号必须与正式发布的
-`X.Y.Z` 一致。商店版当前使用 `top.yoogo.Beacon`，普通版继续使用 `dev.beacon.Beacon`。
+`X.Y.Z` 一致。商店版与独立分发版统一使用 `top.yoogo.Beacon`。
 Apple 处理完成后，在对应版本的“构建版本”中选择上传结果，再填写商店资料并提交审核。
 原来的 `1.0` 页面需要先改为本次发布版本。重跑上传会使用新的 `CFBundleVersion`。
 
@@ -153,6 +153,11 @@ App Store Connect 页面里的“版权”是独立商店资料，首次提交�
 结果。商店套装 ID 为 `top.yoogo.Beacon`，数字 Apple ID 为 `6835331590`，自动上传已开启。
 本次手动验证没有上传构建或提交审核。Apple 的唯一警告为 90889：缺少 provisioning profile，
 因此不能用于 TestFlight；不影响 App Store 上传。
+
+从 `1.4.60` 起，所有发行包的应用标识统一为 `top.yoogo.Beacon`，平台目录由
+`beacon-updater::paths` 统一决定。首次启动会将旧配置、托管 kubeconfig、自定义图标、
+主题、窗口状态和日志复制到新目录，并调整 JSON 中指向旧目录的内部路径。旧目录保留
+作为备份；已有新目录时不会覆盖。复制失败会继续使用旧目录，并在下次启动时重试。
 
 ## 构建与打包分开执行
 
@@ -377,9 +382,7 @@ Linux 的 DEB 单独读取发布脚本生成的配置，以适配 Debian 的 `~d
 - `cargo build --release -p beacon` 之后
   `cargo packager -p beacon --release --formats app,dmg`，产出 `Beacon.app` 与 11.9 MB 的
   `Beacon_0.1.0_aarch64.dmg`；
-- Info.plist：`CFBundleIdentifier=dev.beacon.Beacon`（与 `logging.rs` 里
-  `ProjectDirs::from("dev","beacon","Beacon")` 一致，改它会让已有日志目录失联）、
-  `CFBundleName=Beacon`、`0.1.0`、`LSMinimumSystemVersion=11.0`、
+- 初始 `0.1.0` 构建的 Info.plist 包含 `CFBundleName=Beacon`、`LSMinimumSystemVersion=11.0`、
   `LSApplicationCategoryType=public.app-category.developer-tools`；
 - bundle 里的图标与 `assets/app-icon/beacon.icns` 字节一致；
 - DMG 能挂载，里面有 `Applications` 符号链接和 `Beacon.app`；

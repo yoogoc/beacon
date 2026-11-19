@@ -19,7 +19,6 @@ beacon-ui.workspace = true
 beacon-updater.workspace = true
 gpui-kit.workspace = true
 anyhow.workspace = true
-directories.workspace = true
 tracing.workspace = true
 tracing-appender.workspace = true
 tracing-subscriber.workspace = true
@@ -36,10 +35,9 @@ embed-resource = "3.0.11"
 [package.metadata.packager]
 product-name = "Beacon"
 copyright = "© 2026 Beacon Team"
-# Has to stay in step with `ProjectDirs::from("dev", "beacon", "Beacon")` in
-# crates/beacon/src/logging.rs, which is what decides where the log directory
-# lives. Changing it strands whatever is already on disk.
-identifier = "dev.beacon.Beacon"
+# Keep in step with the platform namespace in beacon-updater/src/paths.rs,
+# which also migrates data written by earlier application identifiers.
+identifier = "top.yoogo.Beacon"
 description = "A Kubernetes client for the desktop"
 long-description = """
 Beacon connects to every context in your kubeconfig, lists any kind the cluster

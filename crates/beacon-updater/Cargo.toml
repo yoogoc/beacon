@@ -9,6 +9,7 @@ license.workspace = true
 app-store = []
 
 [dependencies]
+directories.workspace = true
 anyhow.workspace = true
 base64.workspace = true
 flate2.workspace = true

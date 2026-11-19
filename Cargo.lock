@@ -669,13 +669,12 @@ checksum = "ac07cdecf99051d9a5238b80f35af32cdeba5b336e55d957b318b50137e18da5"
 
 [[package]]
 name = "beacon"
-version = "1.4.59"
+version = "1.4.60"
 dependencies = [
  "anyhow",
  "beacon-kube",
  "beacon-ui",
  "beacon-updater",
- "directories",
  "embed-resource",
  "gpui-kit",
  "tracing",
@@ -685,7 +684,7 @@ dependencies = [
 
 [[package]]
 name = "beacon-columns"
-version = "1.4.59"
+version = "1.4.60"
 dependencies = [
  "k8s-openapi",
  "serde",
@@ -694,7 +693,7 @@ dependencies = [
 
 [[package]]
 name = "beacon-kube"
-version = "1.4.59"
+version = "1.4.60"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -721,7 +720,7 @@ dependencies = [
 
 [[package]]
 name = "beacon-ui"
-version = "1.4.59"
+version = "1.4.60"
 dependencies = [
  "alacritty_terminal",
  "anyhow",
@@ -756,10 +755,11 @@ dependencies = [
 
 [[package]]
 name = "beacon-updater"
-version = "1.4.59"
+version = "1.4.60"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
+ "directories",
  "flate2",
  "fs2",
  "minisign-verify",

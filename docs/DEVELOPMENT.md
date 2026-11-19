@@ -76,7 +76,7 @@ cargo run -p beacon-kube --example watch -- --context NAME --apply-check Deploym
 ## 日志与 UI 检查
 
 应用日志使用平台数据目录，macOS 路径为
-`~/Library/Application Support/dev.beacon.Beacon/logs`。
+`~/Library/Application Support/top.yoogo.Beacon/logs`。
 可从应用日志窗口查看，也可通过 `RUST_LOG` 增加输出：
 
 ```sh

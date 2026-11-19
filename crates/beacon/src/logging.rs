@@ -50,7 +50,7 @@ pub fn init() -> anyhow::Result<Logging> {
 }
 
 fn log_dir() -> anyhow::Result<PathBuf> {
-    let dirs = directories::ProjectDirs::from("dev", "beacon", "Beacon")
+    let directory = beacon_updater::paths::data_local_dir()
         .context("could not determine a data directory for this platform")?;
-    Ok(dirs.data_local_dir().join("logs"))
+    Ok(directory.join("logs"))
 }

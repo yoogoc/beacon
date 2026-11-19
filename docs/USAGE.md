@@ -293,9 +293,10 @@ Windows / Linux 使用应用菜单 **Menu → Settings…**。
 保存新的名称可保留另一份主题；保存后应用到已打开窗口，并在下次启动时恢复。
 
 偏好存放在平台配置目录。macOS 为
-`~/Library/Application Support/dev.beacon.Beacon/settings.json`；
+`~/Library/Application Support/top.yoogo.Beacon/settings.json`；
 `themes/` 保存独立的主题 JSON，`icons/` 保存导入的 SVG。
-**Open config folder** 可定位目录。文件使用原子替换写入，Unix 上仅当前用户可访问。
+从 `1.4.60` 升级后首次启动会自动复制旧配置并调整内部路径，旧目录保留为备份；
+新目录已有配置时优先使用新配置。**Open config folder** 可定位目录。文件使用原子替换写入，Unix 上仅当前用户可访问。
 
 全局代理支持使用 kubeconfig / 环境默认值、Direct，以及 HTTP / HTTPS / SOCKS5 URL。
 集群代理可覆盖全局配置，或选择 **Use global proxy** 继承。

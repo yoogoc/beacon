@@ -1,6 +1,7 @@
 //! Signed GitHub updates. Network work belongs on Tokio; installation runs in
 //! a copied helper process only after the GUI has released its exit lock.
 mod install;
+pub mod paths;
 
 use anyhow::{Context, Result, bail};
 use base64::{Engine as _, engine::general_purpose::STANDARD};

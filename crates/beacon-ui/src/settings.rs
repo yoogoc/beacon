@@ -246,12 +246,7 @@ pub(crate) fn try_store(cx: &App) -> Option<Entity<State>> {
 pub(crate) fn init(cx: &mut App) {
     let directory = std::env::var_os("BEACON_CONFIG_DIR")
         .map(PathBuf::from)
-        .unwrap_or_else(|| {
-            directories::ProjectDirs::from("dev", "beacon", "Beacon")
-                .expect("config directory")
-                .config_dir()
-                .to_path_buf()
-        });
+        .unwrap_or_else(|| beacon_updater::paths::config_dir().expect("config directory"));
     let result = read(&directory);
     let (preferences, load_error) = match result {
         Ok(p) => (p, None),
