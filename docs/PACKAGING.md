@@ -394,6 +394,13 @@ Developer ID 签名、Apple 公证和票据附加。下载的 DMG 及自动更�
 通过 `codesign --verify`、`stapler validate` 和 `spctl --assess`，Gatekeeper 结果为
 `Notarized Developer ID`。[发布记录](https://github.com/yoogoc/beacon/releases/tag/v1.4.59)
 
+`v1.4.60` 的[完整发布流水线](https://github.com/yoogoc/beacon/actions/runs/44445247573)全部通过。
+已下载检查两个 macOS 架构的 DMG 与自动更新归档：应用标识均为 `top.yoogo.Beacon`，
+版本为 `1.4.60`，签名团队与公证验证通过，版权为 `© 2026 Beacon Team`。
+GitHub Release 含 22 个文件，更新清单包含 8 个已签名目标。App Store Connect 已成功
+接收并处理 `1.4.60 (2.15.1)`，Apple 返回 `VALID_BINARY` / `VALID`；尚未提交审核。
+TestFlight 仍因未配置 provisioning profile 而不可用，Apple 警告编号为 90889。
+
 **未验证**：
 
 - Linux 与 Windows 安装包的本机安装、启动和运行验证。
