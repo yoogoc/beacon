@@ -620,6 +620,10 @@
     "en": "Help",
     "zh-CN": "帮助"
   },
+  "common.privacy_policy": {
+    "en": "Privacy policy",
+    "zh-CN": "隐私政策"
+  },
   "common.services": {
     "en": "Services",
     "zh-CN": "服务"

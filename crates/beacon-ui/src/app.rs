@@ -57,6 +57,7 @@ gpui_kit::actions!(
         GlobalSearch,
         OpenAppLogs,
         OpenShortcuts,
+        OpenPrivacyPolicy,
         OpenSettings,
         OpenKubeconfigSources,
         CheckForUpdates,
@@ -100,6 +101,10 @@ fn application_menu() -> impl IntoElement {
                         crate::i18n::text("Keyboard shortcuts"),
                         Box::new(OpenShortcuts),
                     )
+                    .menu(
+                        crate::i18n::text("Privacy policy"),
+                        Box::new(OpenPrivacyPolicy),
+                    )
             }),
     )
 }
@@ -131,10 +136,11 @@ pub(crate) fn rebuild_menus(cx: &mut App) {
             MenuItem::separator(),
             MenuItem::action(crate::i18n::text("App logs"), OpenAppLogs),
         ]),
-        Menu::new(crate::i18n::text("Help")).items([MenuItem::action(
-            crate::i18n::text("Keyboard shortcuts"),
-            OpenShortcuts,
-        )]),
+        Menu::new(crate::i18n::text("Help")).items([
+            MenuItem::action(crate::i18n::text("Keyboard shortcuts"), OpenShortcuts),
+            MenuItem::separator(),
+            MenuItem::action(crate::i18n::text("Privacy policy"), OpenPrivacyPolicy),
+        ]),
     ]);
 }
 
@@ -159,6 +165,14 @@ pub fn init(log_directory: PathBuf, cx: &mut App) {
     });
     crate::shortcuts::init(cx);
     cx.on_action(|_: &OpenShortcuts, cx| crate::shortcuts::open(cx));
+    cx.on_action(|_: &OpenPrivacyPolicy, cx| {
+        let url = if cx.global::<crate::i18n::LocaleState>().locale == "zh-CN" {
+            "https://yoogoc.github.io/beacon/privacy/zh-CN/"
+        } else {
+            "https://yoogoc.github.io/beacon/privacy/"
+        };
+        cx.open_url(url);
+    });
     cx.on_action(|_: &OpenAppLogs, cx| app_logs::open(cx));
     cx.on_action(|_: &Quit, cx| cx.defer(request_app_quit));
 

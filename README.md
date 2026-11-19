@@ -248,7 +248,7 @@ Tabs for a cluster share its connection, and identical resource subscriptions sh
 
 ## Documentation
 
-The detailed guides below are currently written in Chinese.
+The development and usage guides below are currently written in Chinese.
 
 | Document | Contents |
 | --- | --- |
@@ -257,5 +257,6 @@ The detailed guides below are currently written in Chinese.
 | [Design notes](docs/DESIGN.md) | Initial architecture, technology choices, and milestones. |
 | [TODO list](docs/TODO.md) | Prioritized feature plans, implementation scope, and quality tasks. |
 | [Packaging and distribution](docs/PACKAGING.md) | Platform artifacts, CI releases, signing, and verification status. |
+| [Privacy policy](https://yoogoc.github.io/beacon/privacy/) | Local data, service connections, support requests, retention, and deletion. Also available from Help → Privacy policy. |
 
 The project declares **Apache-2.0** in its Cargo metadata. See the [icon notes](crates/beacon-ui/assets/README.md) for UI icon sources and licensing.

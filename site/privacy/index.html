@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <meta name="description" content="How Beacon handles local configuration, cluster connections, diagnostics, support requests, and data deletion.">
+  <title>Privacy policy · Beacon</title>
+  <link rel="canonical" href="https://yoogoc.github.io/beacon/privacy/">
+  <link rel="alternate" hreflang="en" href="https://yoogoc.github.io/beacon/privacy/">
+  <link rel="alternate" hreflang="zh-Hans" href="https://yoogoc.github.io/beacon/privacy/zh-CN/">
+  <link rel="alternate" hreflang="x-default" href="https://yoogoc.github.io/beacon/privacy/">
+  <link rel="icon" href="../assets/beacon.png">
+  <link rel="stylesheet" href="../assets/privacy.css">
+</head>
+<body>
+  <a class="skip" href="#policy">Skip to policy</a>
+  <div class="shell">
+    <header class="topbar">
+      <a class="brand" href="../"><img src="../assets/beacon.png" alt="" width="44" height="44">Beacon</a>
+      <nav class="language" aria-label="Language"><a href="./" aria-current="page" lang="en">English</a><a href="zh-CN/" lang="zh-CN" hreflang="zh-Hans">简体中文</a></nav>
+    </header>
+    <div class="hero">
+      <p class="eyebrow">BEACON · YOUR PRIVACY</p>
+      <h1>Privacy policy</h1>
+      <p class="date">Effective and last updated: <time datetime="2026-11-19">November 19, 2026</time></p>
+      <p class="summary">Beacon runs on your device and connects to services you configure. It has no advertising or usage analytics, and does not automatically upload your cluster data, credentials, or application logs to the Beacon developer.</p>
+    </div>
+    <div class="layout">
+      <nav class="contents" aria-label="Policy sections">
+        <p>ON THIS PAGE</p>
+        <a href="#scope">Who we are</a><a href="#local">Data on your device</a><a href="#connections">Your service connections</a><a href="#updates">App updates</a><a href="#support">Support and sharing</a><a href="#retention">Retention and deletion</a><a href="#website">This website</a><a href="#choices">Your choices</a><a href="#changes">Changes and contact</a>
+      </nav>
+      <main id="policy">
+        <article>
+          <section id="scope">
+            <h2>Who we are and what this policy covers</h2>
+            <p>Beacon is a Kubernetes desktop client maintained by Beacon Team (GitHub project maintainer: <a href="https://github.com/yoogoc">yoogoc</a>). This policy covers the Beacon application, our handling of support requests, and this privacy policy website.</p>
+            <p>Privacy contact: <a href="mailto:yoogoc@163.com">yoogoc@163.com</a>. The project is available at <a href="https://github.com/yoogoc/beacon">github.com/yoogoc/beacon</a>.</p>
+            <p>Beacon does not require a developer-operated account and does not provide a developer-operated cloud synchronization service. App Store and independently distributed builds have different update mechanisms, described below.</p>
+          </section>
+          <section id="local">
+            <h2>Data processed on your device</h2>
+            <p>Beacon accesses data needed to provide the features you use. Depending on your configuration and actions, this includes:</p>
+            <ul>
+              <li><strong>Connection configuration:</strong> kubeconfig files you select or import, context and cluster names, server addresses, certificates, tokens and credential references; proxy settings; and optional Prometheus addresses and credentials. Imported configurations may contain credentials and are stored locally.</li>
+              <li><strong>Workspace preferences:</strong> language, themes, window placement, favorites, saved filters, column layouts, and port-forward presets. On sandboxed macOS builds, local file-access bookmarks retain access to locations you select.</li>
+              <li><strong>Cluster content:</strong> resource manifests, events, metrics, container logs, and file or terminal content you request. Resource data can include personal or confidential information supplied by your cluster.</li>
+              <li><strong>Local diagnostic logs:</strong> application activity, connection errors and other troubleshooting information. These logs may include resource identifiers, server addresses, local file paths and error details. They are written to your device and are not automatically sent to us.</li>
+            </ul>
+            <p>Beacon uses this information to connect, display and manage resources, preserve preferences, and diagnose problems. We do not operate a backend that receives these configurations or cluster contents. Files you export or download are saved to destinations you choose.</p>
+          </section>
+          <section id="connections">
+            <h2>Connections to services you configure</h2>
+            <p>Beacon communicates with the Kubernetes API servers, Prometheus endpoints, proxies and authentication services selected by your configuration. Requests may include authentication credentials, requested resource identifiers, queries, and changes you choose to apply. These services can also receive ordinary network information such as your IP address.</p>
+            <p>The operators of those services control their own access logs, storage, processing locations and retention. They may be your organization or a provider you choose. Contact those operators about data held by them. Beacon does not send your kubeconfig, cluster credentials or cluster content to a Beacon-operated service.</p>
+            <p>Beacon does not include advertising networks, advertising identifiers, cross-app tracking, or usage analytics. It does not sell personal information or share app data with advertising or analytics providers. If you open a resource link or another external website, that service's privacy policy applies.</p>
+          </section>
+          <section id="updates">
+            <h2>Updates and distribution services</h2>
+            <p><strong>Mac App Store builds:</strong> installation and updates are handled by Apple. Beacon does not run its GitHub-based updater in this build. Apple's handling of App Store data is governed by the <a href="https://www.apple.com/legal/privacy/">Apple Privacy Policy</a>.</p>
+            <p><strong>Independently distributed builds:</strong> when update checks are enabled or requested, Beacon contacts GitHub to retrieve release information and update manifests. If an update is downloaded, it retrieves release assets from GitHub's delivery infrastructure. These requests expose ordinary network information such as your IP address and request headers to GitHub; Beacon does not attach your kubeconfig or cluster contents. You can disable automatic checks and automatic downloads in Settings → Updates. See the <a href="https://docs.github.com/en/site-policy/privacy-policies/github-general-privacy-statement">GitHub General Privacy Statement</a>.</p>
+          </section>
+          <section id="support">
+            <h2>Information you choose to share with support</h2>
+            <p>If you email us or open a GitHub issue, we receive the contact information, message, attachments and diagnostic details you submit. We use them to respond, investigate the issue, maintain Beacon, and meet applicable legal obligations. We do not use support information for advertising.</p>
+            <p>GitHub issues are public. Please remove credentials, Secret values, personal information and confidential cluster details before submitting a report or diagnostic file. Sending support material is voluntary; the app does not upload it automatically. Email and GitHub providers process those communications under their own terms and privacy policies.</p>
+          </section>
+          <section id="retention">
+            <h2>How long data is kept and how to delete it</h2>
+            <p>Local preferences, imported configurations, saved file-access information and diagnostic logs can remain on your device until you remove them. Application logs are rotated into daily files; Beacon does not promise automatic deletion after a fixed period. Original kubeconfig files and exported or downloaded files remain in the locations you selected. Removing a source from the workspace or uninstalling the app may leave those files behind.</p>
+            <p>To stop a connection, disconnect the cluster or remove its source in Settings. To remove local data, use Settings → Config folder and the App Logs view to identify the relevant locations, quit Beacon, and delete the files you no longer need. Manage original source files, exports, backups and any operating-system or cloud backups separately. Revoke tokens or certificates through the issuing cluster or identity provider when needed.</p>
+            <p>We retain information you send to support only as long as needed to address the request, maintain necessary records, or comply with applicable legal obligations. You may request deletion by email. We can address records we hold; the operators of your cluster, GitHub, Cloudflare, Apple, your email provider and backup services control records held by them.</p>
+          </section>
+          <section id="website">
+            <h2>This privacy policy website</h2>
+            <p>This static website is hosted on GitHub Pages. We add no advertising, analytics scripts, tracking pixels, cookies or external font services. GitHub states that it logs and stores visitors' IP addresses for security purposes when a GitHub Pages site is visited. See <a href="https://docs.github.com/en/pages/getting-started-with-github-pages/what-is-github-pages">GitHub Pages documentation</a> and the <a href="https://docs.github.com/en/site-policy/privacy-policies/github-general-privacy-statement">GitHub General Privacy Statement</a>.</p>
+            <p>The GitHub Pages address redirects to our existing domain, blog.yoogo.top, which uses Cloudflare for network delivery and protection. Cloudflare may process IP addresses, request metadata and security logs to provide those services. These providers may process requests outside your country under their own policies. See the <a href="https://www.cloudflare.com/privacypolicy/">Cloudflare Privacy Policy</a>.</p>
+          </section>
+          <section id="choices">
+            <h2>Your choices and privacy requests</h2>
+            <p>You control which configurations and services Beacon uses, which operations you request, and which files or support materials you export or share. You can stop using Beacon and remove its local data as described above.</p>
+            <p>Depending on your location, you may have rights to access, correct or delete personal information we hold, or to object to or restrict certain processing. Contact us to exercise applicable rights or ask about a privacy concern. We may ask for information reasonably necessary to verify and respond to your request. For information controlled by your organization or another service, contact that operator.</p>
+          </section>
+          <section id="changes">
+            <h2>Changes and contact</h2>
+            <p>We will update this policy when Beacon's data practices change and revise the date shown above. The current policy is available here and from Help → Privacy policy in Beacon.</p>
+            <p>For privacy questions or requests, contact Beacon Team:</p>
+            <a class="contact" href="mailto:yoogoc@163.com">yoogoc@163.com</a>
+          </section>
+        </article>
+      </main>
+    </div>
+    <footer>© 2026 Beacon Team <a href="https://github.com/yoogoc/beacon">Project source</a><a href="zh-CN/" lang="zh-CN">简体中文</a></footer>
+  </div>
+</body>
+</html>

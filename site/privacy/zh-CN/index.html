@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <meta name="description" content="了解 Beacon 如何处理本地配置、集群连接、诊断日志、支持请求，以及如何删除数据。">
+  <title>隐私政策 · Beacon</title>
+  <link rel="canonical" href="https://yoogoc.github.io/beacon/privacy/zh-CN/">
+  <link rel="alternate" hreflang="en" href="https://yoogoc.github.io/beacon/privacy/">
+  <link rel="alternate" hreflang="zh-Hans" href="https://yoogoc.github.io/beacon/privacy/zh-CN/">
+  <link rel="alternate" hreflang="x-default" href="https://yoogoc.github.io/beacon/privacy/">
+  <link rel="icon" href="../../assets/beacon.png">
+  <link rel="stylesheet" href="../../assets/privacy.css">
+</head>
+<body>
+  <a class="skip" href="#policy">跳到政策正文</a>
+  <div class="shell">
+    <header class="topbar">
+      <a class="brand" href="../../"><img src="../../assets/beacon.png" alt="" width="44" height="44">Beacon</a>
+      <nav class="language" aria-label="语言"><a href="../" lang="en" hreflang="en">English</a><a href="./" aria-current="page" lang="zh-CN">简体中文</a></nav>
+    </header>
+    <div class="hero">
+      <p class="eyebrow">BEACON · 你的隐私</p>
+      <h1>隐私政策</h1>
+      <p class="date">生效及最后更新日期：<time datetime="2026-11-19">2026 年 11 月 19 日</time></p>
+      <p class="summary">Beacon 在你的设备上运行，并连接你配置的服务。应用不包含广告或使用行为统计，不会自动向 Beacon 开发者上传集群数据、凭据或应用日志。</p>
+    </div>
+    <div class="layout">
+      <nav class="contents" aria-label="政策目录">
+        <p>本页内容</p>
+        <a href="#scope">我们是谁</a><a href="#local">设备上的数据</a><a href="#connections">你配置的服务</a><a href="#updates">应用更新</a><a href="#support">支持与主动分享</a><a href="#retention">保存与删除</a><a href="#website">本政策网页</a><a href="#choices">你的选择</a><a href="#changes">变更与联系</a>
+      </nav>
+      <main id="policy">
+        <article>
+          <section id="scope">
+            <h2>我们是谁，以及本政策适用范围</h2>
+            <p>Beacon 是由 Beacon Team 维护的 Kubernetes 桌面客户端，GitHub 项目维护者为 <a href="https://github.com/yoogoc">yoogoc</a>。本政策适用于 Beacon 应用、我们处理的支持请求，以及本隐私政策网页。</p>
+            <p>隐私联系邮箱：<a href="mailto:yoogoc@163.com">yoogoc@163.com</a>。项目地址：<a href="https://github.com/yoogoc/beacon">github.com/yoogoc/beacon</a>。</p>
+            <p>Beacon 不要求注册开发者运营的账号，也不提供开发者运营的云同步服务。App Store 版和独立分发版的更新方式有所不同，详见下文。</p>
+          </section>
+          <section id="local">
+            <h2>在你的设备上处理的数据</h2>
+            <p>Beacon 会访问你使用相应功能所需的数据。根据你的配置和操作，这些数据可能包括：</p>
+            <ul>
+              <li><strong>连接配置：</strong>你选择或导入的 kubeconfig、上下文与集群名称、服务器地址、证书、令牌及凭据引用；代理设置；可选的 Prometheus 地址及凭据。导入的配置可能包含凭据，并保存在本机。</li>
+              <li><strong>工作区偏好：</strong>语言、主题、窗口位置、收藏、已保存的筛选条件、列表布局和端口转发预设。沙盒化的 macOS 构建还会在本机保存文件访问书签，以保留对你选择位置的访问权限。</li>
+              <li><strong>集群内容：</strong>你请求查看的资源清单、事件、指标、容器日志，以及文件或终端内容。集群提供的资源数据可能包含个人信息或机密信息。</li>
+              <li><strong>本地诊断日志：</strong>应用活动、连接错误和其他排查信息。日志可能包含资源标识、服务器地址、本地文件路径和错误详情。这些日志写入你的设备，不会自动发送给我们。</li>
+            </ul>
+            <p>Beacon 使用这些信息来建立连接、展示和管理资源、保存偏好及排查问题。我们没有接收这些配置或集群内容的开发者后端。你导出或下载的文件保存在你选择的位置。</p>
+          </section>
+          <section id="connections">
+            <h2>与你配置的服务通信</h2>
+            <p>Beacon 会与你配置中指定的 Kubernetes API 服务器、Prometheus 地址、代理和认证服务通信。请求可能包含认证凭据、资源标识、查询，以及你选择应用的修改。这些服务也可能接收 IP 地址等正常网络通信信息。</p>
+            <p>这些服务的运营方自行控制访问日志、存储、处理地点和保存期限，运营方可能是你的组织或你选择的服务提供商。有关其持有数据的问题，请联系相应运营方。Beacon 不会把 kubeconfig、集群凭据或集群内容发送给 Beacon 运营的服务。</p>
+            <p>Beacon 不包含广告网络、广告标识符、跨应用跟踪或使用行为统计，不出售个人信息，也不向广告或分析服务提供商分享应用数据。如果你打开资源链接或其他外部网页，适用相应服务的隐私政策。</p>
+          </section>
+          <section id="updates">
+            <h2>更新与分发服务</h2>
+            <p><strong>Mac App Store 版：</strong>安装和更新由 Apple 处理，该构建不会运行 Beacon 基于 GitHub 的更新器。Apple 对 App Store 数据的处理受 <a href="https://www.apple.com/legal/privacy/">Apple 隐私政策</a>约束。</p>
+            <p><strong>独立分发版：</strong>启用或手动发起更新检查时，Beacon 会连接 GitHub 获取发布信息和更新清单。下载更新时，应用会从 GitHub 的分发基础设施获取发布资源。GitHub 会接收 IP 地址、请求头等正常网络通信信息；Beacon 不会附带 kubeconfig 或集群内容。你可以在“设置 → 更新”中关闭自动检查和自动下载。详情见 <a href="https://docs.github.com/en/site-policy/privacy-policies/github-general-privacy-statement">GitHub 通用隐私声明</a>。</p>
+          </section>
+          <section id="support">
+            <h2>你主动向支持渠道提供的信息</h2>
+            <p>如果你发送邮件或创建 GitHub Issue，我们会收到你提交的联系方式、消息、附件和诊断详情。这些信息用于回复、调查问题、维护 Beacon 及履行适用的法律义务，不用于广告。</p>
+            <p>GitHub Issue 是公开的。提交报告或诊断文件前，请移除凭据、Secret 值、个人信息和机密集群详情。提供支持材料由你自行决定，应用不会自动上传。邮件和 GitHub 服务商会按照各自的条款和隐私政策处理相关通信。</p>
+          </section>
+          <section id="retention">
+            <h2>保存期限，以及如何删除数据</h2>
+            <p>本地偏好、导入的配置、文件访问记录和诊断日志可能保留在你的设备上，直到你将其删除。应用日志按天生成文件；Beacon 不承诺在固定天数后自动清理。原始 kubeconfig 和导出或下载的文件仍保存在你选择的位置。从工作区移除来源或卸载应用，可能不会同时移除这些文件。</p>
+            <p>要停止连接，可断开集群，或在设置中移除其来源。要删除本地数据，可通过“设置 → 配置文件夹”和“应用日志”视图确认相关位置，退出 Beacon 后删除不再需要的文件。请另行管理原始来源文件、导出文件、备份，以及操作系统或云服务中的备份。如需撤销令牌或证书，请通过签发它们的集群或身份提供商处理。</p>
+            <p>你提供给支持渠道的信息，仅在处理请求、保留必要记录或履行适用法律义务所需的期限内保存。你可以通过邮件请求删除。我们可以处理我们持有的记录；你的集群运营方、GitHub、Cloudflare、Apple、邮件和备份服务商各自控制其持有的记录。</p>
+          </section>
+          <section id="website">
+            <h2>本隐私政策网页</h2>
+            <p>本静态网页托管于 GitHub Pages。我们没有添加广告、分析脚本、跟踪像素、Cookie 或外部字体服务。GitHub 说明，访问 GitHub Pages 站点时，会出于安全目的记录并保存访客 IP 地址。详情见 <a href="https://docs.github.com/en/pages/getting-started-with-github-pages/what-is-github-pages">GitHub Pages 文档</a>和 <a href="https://docs.github.com/en/site-policy/privacy-policies/github-general-privacy-statement">GitHub 通用隐私声明</a>。</p>
+            <p>GitHub Pages 地址会跳转到我们已有的域名 blog.yoogo.top，该域名使用 Cloudflare 提供网络分发和防护。Cloudflare 可能为提供这些服务处理 IP 地址、请求元数据及安全日志。这些提供商可能按照各自政策在你所在国家或地区以外处理请求。详情见 <a href="https://www.cloudflare.com/privacypolicy/">Cloudflare 隐私政策</a>。</p>
+          </section>
+          <section id="choices">
+            <h2>你的选择与隐私请求</h2>
+            <p>你可以控制 Beacon 使用哪些配置和服务、发起哪些操作，以及导出或分享哪些文件与支持材料。你可以停止使用 Beacon，并按上文说明删除本地数据。</p>
+            <p>根据你所在地区，你可能有权访问、更正或删除我们持有的个人信息，或反对、限制特定处理。你可以联系我们行使适用权利或提出隐私问题。为核实和处理请求，我们可能要求提供合理必要的信息。对于你的组织或其他服务控制的数据，请联系对应运营方。</p>
+          </section>
+          <section id="changes">
+            <h2>政策变更与联系方式</h2>
+            <p>当 Beacon 的数据处理方式改变时，我们会更新本政策，并修改页面顶部的日期。你可以在此页面，或通过 Beacon 的“帮助 → 隐私政策”查看现行版本。</p>
+            <p>如有隐私问题或请求，请联系 Beacon Team：</p>
+            <a class="contact" href="mailto:yoogoc@163.com">yoogoc@163.com</a>
+          </section>
+        </article>
+      </main>
+    </div>
+    <footer>© 2026 Beacon Team <a href="https://github.com/yoogoc/beacon">项目源码</a><a href="../" lang="en">English</a></footer>
+  </div>
+</body>
+</html>

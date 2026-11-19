@@ -250,6 +250,7 @@ cargo test --locked --workspace --features beacon-ui/ui-tests -- --test-threads=
 | [设计文档](docs/DESIGN.md) | 初始架构设计、技术选型与里程碑。 |
 | [TODO 清单](docs/TODO.md) | 功能优先级、实现范围与质量任务。 |
 | [打包与分发](docs/PACKAGING.md) | 各平台产物、CI 发布流程、签名和验证情况。 |
+| [隐私政策](https://yoogoc.github.io/beacon/privacy/zh-CN/) | 本地数据、服务连接、支持请求、保存与删除方式；也可从“帮助 → 隐私政策”打开。 |
 
 项目在 Cargo 元数据中声明使用 **Apache-2.0**。界面图标的来源和许可见
 [图标说明](crates/beacon-ui/assets/README.md)。
