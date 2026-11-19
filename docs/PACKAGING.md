@@ -147,6 +147,13 @@ Apple 处理完成后，在对应版本的“构建版本”中选择上传结�
 App Store Connect 页面里的“版权”是独立商店资料，首次提交时填写 `2026 Beacon Team`
 （Apple 自动加上 ©）；上传安装包不会替你修改这个字段。
 
+2026-11-19 已完成真实验证：[ARM64/Intel 构建](https://github.com/yoogoc/beacon/actions/runs/44437056081)
+均通过，[最终通用包验证](https://github.com/yoogoc/beacon/actions/runs/44441109905)成功导入两个
+签名身份、验证 `.app` 与 `.pkg` 签名及版权字段，并获得 Apple 的 `VERIFY SUCCEEDED`
+结果。商店套装 ID 为 `top.yoogo.Beacon`，数字 Apple ID 为 `6835331590`，自动上传已开启。
+本次手动验证没有上传构建或提交审核。Apple 的唯一警告为 90889：缺少 provisioning profile，
+因此不能用于 TestFlight；不影响 App Store 上传。
+
 ## 构建与打包分开执行
 
 cargo-packager 只打包、**不构建**。先显式 `cargo build --release -p beacon`，再跑
