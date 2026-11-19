@@ -363,6 +363,9 @@ jobs:
   app-store:
     if: needs.prepare.outputs.publish == 'true' && vars.APP_STORE_ENABLED == 'true'
     needs: [prepare, release]
+    permissions:
+      contents: read
+      actions: read
     uses: ./.github/workflows/app-store.yml
     with:
       version: ${{ needs.prepare.outputs.version }}
