@@ -1,3 +1,5 @@
+#![cfg(not(feature = "app-store"))]
+
 use beacon_updater::{Asset, Client, Format, Proxy, Release, verify_package};
 use std::time::Duration;
 use tokio::{

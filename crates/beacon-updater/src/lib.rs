@@ -156,6 +156,9 @@ impl Client {
         channel: Channel,
         installation: &Installation,
     ) -> Result<Option<Release>> {
+        if cfg!(feature = "app-store") {
+            return Ok(None);
+        }
         let current = Version::parse(current)?;
         let api = match channel {
             Channel::Stable => format!("https://api.github.com/repos/{REPOSITORY}/releases/latest"),
@@ -245,6 +248,9 @@ impl Client {
         cache: PathBuf,
         mut progress: impl FnMut(u64, u64) + Send,
     ) -> Result<Downloaded> {
+        if cfg!(feature = "app-store") {
+            bail!("Updates are managed by the Mac App Store");
+        }
         // Synchronous file handles are confined to the network worker. Their
         // deterministic drop closes the file before TempDir cleanup on Windows.
         use std::io::Write as _;
@@ -462,5 +468,51 @@ mod tests {
             PublicKey::from_base64("RWQf6LRCGA9i53mlYecO4IzT51TGPpvWucNSCh1CBM0QTaLn73Y7GFO3")
                 .unwrap();
         assert!(verify(&key, b"tampered", "aW52YWxpZA==").is_err());
+    }
+}
+
+#[cfg(all(test, feature = "app-store"))]
+mod app_store_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn store_build_never_checks_or_downloads_external_updates() {
+        let client = Client::new(Proxy::Direct, PUBLIC_KEY).unwrap();
+        // This must return before parsing metadata or contacting GitHub.
+        assert!(
+            client
+                .check("invalid", Channel::Stable, &Installation::Managed)
+                .await
+                .unwrap()
+                .is_none()
+        );
+        let directory = tempfile::tempdir().unwrap();
+        let cache = directory.path().join("must-not-create");
+        let release = Release {
+            version: Version::new(2, 0, 0),
+            notes: String::new(),
+            page: "https://example.invalid".parse().unwrap(),
+            asset: Asset {
+                url: "https://example.invalid/package".parse().unwrap(),
+                signature: String::new(),
+                size: 1,
+                format: Format::App,
+            },
+        };
+        let error = client
+            .download(release, cache.clone(), |_, _| {})
+            .await
+            .err()
+            .unwrap();
+        assert!(error.to_string().contains("Mac App Store"));
+        assert!(!cache.exists());
+        assert!(!Installation::detect().can_install());
+        assert!(
+            !Installation::MacApp {
+                bundle: "/Applications/Beacon.app".into(),
+                executable: "/Applications/Beacon.app/Contents/MacOS/beacon".into()
+            }
+            .can_install()
+        );
     }
 }

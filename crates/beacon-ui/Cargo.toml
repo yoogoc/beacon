@@ -6,6 +6,7 @@ rust-version.workspace = true
 license.workspace = true
 
 [features]
+app-store = ["beacon-updater/app-store", "dep:objc2", "dep:objc2-foundation"]
 ui-tests = ["gpui-kit/test-support", "beacon-kube/test-support"]
 
 [dependencies]
@@ -39,3 +40,7 @@ roxmltree = "=0.21.1"
 
 [build-dependencies]
 serde_json.workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = { version = "0.6.3", optional = true }
+objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSArray", "NSData", "NSError", "NSString", "NSURL"], optional = true }

@@ -8,6 +8,8 @@ mod activity;
 mod aggregate_logs;
 pub mod app;
 mod app_logs;
+#[cfg(all(feature = "app-store", target_os = "macos"))]
+mod app_store;
 mod argo;
 mod argo_canvas;
 mod argo_node;

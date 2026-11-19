@@ -140,3 +140,9 @@ jobs:
       # whole test suite runs on a CI runner without a display.
       - name: Test
         run: cargo --config .github/ci-profile.toml test --locked --workspace --target ${{ matrix.target }}
+
+      - name: Check Mac App Store variant
+        if: runner.os == 'macOS'
+        run: |
+          cargo --config .github/ci-profile.toml clippy --locked -p beacon --features app-store --target ${{ matrix.target }}
+          cargo --config .github/ci-profile.toml test --locked -p beacon-updater --features app-store --target ${{ matrix.target }}

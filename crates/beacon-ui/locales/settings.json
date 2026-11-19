@@ -1099,5 +1099,13 @@
   "settings.add_file": {
     "en": "Add file",
     "zh-CN": "添加文件"
+  },
+  "settings.app_store_updates": {
+    "en": "Updates are managed by the Mac App Store.",
+    "zh-CN": "更新由 Mac App Store 管理。"
+  },
+  "settings.open_app_store": {
+    "en": "Open App Store",
+    "zh-CN": "打开 App Store"
   }
 }

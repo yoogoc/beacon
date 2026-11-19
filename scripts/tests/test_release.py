@@ -89,7 +89,7 @@ class WorkspaceVersionTests(unittest.TestCase):
             )
         with (self.root / "crates/beacon/Cargo.toml").open("a", encoding="utf-8") as file:
             file.write(
-                '[package.metadata.packager]\nproduct-name = "Beacon"\nicons = ["../../assets/icon.png"]\n'
+                '[package.metadata.packager]\nproduct-name = "Beacon"\ncopyright = "© 2026 Beacon Team"\nicons = ["../../assets/icon.png"]\n'
                 '[package.metadata.packager.macos]\ninfo-plist-path = "../../assets/packaging/Info.plist"\n'
             )
         self.dependency = (
@@ -137,6 +137,7 @@ class WorkspaceVersionTests(unittest.TestCase):
             self.assertEqual(plist["CFBundleShortVersionString"], "0.2.0")
             self.assertEqual(plist["CFBundleVersion"], expected)
             self.assertEqual(plist["BeaconVersion"], f"0.2.0-dev.{number}")
+            self.assertEqual(plist["NSHumanReadableCopyright"], "© 2026 Beacon Team")
         before = self.contents()
         with self.assertRaises(ValueError):
             release.set_version(self.root, "0.2.0", 99_990_000)

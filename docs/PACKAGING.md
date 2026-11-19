@@ -83,10 +83,62 @@ GitHub Actions 用 **Developer ID Application** 签署 Beacon 的 `.app` 和 `.d
 
 [apple-app-password]: https://support.apple.com/zh-cn/102654
 
-**不开 App Sandbox。** cargo-packager 对原生二进制总是传 `--options runtime`，只在配置了
+**独立分发版不开 App Sandbox。** cargo-packager 对原生二进制总是传 `--options runtime`，只在配置了
 `entitlements` 时才传 `--entitlements`，所以"不写 entitlements"就是保持不沙箱的全部操作。
 这不是偷懒：Beacon 要读 `~/.kube/config`，还要在 PATH 上找 kubeconfig 的 `exec` 凭据插件
-并把它作为子进程跑起来，沙箱里这两件事都做不了。
+并把它作为子进程跑起来。商店版使用下面的独立构建流程，文件和子进程操作受沙箱限制。
+
+## App Store Connect
+
+正式标签发布 GitHub Release 后，`package` 工作流调用 `app-store.yml`，构建开启
+`app-store` feature 的 ARM64 + Intel 通用应用，用商店证书签署 `.app` 和 `.pkg`，
+通过 `xcrun altool --upload-package --wait` 上传并等待 Apple 处理。安装包同时保存在
+Actions 的 `app-store-<版本>` artifact 中。这个流程只上传构建，不自动提交审核或上架。
+手动运行 `package` 仍只生成普通开发版产物。
+
+手动运行 **App Store Connect** 工作流会构建并签署商店安装包，再使用 Apple 的服务
+验证安装包和上传凭据，产物保存在 Actions 中。这个手动入口不会上传构建，适合首次配置
+证书或轮换证书后验证流程。只有正式标签触发的发布才会执行上传步骤。
+
+在 Xcode 的 Accounts → Manage Certificates 或 Apple Developer 网站创建
+**Apple Distribution / Mac App Distribution** 和 **Mac Installer Distribution**，
+将带有私钥的两个身份一起导出为有密码的 `.p12`。可用 `security find-identity -v`
+查看两者，`-p codesigning` 会隐藏安装器身份。Developer ID 证书不能用于商店上传。
+
+新增以下 GitHub Actions 配置，保留原有独立分发的 Apple 凭据。
+
+| 类型 | 名称 | 值 |
+| --- | --- | --- |
+| Secret | `APP_STORE_CERTIFICATE` | 包含应用和安装器两个身份的 `.p12`，Base64 编码，无换行 |
+| Secret | `APP_STORE_CERTIFICATE_PASSWORD` | 该 `.p12` 的导出密码 |
+| Secret，可选 | `APP_STORE_PROVISIONING_PROFILE` | Mac App Store provisioning profile 的 Base64 内容；TestFlight 必须配置 |
+| Variable | `APP_STORE_APP_IDENTITY` | `Apple Distribution: NAME (TEAMID)` 或 `3rd Party Mac Developer Application: NAME (TEAMID)` |
+| Variable | `APP_STORE_INSTALLER_IDENTITY` | `3rd Party Mac Developer Installer: NAME (TEAMID)` |
+| Variable，可选 | `APP_STORE_PROVIDER_ID` | Apple 账户属于多个 provider 时填写，使用 `xcrun altool --list-providers` 查询 |
+| Variable | `APP_STORE_ENABLED` | 完成证书配置后设为 `true`，启用正式版本自动上传 |
+
+上传复用 `APPLE_ID`、`APPLE_PASSWORD`（应用专用密码）和 `APPLE_TEAM_ID`。
+账户需要有上传该 App 的权限。签名材料仅在临时钥匙串中导入，任务结束后删除。
+当前网络、用户选择文件和书签权限无需受限 entitlement 的 profile；配置 profile 后，
+脚本会校验有效期、Team ID、完整 App ID，并拒绝开发或 Developer ID profile。
+
+商店版启用 `assets/packaging/app-store.entitlements` 中的 App Sandbox、网络客户端与
+服务器权限（用于集群访问和端口转发）、用户选择文件读写及持久书签。请通过
+**Kubeconfig sources → Add files / Choose folder** 授权配置位置，或粘贴自包含 YAML。
+选择配置目录可同时授权目录中的证书等相对路径文件；直接输入路径不会授予沙箱访问权限。
+书签保存于容器内的 `file-access.json`，在启动时恢复。系统 kubeconfig、登录 shell 环境、
+外部凭据插件、kubectl / Helm 和终端功能不能沿用独立分发版的完整访问权限，需要在真实
+商店签名构建中逐项验证。商店版不运行 GitHub 更新检查或安装器，更新入口打开 Mac App Store。
+
+App Store Connect 的 App 记录必须使用 `dev.beacon.Beacon`，版本号必须与正式发布的
+`X.Y.Z` 一致。Apple 处理完成后，在对应版本的“构建版本”中选择上传结果，再填写商店资料并提交审核。
+原来的 `1.0` 页面需要先改为本次发布版本。重跑上传会使用新的 `CFBundleVersion`。
+
+版权在 `crates/beacon/Cargo.toml` 的 `package.metadata.packager.copyright` 中配置，
+当前为 `© 2026 Beacon Team`。`release.py` 每次更新版本都会将它写入
+`NSHumanReadableCopyright`，Finder 的“显示简介”可以显示该文字。
+App Store Connect 页面里的“版权”是独立商店资料，首次提交时填写 `2026 Beacon Team`
+（Apple 自动加上 ©）；上传安装包不会替你修改这个字段。
 
 ## 构建与打包分开执行
 
@@ -94,9 +146,8 @@ cargo-packager 只打包、**不构建**。先显式 `cargo build --release -p b
 cargo-packager。产物跟着**当前机器的架构**走 —— 本机是 arm64，DMG 名字里的 `aarch64`
 就是它。
 
-不做 universal：那意味着把整棵依赖树（含 GPUI）编两遍再 `lipo`，而 cargo-packager 本身
-没有 universal 的概念。真要做的话是加一个先编两个 target 再 lipo 到 `target/release/beacon`
-的脚本，然后让 cargo-packager 打那个合并后的二进制。
+独立分发版按架构分别打包。商店版先编译两个 target，再用 `lipo` 合并到
+`target/app-store/beacon`，由 `scripts/app-store.py` 使用相同的 cargo-packager 元数据打包。
 
 ## 两个会咬人的环境问题
 

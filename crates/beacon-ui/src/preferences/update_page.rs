@@ -154,6 +154,20 @@ fn preference_row(
 
 impl PreferencesView {
     pub(super) fn updates_form(&self, cx: &mut Context<Self>) -> AnyElement {
+        if cfg!(feature = "app-store") {
+            return v_flex()
+                .gap_3()
+                .child(div().font_weight(FontWeight::MEDIUM).child("Mac App Store"))
+                .child(hint("Updates are managed by the Mac App Store.", cx))
+                .child(
+                    Button::new("app-store-updates")
+                        .small()
+                        .outline()
+                        .label(crate::i18n::text("Open App Store"))
+                        .on_click(|_, _, cx| cx.open_url("macappstore://showUpdates")),
+                )
+                .into_any_element();
+        }
         let Some(store) = crate::updates::maybe_store(cx) else {
             return div().into_any_element();
         };
