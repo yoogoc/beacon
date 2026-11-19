@@ -102,7 +102,20 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: "1.98"
-          targets: ${{ matrix.target }}
+      - name: Install cross-compilation target
+        env:
+          RUST_TARGET: ${{ matrix.target }}
+        run: |
+          for attempt in 1 2 3; do
+            if rustup target add --toolchain 1.98 "$RUST_TARGET"; then
+              break
+            fi
+            if [ "$attempt" = 3 ]; then
+              exit 1
+            fi
+            echo "::warning::Rust target download failed; retrying in 15 seconds (attempt $attempt of 3)."
+            sleep 15
+          done
       - name: Verify active Rust target
         run: rustup target list --installed | grep -Fx '${{ matrix.target }}'
       - uses: Swatinem/rust-cache@v2
