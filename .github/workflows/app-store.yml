@@ -17,13 +17,16 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: app-store-${{ inputs.version || github.ref_name }}
+  cancel-in-progress: false
+
 jobs:
-  upload:
+  prepare:
     runs-on: xcode-27
-    timeout-minutes: 120
-    concurrency:
-      group: app-store-${{ inputs.version || github.ref_name }}
-      cancel-in-progress: false
+    timeout-minutes: 15
+    outputs:
+      version: ${{ steps.version.outputs.version }}
     env:
       CARGO_TERM_COLOR: always
       APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
@@ -50,8 +53,6 @@ jobs:
           missing = [name for name in required if not os.environ.get(name)]
           if missing:
               raise SystemExit("Missing GitHub Secrets: " + ", ".join(missing))
-          with open(os.environ["GITHUB_ENV"], "a") as output:
-              output.write("APP_STORE_KEYCHAIN=" + os.environ["RUNNER_TEMP"] + "/beacon-app-store.keychain-db\n")
           PY
       - name: Validate App Store Connect authentication
         env:
@@ -71,25 +72,103 @@ jobs:
           fi
           python scripts/release.py set "$RELEASE_VERSION"
           echo "version=$RELEASE_VERSION" >> "$GITHUB_OUTPUT"
-      - uses: dtolnay/rust-toolchain@1.98
+
+  build:
+    needs: prepare
+    name: app-store (${{ matrix.target }})
+    runs-on: xcode-27
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [aarch64-apple-darwin, x86_64-apple-darwin]
+    env:
+      CARGO_TERM_COLOR: always
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/macos-sdk
+        id: macos-sdk
+      - uses: actions/setup-python@v5
         with:
-          targets: aarch64-apple-darwin,x86_64-apple-darwin
+          python-version: "3.12"
+      - name: Apply release version
+        env:
+          RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          test "$GITHUB_RUN_ATTEMPT" -lt 100
+          export GITHUB_RUN_NUMBER=$((GITHUB_RUN_NUMBER * 100 + GITHUB_RUN_ATTEMPT))
+          python scripts/release.py set "$RELEASE_VERSION"
+      # Keep the installed toolchain name identical to rust-toolchain.toml.
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.98"
+          targets: ${{ matrix.target }}
+      - name: Verify active Rust target
+        run: rustup target list --installed | grep -Fx '${{ matrix.target }}'
       - uses: Swatinem/rust-cache@v2
         with:
-          key: app-store${{ steps.macos-sdk.outputs.cache-suffix }}
+          key: app-store-${{ matrix.target }}${{ steps.macos-sdk.outputs.cache-suffix }}
+          cache-on-failure: true
+      - name: Build sandboxed application
+        run: cargo build --locked --release -p beacon --features app-store --target ${{ matrix.target }}
+      - name: Verify macOS SDK and deployment target
+        run: python scripts/check-macos-sdk.py target/${{ matrix.target }}/release/beacon --sdk-version "$BEACON_MACOS_SDK_VERSION"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: app-store-binary-${{ matrix.target }}
+          path: target/${{ matrix.target }}/release/beacon
+          if-no-files-found: error
+          retention-days: 7
+
+  upload:
+    needs: [prepare, build]
+    runs-on: xcode-27
+    timeout-minutes: 90
+    env:
+      CARGO_TERM_COLOR: always
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      APP_STORE_APP_IDENTITY: ${{ vars.APP_STORE_APP_IDENTITY }}
+      APP_STORE_INSTALLER_IDENTITY: ${{ vars.APP_STORE_INSTALLER_IDENTITY }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/macos-sdk
+        id: macos-sdk
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Apply release version
+        env:
+          RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          test "$GITHUB_RUN_ATTEMPT" -lt 100
+          export GITHUB_RUN_NUMBER=$((GITHUB_RUN_NUMBER * 100 + GITHUB_RUN_ATTEMPT))
+          python scripts/release.py set "$RELEASE_VERSION"
+      - name: Set temporary keychain path
+        run: echo "APP_STORE_KEYCHAIN=$RUNNER_TEMP/beacon-app-store.keychain-db" >> "$GITHUB_ENV"
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.98"
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: app-store-tools${{ steps.macos-sdk.outputs.cache-suffix }}
+          cache-on-failure: true
       - name: Install cargo-packager
         run: |
           if ! cargo packager --version 2>/dev/null | grep -q '0.11.8'; then
             cargo install cargo-packager --version 0.11.8 --locked --force
           fi
-      - name: Build sandboxed universal application
+      - uses: actions/download-artifact@v4
+        with:
+          name: app-store-binary-aarch64-apple-darwin
+          path: target/app-store/arm64
+      - uses: actions/download-artifact@v4
+        with:
+          name: app-store-binary-x86_64-apple-darwin
+          path: target/app-store/amd64
+      - name: Combine universal executable
         run: |
-          cargo build --locked --release -p beacon --features app-store --target aarch64-apple-darwin
-          cargo build --locked --release -p beacon --features app-store --target x86_64-apple-darwin
-          python scripts/check-macos-sdk.py target/aarch64-apple-darwin/release/beacon --sdk-version "$BEACON_MACOS_SDK_VERSION"
-          python scripts/check-macos-sdk.py target/x86_64-apple-darwin/release/beacon --sdk-version "$BEACON_MACOS_SDK_VERSION"
-          mkdir -p target/app-store
-          lipo -create target/aarch64-apple-darwin/release/beacon target/x86_64-apple-darwin/release/beacon -output target/app-store/beacon
+          lipo -create target/app-store/arm64/beacon target/app-store/amd64/beacon -output target/app-store/beacon
+          chmod +x target/app-store/beacon
       - name: Import App Store signing identities
         env:
           APP_STORE_CERTIFICATE: ${{ secrets.APP_STORE_CERTIFICATE }}
@@ -136,7 +215,7 @@ jobs:
           python scripts/app-store.py package --keychain "$APP_STORE_KEYCHAIN" "${PROFILE_ARGS[@]}"
       - uses: actions/upload-artifact@v4
         with:
-          name: app-store-${{ steps.version.outputs.version }}
+          name: app-store-${{ needs.prepare.outputs.version }}
           path: target/app-store/*.pkg
           if-no-files-found: error
       - name: Validate package with App Store Connect
@@ -165,7 +244,7 @@ jobs:
       - name: Record validation result
         if: github.event_name == 'workflow_dispatch'
         env:
-          RELEASE_VERSION: ${{ steps.version.outputs.version }}
+          RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
         run: echo "Validated the signed universal package for Beacon $RELEASE_VERSION with App Store Connect. No build was uploaded." >> "$GITHUB_STEP_SUMMARY"
       - name: Remove temporary signing material
         if: always()
