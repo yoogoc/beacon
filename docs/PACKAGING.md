@@ -101,6 +101,8 @@ Actions 的 `app-store-<版本>` artifact 中。这个流程只上传构建，�
 证书或轮换证书后验证流程。只有正式标签触发的发布才会执行上传步骤。
 两个架构由独立任务并行编译，并分别保留二进制产物；后续签名或 Apple 校验失败时，
 使用 Actions 的 **Re-run failed jobs** 可重试后续任务，无需重新编译已成功的架构。
+手动验证也可填写 `binary_run_id` 复用先前构建：工作流会检查来源属于本仓库 main、
+两个架构均构建成功、Rust 编译输入与版本完全一致，然后只重新打包和验证。
 
 在 Xcode 的 Accounts → Manage Certificates 或 Apple Developer 网站创建
 **Apple Distribution / Mac App Distribution** 和 **Mac Installer Distribution**，
@@ -116,6 +118,8 @@ Actions 的 `app-store-<版本>` artifact 中。这个流程只上传构建，�
 | Secret，可选 | `APP_STORE_PROVISIONING_PROFILE` | Mac App Store provisioning profile 的 Base64 内容；TestFlight 必须配置 |
 | Variable | `APP_STORE_APP_IDENTITY` | `Apple Distribution: NAME (TEAMID)` 或 `3rd Party Mac Developer Application: NAME (TEAMID)` |
 | Variable | `APP_STORE_INSTALLER_IDENTITY` | `3rd Party Mac Developer Installer: NAME (TEAMID)` |
+| Variable | `APP_STORE_BUNDLE_ID` | 商店记录的套装 ID，当前为 `top.yoogo.Beacon`；未配置时使用普通版默认值 |
+| Variable | `APP_STORE_APP_ID` | 商店记录的数字 Apple ID，当前为 `6835331590` |
 | Variable，可选 | `APP_STORE_PROVIDER_ID` | Apple 账户属于多个 provider 时填写，使用 `xcrun altool --list-providers` 查询 |
 | Variable | `APP_STORE_ENABLED` | 完成证书配置后设为 `true`，启用正式版本自动上传 |
 
@@ -132,8 +136,9 @@ Actions 的 `app-store-<版本>` artifact 中。这个流程只上传构建，�
 外部凭据插件、kubectl / Helm 和终端功能不能沿用独立分发版的完整访问权限，需要在真实
 商店签名构建中逐项验证。商店版不运行 GitHub 更新检查或安装器，更新入口打开 Mac App Store。
 
-App Store Connect 的 App 记录必须使用 `dev.beacon.Beacon`，版本号必须与正式发布的
-`X.Y.Z` 一致。Apple 处理完成后，在对应版本的“构建版本”中选择上传结果，再填写商店资料并提交审核。
+App Store Connect 的 App 记录必须与 `APP_STORE_BUNDLE_ID` 一致，版本号必须与正式发布的
+`X.Y.Z` 一致。商店版当前使用 `top.yoogo.Beacon`，普通版继续使用 `dev.beacon.Beacon`。
+Apple 处理完成后，在对应版本的“构建版本”中选择上传结果，再填写商店资料并提交审核。
 原来的 `1.0` 页面需要先改为本次发布版本。重跑上传会使用新的 `CFBundleVersion`。
 
 版权在 `crates/beacon/Cargo.toml` 的 `package.metadata.packager.copyright` 中配置，

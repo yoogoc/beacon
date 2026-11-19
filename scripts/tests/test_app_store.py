@@ -3,6 +3,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
+import os
 
 spec = importlib.util.spec_from_file_location("app_store", Path(__file__).resolve().parents[1] / "app-store.py")
 app_store = importlib.util.module_from_spec(spec)
@@ -48,6 +50,15 @@ class AppStoreTests(unittest.TestCase):
             with self.subTest(team=team, identifier=identifier), self.assertRaises(ValueError):
                 app_store.provisioning_entitlements(self.profile, team, identifier, self.now)
 
+    def test_store_identifier_is_configurable_without_changing_standalone_identifier(self):
+        self.assertEqual(app_store.bundle_identifier("dev.beacon.Beacon", {}), "dev.beacon.Beacon")
+        self.assertEqual(app_store.bundle_identifier("dev.beacon.Beacon", {"APP_STORE_BUNDLE_ID": "top.yoogo.Beacon"}), "top.yoogo.Beacon")
+        for identifier in ("invalid", "top.yoogo/Beacon", "top..Beacon", "top.yoogo.Beacon\n"):
+            with self.subTest(identifier=identifier), self.assertRaises(ValueError):
+                app_store.bundle_identifier("dev.beacon.Beacon", {"APP_STORE_BUNDLE_ID": identifier})
+        with self.assertRaisesRegex(ValueError, "numeric"):
+            app_store.identities(dict(self.environment, APP_STORE_APP_ID="account@example.com"))
+
     def test_expired_development_and_developer_id_profiles_are_rejected(self):
         for change in (
             {"ExpirationDate": self.now - timedelta(seconds=1)},
@@ -74,6 +85,10 @@ class AppStoreTests(unittest.TestCase):
             self.assertEqual(config["copyright"], "© 2026 Beacon Team")
             self.assertNotIn("signing-identity", config["macos"])
             self.assertEqual(config["icons"], [str((root / "assets/icon.icns").resolve())])
+            with patch.dict(os.environ, {"APP_STORE_BUNDLE_ID": "top.yoogo.Beacon"}):
+                store = app_store.packager_config(root, output)
+                self.assertEqual(store["identifier"], "top.yoogo.Beacon")
+            self.assertIn('identifier = "dev.beacon.Beacon"', manifest.read_text())
             workspace.write_text('[workspace.package]\nversion = "1.4.60-dev.123"\n')
             with self.assertRaisesRegex(ValueError, "formal"):
                 app_store.packager_config(root, output)

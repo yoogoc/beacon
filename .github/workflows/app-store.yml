@@ -8,6 +8,11 @@ on:
         required: false
         default: ""
         type: string
+      binary_run_id:
+        description: Optional successful architecture artifacts to reuse from a main-branch run with identical Rust sources
+        required: false
+        default: ""
+        type: string
   workflow_call:
     inputs:
       version:
@@ -16,6 +21,7 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 concurrency:
   group: app-store-${{ inputs.version || github.ref_name }}
@@ -32,6 +38,8 @@ jobs:
       APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
       APP_STORE_APP_IDENTITY: ${{ vars.APP_STORE_APP_IDENTITY }}
       APP_STORE_INSTALLER_IDENTITY: ${{ vars.APP_STORE_INSTALLER_IDENTITY }}
+      APP_STORE_BUNDLE_ID: ${{ vars.APP_STORE_BUNDLE_ID }}
+      APP_STORE_APP_ID: ${{ vars.APP_STORE_APP_ID }}
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/macos-sdk
@@ -72,8 +80,44 @@ jobs:
           fi
           python scripts/release.py set "$RELEASE_VERSION"
           echo "version=$RELEASE_VERSION" >> "$GITHUB_OUTPUT"
+      - name: Verify reused binary provenance
+        if: github.event_name == 'workflow_dispatch' && inputs.binary_run_id != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BINARY_RUN_ID: ${{ inputs.binary_run_id }}
+          RELEASE_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          python - <<'PY'
+          import json, os, re, subprocess, tomllib
+          def command(*args):
+              return subprocess.check_output(args, text=True).strip()
+          repository = os.environ["GITHUB_REPOSITORY"]
+          run_id = os.environ["BINARY_RUN_ID"]
+          if not re.fullmatch(r"[1-9][0-9]*", run_id):
+              raise SystemExit("binary_run_id must be numeric")
+          run = json.loads(command("gh", "api", f"repos/{repository}/actions/runs/{run_id}"))
+          if run["head_repository"]["full_name"] != repository or run["head_branch"] != "main" or run["path"].split("@")[0] != ".github/workflows/app-store.yml":
+              raise SystemExit("Only this repository's main-branch App Store artifacts can be reused")
+          jobs = json.loads(command("gh", "api", f"repos/{repository}/actions/runs/{run_id}/jobs"))["jobs"]
+          expected = {"app-store (aarch64-apple-darwin)", "app-store (x86_64-apple-darwin)"}
+          if not expected.issubset({job["name"] for job in jobs if job["conclusion"] == "success"}):
+              raise SystemExit("Both architecture builds must have succeeded")
+          source = run["head_sha"]
+          if not re.fullmatch(r"[0-9a-f]{40}", source):
+              raise SystemExit("Invalid source commit")
+          if subprocess.run(["git", "cat-file", "-e", source + "^{commit}"], capture_output=True).returncode:
+              subprocess.run(["git", "fetch", "--no-tags", "--depth=1", "origin", source], check=True)
+          for path in ("Cargo.toml", "Cargo.lock", "rust-toolchain.toml", "crates", "vendor", "assets", ".cargo", ".github/actions/macos-sdk"):
+              if command("git", "rev-parse", f"{source}:{path}") != command("git", "rev-parse", f"HEAD:{path}"):
+                  raise SystemExit("Reused binaries do not match current compilation inputs: " + path)
+          version = tomllib.loads(command("git", "show", source + ":Cargo.toml"))["workspace"]["package"]["version"]
+          if version != os.environ["RELEASE_VERSION"]:
+              raise SystemExit("Reused binary version does not match requested package version")
+          print("Verified both architecture artifacts from source commit " + source)
+          PY
 
   build:
+    if: github.event_name != 'workflow_dispatch' || inputs.binary_run_id == ''
     needs: prepare
     name: app-store (${{ matrix.target }})
     runs-on: xcode-27
@@ -135,6 +179,7 @@ jobs:
 
   upload:
     needs: [prepare, build]
+    if: ${{ !cancelled() && needs.prepare.result == 'success' && (needs.build.result == 'success' || (needs.build.result == 'skipped' && inputs.binary_run_id != '')) }}
     runs-on: xcode-27
     timeout-minutes: 90
     env:
@@ -142,6 +187,8 @@ jobs:
       APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
       APP_STORE_APP_IDENTITY: ${{ vars.APP_STORE_APP_IDENTITY }}
       APP_STORE_INSTALLER_IDENTITY: ${{ vars.APP_STORE_INSTALLER_IDENTITY }}
+      APP_STORE_BUNDLE_ID: ${{ vars.APP_STORE_BUNDLE_ID }}
+      APP_STORE_APP_ID: ${{ vars.APP_STORE_APP_ID }}
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/macos-sdk
@@ -174,10 +221,14 @@ jobs:
         with:
           name: app-store-binary-aarch64-apple-darwin
           path: target/app-store/arm64
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.binary_run_id || github.run_id }}
       - uses: actions/download-artifact@v4
         with:
           name: app-store-binary-x86_64-apple-darwin
           path: target/app-store/amd64
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.binary_run_id || github.run_id }}
       - name: Combine universal executable
         run: |
           lipo -create target/app-store/arm64/beacon target/app-store/amd64/beacon -output target/app-store/beacon
@@ -241,6 +292,9 @@ jobs:
           if [ -n "$APP_STORE_PROVIDER_ID" ]; then
             PROVIDER_ARGS=(--provider-public-id "$APP_STORE_PROVIDER_ID")
           fi
+          if [ -n "$APP_STORE_APP_ID" ]; then
+            PROVIDER_ARGS+=(--apple-id "$APP_STORE_APP_ID")
+          fi
           xcrun altool --validate-app target/app-store/*.pkg --username "$APPLE_ID" --app-password '@env:APPLE_PASSWORD' "${PROVIDER_ARGS[@]}"
       - name: Upload to App Store Connect and wait for processing
         if: github.event_name == 'push'
@@ -252,6 +306,9 @@ jobs:
           PROVIDER_ARGS=()
           if [ -n "$APP_STORE_PROVIDER_ID" ]; then
             PROVIDER_ARGS=(--provider-public-id "$APP_STORE_PROVIDER_ID")
+          fi
+          if [ -n "$APP_STORE_APP_ID" ]; then
+            PROVIDER_ARGS+=(--apple-id "$APP_STORE_APP_ID")
           fi
           xcrun altool --upload-package target/app-store/*.pkg --username "$APPLE_ID" --app-password '@env:APPLE_PASSWORD' --wait "${PROVIDER_ARGS[@]}"
       - name: Record validation result

@@ -33,7 +33,17 @@ def identities(environment):
         raise ValueError("APP_STORE_INSTALLER_IDENTITY must be a Mac Installer Distribution identity")
     if not all(name.endswith(f"({team})") for name in (app, installer)):
         raise ValueError("Both App Store identities must belong to APPLE_TEAM_ID")
+    app_id = environment.get("APP_STORE_APP_ID", "")
+    if app_id and not re.fullmatch(r"[1-9][0-9]*", app_id):
+        raise ValueError("APP_STORE_APP_ID must be the numeric App Store Connect app ID")
     return team, app, installer
+
+
+def bundle_identifier(default, environment):
+    identifier = environment.get("APP_STORE_BUNDLE_ID") or default
+    if len(identifier) > 255 or not re.fullmatch(r"[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+", identifier):
+        raise ValueError("APP_STORE_BUNDLE_ID must be a valid reverse-DNS bundle identifier")
+    return identifier
 
 
 def provisioning_entitlements(profile, team, identifier, now=None):
@@ -60,6 +70,7 @@ def packager_config(root, output):
     manifest = root / "crates/beacon/Cargo.toml"
     package = tomllib.loads(manifest.read_text(encoding="utf-8"))["package"]
     config = package["metadata"]["packager"]
+    config["identifier"] = bundle_identifier(config["identifier"], os.environ)
     version = tomllib.loads((root / "Cargo.toml").read_text(encoding="utf-8"))["workspace"]["package"]["version"]
     if not re.fullmatch(r"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)", version):
         raise ValueError("App Store Connect packaging requires a formal X.Y.Z version")
