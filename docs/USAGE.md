@@ -342,5 +342,6 @@ Prometheus 配置包含 Base URL、可选 Bearer Token 和四组 Pod / Node CPU 
 macOS 使用 **View → App logs**，Windows / Linux 使用 **Menu → App logs**；
 也可按 `⌘⇧L` / `Ctrl+Shift+L`，或选择面板的 **Open app logs**。
 日志使用独立窗口，重复打开会聚焦已有窗口，无需连接集群。
+Beacon 启动时和持续运行期间每 24 小时会在后台清理应用日志，按文件名中的 UTC 日期保留当天和此前 29 天的日志。
 支持搜索、Warn + Error / Error 筛选、暂停 / 继续、复制筛选后的行和打开历史日志目录。
 窗口跟随当天最新日志文件，后台读取最多 1 MiB 尾部、保留最近 5,000 行；关闭后停止轮询。

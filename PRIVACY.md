@@ -3,7 +3,7 @@
 - [English](https://yoogoc.github.io/beacon/privacy/)
 - [简体中文](https://yoogoc.github.io/beacon/privacy/zh-CN/)
 
-Effective date / 生效日期: 2026-11-19.
+Effective date / 生效日期: 2026-11-23.
 
 Published by Beacon Team, maintained by [yoogoc](https://github.com/yoogoc).
 Privacy contact: [yoogoc@163.com](mailto:yoogoc@163.com).

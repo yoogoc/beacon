@@ -1,4 +1,6 @@
-//! Bounded reads of Beacon's existing daily log files, run off the UI thread.
+//! Reading and pruning Beacon's daily log files off the UI thread.
+
+use jiff::{ToSpan as _, civil::Date};
 
 use std::{
     fs,
@@ -9,6 +11,7 @@ use std::{
 
 pub(super) const MAX_BYTES: u64 = 1024 * 1024;
 const MAX_LINES: usize = 5000;
+const RETENTION_DAYS: i64 = 30;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct Stamp {
@@ -57,18 +60,31 @@ pub(super) struct Snapshot {
     pub truncated: bool,
 }
 
-fn is_log_name(name: &str) -> bool {
-    let Some(date) = name.strip_prefix("beacon.log.") else {
-        return false;
-    };
-    date.len() == 10
-        && date.bytes().enumerate().all(|(index, byte)| {
-            if index == 4 || index == 7 {
-                byte == b'-'
-            } else {
-                byte.is_ascii_digit()
+fn log_date(name: &str) -> Option<Date> {
+    let date = name.strip_prefix("beacon.log.")?;
+    if date.len() != 10 || date.as_bytes()[4] != b'-' || date.as_bytes()[7] != b'-' {
+        return None;
+    }
+    date.parse().ok()
+}
+
+pub(super) fn remove_expired(dir: &Path, today: Date) -> std::io::Result<()> {
+    let oldest_kept = today.saturating_sub((RETENTION_DAYS - 1).days());
+    for entry in fs::read_dir(dir)? {
+        let result = entry.and_then(|entry| {
+            let date = entry.file_name().to_str().and_then(log_date);
+            if date.is_some_and(|day| day < oldest_kept) && entry.file_type()?.is_file() {
+                fs::remove_file(entry.path())?;
             }
-        })
+            Ok(())
+        });
+        if let Err(error) = result
+            && error.kind() != std::io::ErrorKind::NotFound
+        {
+            tracing::warn!(directory = %dir.display(), %error, "could not prune application log entry");
+        }
+    }
+    Ok(())
 }
 
 /// None means unchanged; an empty snapshot means no log file exists yet.
@@ -91,7 +107,9 @@ pub(super) fn read_latest(
         let mut paths = Vec::new();
         for entry in files {
             let entry = entry?;
-            if is_log_name(&entry.file_name().to_string_lossy()) && entry.file_type()?.is_file() {
+            if entry.file_name().to_str().and_then(log_date).is_some()
+                && entry.file_type()?.is_file()
+            {
                 paths.push(entry.path());
             }
         }
@@ -179,7 +197,7 @@ impl Filter {
 
 #[cfg(test)]
 mod tests {
-    use super::{Filter, Level, MAX_BYTES, read_latest};
+    use super::{Filter, Level, MAX_BYTES, read_latest, remove_expired};
     use std::{
         fs,
         path::PathBuf,
@@ -206,6 +224,37 @@ mod tests {
         fn drop(&mut self) {
             fs::remove_dir_all(&self.0).unwrap();
         }
+    }
+
+    #[test]
+    fn cleanup_keeps_thirty_utc_dates_and_only_removes_daily_log_files() {
+        let dir = Dir::new();
+        let expired = "beacon.log.2024-02-29";
+        let kept = [
+            "beacon.log.2024-03-01",
+            "beacon.log.2024-03-30",
+            "beacon.log.2024-04-01",
+            "beacon.log.2024-02-30",
+            "beacon.log.2024-02-28.bak",
+            "export.2024-02-28",
+        ];
+        for name in kept.into_iter().chain([expired]) {
+            dir.write(name, "log");
+        }
+        let folder = dir.0.join("beacon.log.2024-02-27");
+        fs::create_dir(&folder).unwrap();
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(dir.0.join(kept[0]), dir.0.join("beacon.log.2024-02-26"))
+            .unwrap();
+
+        remove_expired(&dir.0, "2024-03-30".parse().unwrap()).unwrap();
+        assert!(!dir.0.join(expired).exists());
+        for name in kept {
+            assert!(dir.0.join(name).is_file(), "{name}");
+        }
+        assert!(folder.is_dir());
+        #[cfg(unix)]
+        assert!(dir.0.join("beacon.log.2024-02-26").is_symlink());
     }
 
     #[test]

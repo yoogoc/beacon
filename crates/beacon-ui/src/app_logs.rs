@@ -21,14 +21,29 @@ use file::{Filter, Level, Line, Snapshot};
 struct LogWindow {
     directory: PathBuf,
     window: Option<WindowHandle<Root>>,
+    _cleanup: Task<()>,
 }
 
 impl Global for LogWindow {}
 
 pub(crate) fn init(directory: PathBuf, cx: &mut App) {
+    let logs = directory.clone();
+    let executor = cx.background_executor().clone();
+    let cleanup = cx.background_executor().spawn(async move {
+        loop {
+            let today = jiff::tz::Offset::UTC.to_datetime(jiff::Timestamp::now()).date();
+            if let Err(error) = file::remove_expired(&logs, today)
+                && error.kind() != std::io::ErrorKind::NotFound
+            {
+                tracing::warn!(directory = %logs.display(), %error, "could not scan application logs");
+            }
+            executor.timer(Duration::from_secs(24 * 60 * 60)).await;
+        }
+    });
     cx.set_global(LogWindow {
         directory,
         window: None,
+        _cleanup: cleanup,
     });
 }
 
@@ -481,6 +496,26 @@ impl Render for AppLogs {
 mod tests {
     use super::*;
     use gpui_kit::test::TestWindowExt as _;
+
+    #[::core::prelude::v1::test]
+    fn prunes_at_startup_and_daily_without_opening_the_log_window() {
+        let cx = TestAppContext::single();
+        let dir = tempfile::tempdir().unwrap();
+        let expired = dir.path().join("beacon.log.2000-01-01");
+        std::fs::write(&expired, "old").unwrap();
+        cx.update(|cx| init(dir.path().to_owned(), cx));
+        cx.run_until_parked();
+        assert!(!expired.exists());
+
+        std::fs::write(&expired, "old").unwrap();
+        cx.executor()
+            .advance_clock(Duration::from_secs(23 * 60 * 60));
+        cx.run_until_parked();
+        assert!(expired.is_file());
+        cx.executor().advance_clock(Duration::from_secs(60 * 60));
+        cx.run_until_parked();
+        assert!(!expired.exists());
+    }
 
     #[::core::prelude::v1::test]
     fn horizontal_scrollbar_reaches_the_longest_line_even_when_it_is_offscreen() {

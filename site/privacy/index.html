@@ -23,7 +23,7 @@
     <div class="hero">
       <p class="eyebrow">BEACON · YOUR PRIVACY</p>
       <h1>Privacy policy</h1>
-      <p class="date">Effective and last updated: <time datetime="2026-11-19">November 19, 2026</time></p>
+      <p class="date">Effective and last updated: <time datetime="2026-11-23">November 23, 2026</time></p>
       <p class="summary">Beacon runs on your device and connects to services you configure. It has no advertising or usage analytics, and does not automatically upload your cluster data, credentials, or application logs to the Beacon developer.</p>
     </div>
     <div class="layout">
@@ -68,7 +68,7 @@
           </section>
           <section id="retention">
             <h2>How long data is kept and how to delete it</h2>
-            <p>Local preferences, imported configurations, saved file-access information and diagnostic logs can remain on your device until you remove them. Application logs are rotated into daily files; Beacon does not promise automatic deletion after a fixed period. Original kubeconfig files and exported or downloaded files remain in the locations you selected. Removing a source from the workspace or uninstalling the app may leave those files behind.</p>
+            <p>Local preferences, imported configurations and saved file-access information can remain on your device until you remove them. In versions with automatic log cleanup, Beacon checks its application log directory at startup and every 24 hours while running. It keeps daily logs for the current UTC date and the previous 29 days and removes older daily logs. Original kubeconfig files and exported or downloaded files remain in the locations you selected. Removing a source from the workspace or uninstalling the app may leave those files behind.</p>
             <p>To stop a connection, disconnect the cluster or remove its source in Settings. To remove local data, use Settings → Config folder and the App Logs view to identify the relevant locations, quit Beacon, and delete the files you no longer need. Manage original source files, exports, backups and any operating-system or cloud backups separately. Revoke tokens or certificates through the issuing cluster or identity provider when needed.</p>
             <p>We retain information you send to support only as long as needed to address the request, maintain necessary records, or comply with applicable legal obligations. You may request deletion by email. We can address records we hold; the operators of your cluster, GitHub, Cloudflare, Apple, your email provider and backup services control records held by them.</p>
           </section>
