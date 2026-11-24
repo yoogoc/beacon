@@ -149,12 +149,7 @@ pub fn prepare_install(
         .lock()
         .map_err(|_| anyhow::anyhow!("Update cache lock failed"))?;
     let directory = directory_guard.path();
-    let helper = directory.join(if cfg!(windows) {
-        "beacon-update-helper.exe"
-    } else {
-        "beacon-update-helper"
-    });
-    fs::copy(std::env::current_exe()?, &helper).context("Could not prepare the update helper")?;
+    let helper = prepare_helper(std::env::current_exe()?, directory)?;
     let lock_path = directory.join("exit.lock");
     let lock = File::create(&lock_path)?;
     lock.lock_exclusive()?;
@@ -177,6 +172,19 @@ pub fn prepare_install(
         helper,
         plan: plan_path,
     })
+}
+fn prepare_helper(executable: PathBuf, directory: &Path) -> Result<PathBuf> {
+    if cfg!(target_os = "macos") {
+        // The signature covers the app bundle. Run the helper inside it;
+        // macOS permits the bundle to be renamed while the helper is running.
+        return Ok(executable);
+    }
+    let helper = directory.join(format!(
+        "beacon-update-helper{}",
+        std::env::consts::EXE_SUFFIX
+    ));
+    fs::copy(executable, &helper).context("Could not prepare the update helper")?;
+    Ok(helper)
 }
 /// Must be called before logging workers, Tokio or GPUI are initialized.
 pub fn helper_main() -> Option<Result<()>> {
@@ -403,6 +411,15 @@ pub fn read_install_result(cache: &Path) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_launches_the_helper_from_the_signed_bundle() {
+        let cache = tempfile::tempdir().unwrap();
+        let executable = Path::new("/Applications/Beacon.app/Contents/MacOS/beacon");
+        let helper = prepare_helper(executable.to_path_buf(), cache.path()).unwrap();
+        assert_eq!(helper, executable);
+        assert_eq!(cache.path().read_dir().unwrap().count(), 0);
+    }
     #[test]
     fn only_real_app_bundle_layouts_are_detected() {
         assert_eq!(

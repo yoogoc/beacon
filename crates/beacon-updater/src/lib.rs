@@ -1,5 +1,5 @@
 //! Signed GitHub updates. Network work belongs on Tokio; installation runs in
-//! a copied helper process only after the GUI has released its exit lock.
+//! a helper process only after the GUI has released its exit lock.
 mod install;
 pub mod paths;
 

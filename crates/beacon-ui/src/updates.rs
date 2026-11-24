@@ -438,7 +438,7 @@ impl Updater {
             let _ = this.update(cx, |view, cx| {
                 match result {
                     Ok(Ok(Ok(guard))) => {
-                        // Edits may have appeared while the helper was copied.
+                        // Edits may have appeared while preparing the update.
                         // Launch and quit happen in one foreground callback.
                         if !crate::app::update_blockers(cx).edits.is_empty() {
                             view.status = Status::Ready(guard.download());

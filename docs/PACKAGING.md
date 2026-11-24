@@ -446,13 +446,14 @@ reported before restart. Restart never reconnects clusters automatically.
 | Linux AppImage | Signed raw AppImage, replace and reopen / 签名文件，替换后重启 |
 | `.deb`, source or portable binary | Check and open the package download; install with the system package manager / 检查并提供下载入口，由包管理器安装 |
 
-A copied helper waits for Beacon's exit lock before installation and verifies the
-package again. Downloaded bytes are streamed to a temporary file and verified with
+A helper waits for Beacon's exit lock before installation and verifies the
+package again. On macOS it runs from the installed, signed app bundle.
+Downloaded bytes are streamed to a temporary file and verified with
 Minisign; partial, oversized and invalid downloads are removed. `update.json` is
 also signed. Error text is selectable/copyable in Settings; checks and installation
 results are recorded in App Logs. Failed installation reopens the existing app.
 
-独立辅助进程等待主应用释放退出锁，安装前再次验签。更新包流式下载到临时文件，
+独立辅助进程等待主应用释放退出锁，安装前再次验签。macOS 从已安装的签名应用包内启动该进程。更新包流式下载到临时文件，
 取消、长度错误、验签失败时移除临时产物。更新清单 `update.json` 同样签名。设置页
 错误可选中复制，检查与安装结果写入 App Logs；安装失败会重新打开原应用。
 
