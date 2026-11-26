@@ -1,10 +1,16 @@
 //! Browser destinations use the public listener, never a backend Service port.
 use std::net::Ipv6Addr;
 
+use gpui_kit::base::TestSupportExt as _;
+use gpui_kit::component::{clipboard::Clipboard, h_flex, tooltip::Tooltip, v_flex};
+use gpui_kit::{
+    AnyElement, App, InteractiveElement, IntoElement, ParentElement, SharedString,
+    StatefulInteractiveElement, Styled, Window, div, px,
+};
 use serde_json::Value;
 use url::Url;
 
-use crate::web_links::WebLink;
+use crate::web_links::{self, Layout, WebLink};
 
 fn entries<'a>(data: &'a Value, path: &str) -> impl Iterator<Item = &'a Value> {
     data.pointer(path)
@@ -76,17 +82,10 @@ pub(crate) fn path_urls(data: &Value, host: Option<&str>, path: &str) -> Vec<Str
     }
 }
 
-pub(crate) fn table_links(data: &Value, header: &str, text: &str) -> Vec<WebLink> {
-    let hosts = if header == "Hosts" {
-        entries(data, "/spec/rules")
-            .filter_map(|rule| rule.get("host").and_then(Value::as_str))
-            .collect()
-    } else {
-        addresses(data)
-    };
+fn table_links(data: &Value, hosts: &[&str], text: &str) -> Vec<WebLink> {
     let mut cursor = 0;
     let mut links = Vec::new();
-    for host in hosts {
+    for &host in hosts {
         if let Some(start) = text[cursor..].find(host) {
             let start = cursor + start;
             cursor = start + host.len();
@@ -99,6 +98,66 @@ pub(crate) fn table_links(data: &Value, header: &str, text: &str) -> Vec<WebLink
         }
     }
     links
+}
+
+pub(crate) fn table_cell(data: &Value, header: &str, text: &str, cx: &App) -> AnyElement {
+    let hosts = if header == "Hosts" {
+        entries(data, "/spec/rules")
+            .filter_map(|rule| rule.get("host")?.as_str())
+            .filter(|host| !host.is_empty())
+            .collect()
+    } else {
+        addresses(data)
+    };
+    let links = table_links(data, &hosts, text);
+    if header != "Hosts" || hosts.is_empty() {
+        return web_links::render(text.to_owned(), &links, Layout::Table, cx);
+    }
+    let hosts: Vec<_> = hosts.into_iter().map(SharedString::new).collect();
+    div()
+        .id("ingress-hosts")
+        .w_full()
+        .min_w_0()
+        .child(web_links::render(
+            text.to_owned(),
+            &links,
+            Layout::TableWithHostPreview,
+            cx,
+        ))
+        .hoverable_tooltip(move |window, cx| {
+            let hosts = hosts.clone();
+            Tooltip::element(move |window, _| host_list(&hosts, window)).build(window, cx)
+        })
+        .into_any_element()
+}
+
+fn host_list(hosts: &[SharedString], window: &Window) -> AnyElement {
+    v_flex()
+        .id("ingress-host-preview")
+        .test_support()
+        .max_w(px(560.).min(window.viewport_size().width - px(64.)))
+        .max_h(window.viewport_size().height * 0.5)
+        .overflow_y_scroll()
+        .children(hosts.iter().enumerate().map(|(index, host)| {
+            h_flex()
+                .flex_shrink_0()
+                .gap_2()
+                .justify_between()
+                .child(
+                    div()
+                        .id(("ingress-host-name", index))
+                        .test_support()
+                        .min_w_0()
+                        .whitespace_normal()
+                        .child(host.clone()),
+                )
+                .child(
+                    Clipboard::new(("copy-ingress-host", index))
+                        .accessibility_label(format!("{} {host}", crate::i18n::text("Copy")))
+                        .value(host.clone()),
+                )
+        }))
+        .into_any_element()
 }
 
 #[cfg(test)]
@@ -161,7 +220,8 @@ mod tests {
     fn list_hosts_keep_separate_destinations_without_linking_wildcards() {
         let data = json!({"spec":{"rules":[{"host":"secure.example.com"},{"host":"*.apps.example.com"},{"host":"plain.example.com"}], "tls":[{"hosts":["secure.example.com"]}]}});
         let text = "secure.example.com, *.apps.example.com, plain.example.com";
-        let links = table_links(&data, "Hosts", text);
+        let hosts: Vec<_> = text.split(", ").collect();
+        let links = table_links(&data, &hosts, text);
         assert_eq!(links.len(), 2);
         assert_eq!(&text[links[0].range.clone()], "secure.example.com");
         assert_eq!(links[0].url, "https://secure.example.com/");

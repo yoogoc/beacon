@@ -11,6 +11,7 @@
 use crate::scroll::OverflowScrollbars as _;
 use std::{collections::BTreeSet, sync::Arc, time::Duration};
 
+use crate::data_table::{TableEvent, TableState};
 use crate::selection::checkbox;
 use beacon_columns::ColumnSet;
 use beacon_kube::{
@@ -25,7 +26,6 @@ use gpui_kit::component::popover::Popover;
 use gpui_kit::component::resizable::{ResizableState, h_resizable, resizable_panel, v_resizable};
 use gpui_kit::component::sidebar::SidebarMenuItem;
 use gpui_kit::component::spinner::Spinner;
-use gpui_kit::component::table::{TableEvent, TableState};
 use gpui_kit::component::{
     ActiveTheme as _, Disableable as _, Icon, IconName, Sizable as _, h_flex, v_flex,
 };
@@ -2052,8 +2052,9 @@ impl ClusterView {
 
     fn listen(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let view = cx.entity().downgrade();
-        self.table.update(cx, move |table, _| {
+        self.table.update(cx, move |table, cx| {
             table.delegate_mut().set_context_view(view);
+            table.refresh(cx);
         });
         let table = cx.subscribe_in(
             &self.table.clone(),
@@ -3231,7 +3232,7 @@ mod integration_tests {
 
     #[::core::prelude::v1::test]
     fn pod_list_resolves_and_opens_owners_without_opening_the_pod_row() {
-        use gpui_kit::component::table::TableDelegate as _;
+        use crate::data_table::TableDelegate as _;
 
         let cx = &mut support::context();
         let directory = tempfile::tempdir().unwrap();
@@ -3461,11 +3462,16 @@ mod integration_tests {
                 layout.hidden = table
                     .column_choices()
                     .into_iter()
-                    .filter(|(_, name, _, _)| !matches!(name.as_str(), "Name" | "Status"))
-                    .map(|(id, _, _, _)| id)
+                    .filter(|c| {
+                        !matches!(
+                            c.name.as_str(),
+                            "Name" | "Status" | "Select rows" | "Actions"
+                        )
+                    })
+                    .map(|c| c.id)
                     .collect();
                 table.apply_layout(layout);
-                cx.notify();
+                state.refresh(cx);
             })
         });
         cx.update_window(window, |_, window, cx| {
@@ -3667,11 +3673,16 @@ mod integration_tests {
                 layout.hidden = table
                     .column_choices()
                     .into_iter()
-                    .filter(|(_, name, _, _)| !matches!(name.as_str(), "Name" | "Status"))
-                    .map(|(id, _, _, _)| id)
+                    .filter(|c| {
+                        !matches!(
+                            c.name.as_str(),
+                            "Name" | "Status" | "Select rows" | "Actions"
+                        )
+                    })
+                    .map(|c| c.id)
                     .collect();
                 table.apply_layout(layout);
-                cx.notify();
+                state.refresh(cx);
             })
         });
         let dropdown = cx
@@ -3762,11 +3773,11 @@ mod integration_tests {
                 layout.hidden = table
                     .column_choices()
                     .into_iter()
-                    .filter(|(_, name, _, _)| name != "Name")
-                    .map(|(id, _, _, _)| id)
+                    .filter(|c| !matches!(c.name.as_str(), "Name" | "Select rows" | "Actions"))
+                    .map(|c| c.id)
                     .collect();
                 table.apply_layout(layout);
-                cx.notify();
+                state.refresh(cx);
             })
         });
         cx.update_window(window, |_, window, cx| {

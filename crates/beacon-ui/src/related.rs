@@ -1,4 +1,5 @@
 //! Live, navigable resource relationships in their own detail tab.
+use crate::data_table::{TableEvent, TableState};
 use crate::{
     bridge::{Bridge, drain_into},
     detail::OwnerRequested,
@@ -12,7 +13,6 @@ use beacon_kube::{
 use gpui_kit::base::TestSupportExt as _;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::{Input, InputEvent, InputState};
-use gpui_kit::component::table::{TableEvent, TableState};
 use gpui_kit::component::{ActiveTheme as _, Disableable as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::*;
 use std::sync::Arc;

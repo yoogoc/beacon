@@ -3211,5 +3211,21 @@
   "common.resource_backend": {
     "en": "Resource backend",
     "zh-CN": "资源后端"
+  },
+  "common.select_rows": {
+    "en": "Select rows",
+    "zh-CN": "选择行"
+  },
+  "common.pin_left": {
+    "en": "Pin left",
+    "zh-CN": "固定到左侧"
+  },
+  "common.pin_right": {
+    "en": "Pin right",
+    "zh-CN": "固定到右侧"
+  },
+  "common.unpin_column": {
+    "en": "Unpin column",
+    "zh-CN": "取消固定"
   }
 }

@@ -10,7 +10,16 @@ pub(crate) struct ColumnLayout {
     pub order: Vec<String>,
     pub hidden: BTreeSet<String>,
     pub widths: BTreeMap<String, f32>,
+    pub pins: BTreeMap<String, ColumnPin>,
     pub sort: Option<ColumnSort>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum ColumnPin {
+    Left,
+    Unpinned,
+    Right,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

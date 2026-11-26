@@ -1,5 +1,6 @@
 //! Hovering the resource icon reveals the same actions as the row menu.
 use super::*;
+use crate::data_table::TableState;
 use crate::{
     resource_menu::{HeaderGroup, HeaderItem},
     table::ResourceTable,
@@ -9,7 +10,6 @@ use gpui_kit::component::{
     Icon,
     menu::{ContextMenuExt as _, PopupMenu, PopupMenuItem},
     popover::Popover,
-    table::TableState,
 };
 use std::{
     cell::Cell,

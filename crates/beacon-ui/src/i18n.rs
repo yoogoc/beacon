@@ -285,15 +285,15 @@ pub(crate) fn input(
     InputState::new(window, cx).placeholder(placeholder)
 }
 
-pub(crate) fn table<D: gpui_kit::component::table::TableDelegate + 'static>(
+pub(crate) fn table<D: crate::data_table::TableDelegate + 'static>(
     delegate: D,
     window: &mut Window,
-    cx: &mut Context<gpui_kit::component::table::TableState<D>>,
-) -> gpui_kit::component::table::TableState<D> {
+    cx: &mut Context<crate::data_table::TableState<D>>,
+) -> crate::data_table::TableState<D> {
     cx.observe_global_in::<LocaleState>(window, |table, _, cx| {
         table.refresh(cx);
         cx.notify();
     })
     .detach();
-    gpui_kit::component::table::TableState::new(delegate, window, cx)
+    crate::data_table::TableState::new(delegate, window, cx)
 }

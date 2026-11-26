@@ -24,6 +24,8 @@ mod context_sidebar;
 mod copyable_text;
 mod create;
 mod data_syntax;
+#[path = "../../../vendor/gpui-data-table/mod.rs"]
+pub mod data_table;
 mod debug_container;
 mod debug_stop;
 pub mod detail;

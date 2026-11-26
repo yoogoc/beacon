@@ -596,6 +596,7 @@ mod tests {
         let saved = ResourcePreferences {
             columns: ColumnLayout {
                 order: vec!["name".into(), "status".into()],
+                pins: Default::default(),
                 hidden: ["age".into()].into_iter().collect(),
                 widths: [("name".into(), 300.)].into_iter().collect(),
                 sort: Some(ColumnSort {

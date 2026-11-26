@@ -182,9 +182,9 @@ fn column_enter_supports_translated_search_and_never_hides_an_already_visible_co
             .delegate()
             .column_choices()
             .into_iter()
-            .find(|(_, name, _, _)| name == "Memory")
+            .find(|c| c.name == "Memory")
             .unwrap()
-            .0
+            .id
     });
     cx.update_window(window, |_, _, cx| {
         view.update(cx, |view, cx| {

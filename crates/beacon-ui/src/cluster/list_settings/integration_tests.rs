@@ -1,6 +1,6 @@
 use super::*;
+use crate::data_table::TableDelegate as _;
 use crate::feature_test_support as support;
-use gpui_kit::component::table::TableDelegate as _;
 use gpui_kit::test::TestWindowExt as _;
 use serde_json::json;
 
@@ -71,14 +71,7 @@ fn column_handles_reorder_hidden_and_filtered_choices_and_persist_the_table_layo
     let choices = view.read_with(cx, |view, cx| {
         view.table.read(cx).delegate().column_choices()
     });
-    let id = |name| {
-        choices
-            .iter()
-            .find(|(_, label, _, _)| label == name)
-            .unwrap()
-            .0
-            .clone()
-    };
+    let id = |name| choices.iter().find(|c| c.name == name).unwrap().id.clone();
     let name = id("Name");
     let containers = id("Containers");
     let ready = id("Ready");
@@ -118,7 +111,7 @@ fn column_handles_reorder_hidden_and_filtered_choices_and_persist_the_table_layo
         );
         let table = view.table.read(cx).delegate();
         let layout = table.layout_snapshot();
-        assert_eq!(&layout.order[..2], &[containers.clone(), name.clone()]);
+        assert_eq!(&layout.order[1..3], &[containers.clone(), name.clone()]);
         assert!(
             layout.hidden.contains(&containers),
             "dragging must not toggle visibility"
@@ -189,7 +182,7 @@ fn column_handles_reorder_hidden_and_filtered_choices_and_persist_the_table_layo
             at(&restarts) + 1,
             "filtered results use stable column IDs"
         );
-        assert_eq!(&layout.order[..2], &[containers.clone(), name]);
+        assert_eq!(&layout.order[1..3], &[containers.clone(), name]);
         assert_eq!(view.resource_preferences(cx).columns, layout);
     });
     cx.update_window(window, |_, window, cx| {
@@ -204,6 +197,135 @@ fn column_handles_reorder_hidden_and_filtered_choices_and_persist_the_table_layo
             ColumnLayout::default()
         );
     });
+}
+
+#[::core::prelude::v1::test]
+fn pinned_headers_and_cells_stay_at_both_edges_and_actions_can_be_unpinned() {
+    let directory = tempfile::tempdir().unwrap();
+    let cx = &mut support::context();
+    let (_fixture, window, view) = window(cx, directory.path());
+    // A pre-pinning preferences file has no system columns or pin map.
+    view.update(cx, |view, cx| {
+        view.table.update(cx, |state, cx| {
+            let mut old = serde_json::to_value(state.delegate().layout_snapshot()).unwrap();
+            let old = old.as_object_mut().unwrap();
+            old.remove("pins");
+            old["order"]
+                .as_array_mut()
+                .unwrap()
+                .retain(|id| id != "actions" && id != "select");
+            let layout = serde_json::from_value(serde_json::Value::Object(old.clone())).unwrap();
+            state.delegate_mut().apply_layout(layout);
+            state.refresh(cx);
+        });
+    });
+    let choices = view.read_with(cx, |view, cx| {
+        view.table.read(cx).delegate().column_choices()
+    });
+    let column = |name| choices.iter().find(|col| col.name == name).unwrap();
+    let name = &column("Name").id;
+    let status = &column("Status").id;
+    assert_eq!(column("Actions").pin, ColumnPin::Right);
+    assert_eq!(column("Select rows").pin, ColumnPin::Left);
+    cx.update_window(window, |_, window, cx| {
+        window.click("resource-columns-trigger", cx)
+    })
+    .unwrap();
+    draw(cx, window);
+    for (side, id) in [("left", name), ("right", status)] {
+        cx.update_window(window, |_, window, cx| {
+            window.click(format!("pin-{side}-{id}"), cx)
+        })
+        .unwrap();
+        draw(cx, window);
+    }
+    cx.update_window(window, |_, window, cx| {
+        window.click("resource-column-search", cx);
+        window.input("Actions", cx);
+    })
+    .unwrap();
+    draw(cx, window);
+    for (side, expected) in [
+        ("left", ColumnPin::Left),
+        ("left", ColumnPin::Unpinned),
+        ("right", ColumnPin::Right),
+    ] {
+        cx.update_window(window, |_, window, cx| {
+            window.click(format!("pin-{side}-actions"), cx)
+        })
+        .unwrap();
+        draw(cx, window);
+        view.read_with(cx, |view, cx| {
+            assert_eq!(
+                view.table.read(cx).delegate().column_pin("actions"),
+                expected
+            );
+            assert_eq!(
+                view.resource_preferences(cx).columns.pins["actions"],
+                expected
+            );
+        });
+    }
+    for visible in [false, true] {
+        cx.update_window(window, |_, window, cx| {
+            window.click("visible-column-actions", cx)
+        })
+        .unwrap();
+        draw(cx, window);
+        view.read_with(cx, |view, cx| {
+            let table = view.table.read(cx).delegate();
+            assert_eq!(
+                table
+                    .column_choices()
+                    .into_iter()
+                    .find(|c| c.id == "actions")
+                    .unwrap()
+                    .visible,
+                visible
+            );
+        });
+    }
+    cx.update_window(window, |_, window, cx| {
+        window.click("resource-columns-trigger", cx)
+    })
+    .unwrap();
+    draw(cx, window);
+    let positions = |window: &Window, cx: &App| {
+        let table = view.read(cx).table.read(cx).delegate();
+        let count = table.columns_count(cx);
+        assert_eq!(table.column(1, cx).key.as_ref(), name);
+        assert_eq!(table.column(count - 2, cx).key.as_ref(), status);
+        assert_eq!(table.column(count - 1, cx).key.as_ref(), "actions");
+        [0, 1, count - 2, count - 1].map(|index| {
+            let head = window.find(("col-header", index)).bounds();
+            let cell = window.find(format!("table-cell:0:{index}")).bounds();
+            assert!(head.size.width > px(0.) && cell.size.width > px(0.));
+            assert!((head.left() - cell.left()).abs() < px(2.));
+            (head.left(), cell.left())
+        })
+    };
+    cx.update_window(window, |_, window, cx| {
+        let before = positions(window, cx);
+        let scroll = view
+            .read(cx)
+            .table
+            .read(cx)
+            .horizontal_scroll_handle
+            .clone();
+        assert!(scroll.max_offset().x > px(0.));
+        scroll.set_offset(point(-scroll.max_offset().x, px(0.)));
+        window.render_frame(cx);
+        window.render_frame(cx);
+        assert!(scroll.offset().x < px(0.));
+        assert_eq!(before, positions(window, cx));
+    })
+    .unwrap();
+    let saved: crate::settings::Preferences =
+        serde_json::from_slice(&std::fs::read(directory.path().join("settings.json")).unwrap())
+            .unwrap();
+    let saved = &saved.resources.values().next().unwrap().columns;
+    assert_eq!(saved.pins[name], ColumnPin::Left);
+    assert_eq!(saved.pins[status], ColumnPin::Right);
 }
 
 #[::core::prelude::v1::test]

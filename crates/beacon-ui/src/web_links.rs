@@ -55,17 +55,15 @@ pub(crate) fn detect(text: &str) -> Vec<WebLink> {
     links
 }
 
-pub(crate) fn render(text: String, links: &[WebLink], cx: &App) -> AnyElement {
-    render_value(text, links, true, cx)
+#[derive(Clone, Copy)]
+pub(crate) enum Layout {
+    Detail,
+    Table,
+    TableWithHostPreview,
 }
 
-/// Fixed-height table cells keep every destination on the same line. Each
-/// link can shrink and ellipsize within its column, with its full URL on hover.
-pub(crate) fn table(text: String, links: &[WebLink], cx: &App) -> AnyElement {
-    render_value(text, links, false, cx)
-}
-
-fn render_value(text: String, links: &[WebLink], wrap: bool, cx: &App) -> AnyElement {
+pub(crate) fn render(text: String, links: &[WebLink], layout: Layout, cx: &App) -> AnyElement {
+    let wrap = matches!(layout, Layout::Detail);
     if links.is_empty() {
         return div()
             .min_w_0()
@@ -116,8 +114,10 @@ fn render_value(text: String, links: &[WebLink], wrap: bool, cx: &App) -> AnyEle
                                 .cursor_pointer()
                                 .text_color(cx.theme().external_link())
                                 .hover(|this| this.underline())
-                                .tooltip(move |window, cx| {
-                                    Tooltip::new(url.clone()).build(window, cx)
+                                .when(!matches!(layout, Layout::TableWithHostPreview), |link| {
+                                    link.tooltip(move |window, cx| {
+                                        Tooltip::new(url.clone()).build(window, cx)
+                                    })
                                 })
                                 .child(SelectableText::new("label", label))
                                 .open_with(|url, event, window, cx| {

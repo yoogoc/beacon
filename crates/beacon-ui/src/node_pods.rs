@@ -2,12 +2,12 @@
 
 use std::sync::Arc;
 
+use crate::data_table::{TableEvent, TableState};
 use beacon_columns::{ColumnSet, ColumnWidth};
 use beacon_kube::{ClusterSession, Delta, Kind, WatchKey};
 use gpui_kit::base::TestSupportExt as _;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::{Input, InputEvent, InputState};
-use gpui_kit::component::table::{TableEvent, TableState};
 use gpui_kit::component::{ActiveTheme as _, Disableable as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::*;
 

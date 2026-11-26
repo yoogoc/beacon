@@ -10,6 +10,7 @@
 //! It happens once per incoming batch -- which the watch already limits to one
 //! per frame -- and never per row.
 
+use crate::data_table::{Column, ColumnSort, DataTable, TableDelegate, TableState};
 use crate::selection::checkbox;
 use beacon_columns::{
     Cell, CellValue, ColumnDef, ColumnSet, ColumnSource, ColumnWidth, PathKind, Timestamp, Usage,
@@ -24,7 +25,6 @@ use gpui_kit::base::{Link, TestSupportExt as _};
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::menu::{DropdownMenu as _, PopupMenu, PopupMenuItem};
 use gpui_kit::component::scroll::{Scrollbar, ScrollbarMode};
-use gpui_kit::component::table::{Column, ColumnSort, DataTable, TableDelegate, TableState};
 use gpui_kit::component::tooltip::Tooltip;
 use gpui_kit::component::{ActiveTheme as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
@@ -44,7 +44,7 @@ use crate::detail::{DetailTab, OwnerRequested};
 use crate::filters::Field;
 use crate::pod_tools::PodToolTab;
 use crate::status;
-use crate::table_preferences::{ColumnLayout, ColumnSort as SavedSort, FilterPreset};
+use crate::table_preferences::{ColumnLayout, ColumnPin, ColumnSort as SavedSort, FilterPreset};
 use crate::theme::{BeaconTheme as _, Tone};
 
 /// A `Flex` column's share, converted to the starting pixel width the table
@@ -63,11 +63,7 @@ pub(crate) fn view(table: &Entity<TableState<ResourceTable>>, cx: &App) -> AnyEl
 
 fn with_horizontal_scrollbar(table: &Entity<TableState<ResourceTable>>, cx: &App) -> AnyElement {
     let state = table.read(cx);
-    let fixed_width = if state.col_fixed && state.delegate().selection_column {
-        px(SELECTION_COLUMN_WIDTH)
-    } else {
-        px(0.)
-    };
+    let (left_width, right_width) = state.pinned_widths();
     // Share the table's handle so dragging moves the header and virtual rows
     // together. A separate footer keeps the last row clear of the thumb.
     v_flex()
@@ -90,14 +86,45 @@ fn with_horizontal_scrollbar(table: &Entity<TableState<ResourceTable>>, cx: &App
                 .h(Scrollbar::width())
                 .bg(cx.theme().tokens.table)
                 .child(
-                    div().absolute().inset_0().left(fixed_width).child(
-                        Scrollbar::horizontal(&state.horizontal_scroll_handle)
-                            .mode(ScrollbarMode::Always)
-                            .viewport_from_layout(),
-                    ),
+                    div()
+                        .absolute()
+                        .inset_0()
+                        .left(left_width)
+                        .right(right_width)
+                        .child(
+                            Scrollbar::horizontal(&state.horizontal_scroll_handle)
+                                .mode(ScrollbarMode::Always)
+                                .viewport_from_layout(),
+                        ),
                 ),
         )
         .into_any_element()
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ResourceColumn {
+    Selection,
+    Data(usize),
+    Actions,
+}
+
+impl ResourceColumn {
+    fn id(self, data_ids: &[String]) -> &str {
+        match self {
+            Self::Selection => "select",
+            Self::Data(index) => &data_ids[index],
+            Self::Actions => "actions",
+        }
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) struct ColumnChoice {
+    pub id: String,
+    pub name: String,
+    pub visible: bool,
+    pub required: bool,
+    pub pin: ColumnPin,
 }
 
 pub struct ResourceTable {
@@ -105,7 +132,7 @@ pub struct ResourceTable {
     selection_column: bool,
     columns: ColumnSet,
     column_ids: Vec<String>,
-    display_columns: Vec<usize>,
+    display_columns: Vec<ResourceColumn>,
     layout: ColumnLayout,
     store: ResourceStore,
     pod_owners: crate::owners::ResolvedOwners,
@@ -204,7 +231,9 @@ impl ResourceTable {
     }
     pub fn new(columns: ColumnSet) -> Self {
         let column_ids = column_ids(&columns);
-        let display_columns = (0..columns.len()).collect();
+        let display_columns = std::iter::once(ResourceColumn::Selection)
+            .chain((0..columns.len()).map(ResourceColumn::Data))
+            .collect();
         Self {
             context_view: None,
             selection_column: true,
@@ -232,7 +261,14 @@ impl ResourceTable {
     }
 
     fn ordered_column_ids(&self) -> Vec<String> {
-        let mut order = self.layout.order.clone();
+        let mut seen = BTreeSet::new();
+        let mut order: Vec<_> = self
+            .layout
+            .order
+            .iter()
+            .filter(|id| seen.insert(id.as_str()))
+            .cloned()
+            .collect();
         for (index, id) in self.column_ids.iter().enumerate() {
             if order.contains(id) {
                 continue;
@@ -246,28 +282,55 @@ impl ResourceTable {
                 .map_or(0, |position| position + 1);
             order.insert(position, id.clone());
         }
+        if self.selection_column && !order.iter().any(|id| id == "select") {
+            order.insert(0, "select".into());
+        }
+        if self.context_view.is_some() && !order.iter().any(|id| id == "actions") {
+            order.push("actions".into());
+        }
         order
     }
 
-    fn ordered_columns(&self) -> Vec<usize> {
-        let order = self.ordered_column_ids();
-        let mut columns: Vec<_> = (0..self.columns.len()).collect();
-        columns.sort_by_key(|index| {
-            order
+    fn column_for_id(&self, id: &str) -> Option<ResourceColumn> {
+        match id {
+            "select" if self.selection_column => Some(ResourceColumn::Selection),
+            "actions" if self.context_view.is_some() => Some(ResourceColumn::Actions),
+            _ => self
+                .column_ids
                 .iter()
-                .position(|id| id == &self.column_ids[*index])
-                .expect("every current column has an order")
-        });
+                .position(|key| key == id)
+                .map(ResourceColumn::Data),
+        }
+    }
+
+    pub(crate) fn column_pin(&self, id: &str) -> ColumnPin {
+        self.layout.pins.get(id).copied().unwrap_or(match id {
+            "select" => ColumnPin::Left,
+            "actions" => ColumnPin::Right,
+            _ => ColumnPin::Unpinned,
+        })
+    }
+
+    fn ordered_columns(&self) -> Vec<ResourceColumn> {
+        let mut columns: Vec<_> = self
+            .ordered_column_ids()
+            .iter()
+            .filter_map(|id| self.column_for_id(id))
+            .collect();
+        columns.sort_by_key(|col| self.column_pin(col.id(&self.column_ids)));
         columns
+    }
+
+    fn required_column(&self, column: ResourceColumn) -> bool {
+        matches!(column, ResourceColumn::Data(i) if matches!(self.columns.columns[i].source, ColumnSource::Name))
     }
 
     fn rebuild_display_columns(&mut self) {
         self.display_columns = self
             .ordered_columns()
             .into_iter()
-            .filter(|index| {
-                matches!(self.columns.columns[*index].source, ColumnSource::Name)
-                    || !self.layout.hidden.contains(&self.column_ids[*index])
+            .filter(|col| {
+                self.required_column(*col) || !self.layout.hidden.contains(col.id(&self.column_ids))
             })
             .collect();
         self.sort = self
@@ -307,25 +370,40 @@ impl ResourceTable {
         layout
     }
 
-    pub(crate) fn column_choices(&self) -> Vec<(String, String, bool, bool)> {
+    pub(crate) fn column_choices(&self) -> Vec<ColumnChoice> {
         self.ordered_columns()
             .into_iter()
-            .map(|index| {
-                (
-                    self.column_ids[index].clone(),
-                    self.columns.columns[index].header.clone(),
-                    self.display_columns.contains(&index),
-                    matches!(self.columns.columns[index].source, ColumnSource::Name),
-                )
+            .map(|col| {
+                let name = match col {
+                    ResourceColumn::Selection => "Select rows",
+                    ResourceColumn::Data(i) => &self.columns.columns[i].header,
+                    ResourceColumn::Actions => "Actions",
+                };
+                let id = col.id(&self.column_ids);
+                ColumnChoice {
+                    id: id.to_owned(),
+                    name: name.to_owned(),
+                    visible: self.display_columns.contains(&col),
+                    required: self.required_column(col),
+                    pin: self.column_pin(id),
+                }
             })
             .collect()
     }
 
+    pub(crate) fn set_column_pin(&mut self, id: &str, pin: ColumnPin) {
+        if self.column_for_id(id).is_some() {
+            self.layout = self.layout_snapshot();
+            self.layout.pins.insert(id.to_owned(), pin);
+            self.rebuild_display_columns();
+        }
+    }
+
     pub(crate) fn toggle_column(&mut self, id: &str) {
-        let Some(index) = self.column_ids.iter().position(|column| column == id) else {
+        let Some(column) = self.column_for_id(id) else {
             return;
         };
-        if matches!(self.columns.columns[index].source, ColumnSource::Name) {
+        if self.required_column(column) {
             return;
         }
         self.layout = self.layout_snapshot();
@@ -336,15 +414,13 @@ impl ResourceTable {
     }
 
     pub(crate) fn update_widths(&mut self, widths: &[Pixels]) {
-        for (index, width) in self
-            .display_columns
-            .iter()
-            .zip(widths.iter().skip(usize::from(self.selection_column)))
-        {
-            self.layout.widths.insert(
-                self.column_ids[*index].clone(),
-                f32::from(*width).clamp(56., 4000.),
-            );
+        for (col, width) in self.display_columns.iter().zip(widths) {
+            if let ResourceColumn::Data(index) = col {
+                self.layout.widths.insert(
+                    self.column_ids[*index].clone(),
+                    f32::from(*width).clamp(56., 4000.),
+                );
+            }
         }
     }
 
@@ -372,8 +448,11 @@ impl ResourceTable {
     }
 
     fn is_action_column(&self, column: usize) -> bool {
-        self.context_view.is_some()
-            && column == self.display_columns.len() + usize::from(self.selection_column)
+        self.display_columns.get(column) == Some(&ResourceColumn::Actions)
+    }
+
+    fn is_selection_column(&self, column: usize) -> bool {
+        self.display_columns.get(column) == Some(&ResourceColumn::Selection)
     }
 
     fn row_menu(&self, target: ObjectRef, menu: PopupMenu, cx: &App) -> PopupMenu {
@@ -666,9 +745,10 @@ impl ResourceTable {
     }
 
     fn data_column(&self, index: usize) -> Option<usize> {
-        self.display_columns
-            .get(index.checked_sub(usize::from(self.selection_column))?)
-            .copied()
+        match self.display_columns.get(index)? {
+            ResourceColumn::Data(i) => Some(*i),
+            _ => None,
+        }
     }
 
     fn display_cell_text(&self, row: usize, column: usize) -> String {
@@ -679,12 +759,12 @@ impl ResourceTable {
     }
 
     fn reorder_column(&mut self, from: usize, to: usize) {
-        let (Some(from_index), Some(to_index)) = (self.data_column(from), self.data_column(to))
+        let (Some(from), Some(to)) = (self.display_columns.get(from), self.display_columns.get(to))
         else {
             return;
         };
-        let id = self.column_ids[from_index].clone();
-        let destination = self.column_ids[to_index].clone();
+        let id = from.id(&self.column_ids).to_owned();
+        let destination = to.id(&self.column_ids).to_owned();
         self.reorder_column_by_id(&id, &destination);
     }
 
@@ -692,8 +772,9 @@ impl ResourceTable {
     /// results using the same layout as header dragging.
     pub(crate) fn reorder_column_by_id(&mut self, id: &str, destination: &str) {
         if id == destination
-            || !self.column_ids.iter().any(|column| column == id)
-            || !self.column_ids.iter().any(|column| column == destination)
+            || self.column_for_id(id).is_none()
+            || self.column_for_id(destination).is_none()
+            || self.column_pin(id) != self.column_pin(destination)
         {
             return;
         }
@@ -713,12 +794,14 @@ impl ResourceTable {
     /// Related-resource lists use row navigation without batch selection.
     pub(crate) fn without_selection(mut self) -> Self {
         self.selection_column = false;
+        self.rebuild_display_columns();
         self
     }
 
     /// The containing cluster handles actions on the row under the pointer.
     pub fn set_context_view(&mut self, view: WeakEntity<ClusterView>) {
         self.context_view = Some(view);
+        self.rebuild_display_columns();
     }
 
     /// Whether the current list still has pending pages or namespace scopes.
@@ -1009,9 +1092,9 @@ impl ResourceTable {
     /// namespace's pods under another namespace's heading.
     pub fn reset(&mut self, columns: ColumnSet) {
         self.column_ids = column_ids(&columns);
-        self.display_columns = (0..columns.len()).collect();
         self.layout = Default::default();
         self.columns = columns;
+        self.rebuild_display_columns();
         self.store = ResourceStore::new();
         self.pod_owners.clear();
         self.owner_lookup = None;
@@ -1388,8 +1471,6 @@ impl SortKey {
 impl TableDelegate for ResourceTable {
     fn columns_count(&self, _: &App) -> usize {
         self.display_columns.len()
-            + usize::from(self.selection_column)
-            + usize::from(self.context_view.is_some())
     }
 
     /// Draws the component's skeleton rows instead of an empty table. The
@@ -1404,22 +1485,28 @@ impl TableDelegate for ResourceTable {
     }
 
     fn column(&self, index: usize, _: &App) -> Column {
+        let apply_pin = |col: Column| match self.column_pin(col.key.as_ref()) {
+            ColumnPin::Left => col.fixed_left(),
+            ColumnPin::Right => col.fixed_right(),
+            ColumnPin::Unpinned => col,
+        };
         if self.is_action_column(index) {
-            return Column::new("actions", "Actions")
-                .width(px(72.))
-                .min_width(px(72.))
-                .resizable(false)
-                .movable(false)
-                .selectable(false);
+            return apply_pin(
+                Column::new("actions", crate::i18n::text("Actions"))
+                    .width(px(72.))
+                    .min_width(px(72.))
+                    .resizable(false)
+                    .selectable(false),
+            );
         }
-        if self.selection_column && index == 0 {
-            return Column::new("select", "")
-                .width(px(SELECTION_COLUMN_WIDTH))
-                .min_width(px(SELECTION_COLUMN_WIDTH))
-                .fixed_left()
-                .resizable(false)
-                .movable(false)
-                .selectable(false);
+        if self.is_selection_column(index) {
+            return apply_pin(
+                Column::new("select", "")
+                    .width(px(SELECTION_COLUMN_WIDTH))
+                    .min_width(px(SELECTION_COLUMN_WIDTH))
+                    .resizable(false)
+                    .selectable(false),
+            );
         }
         let Some(data_index) = self.data_column(index) else {
             return Column::new("", "");
@@ -1452,13 +1539,15 @@ impl TableDelegate for ResourceTable {
             _ => ColumnSort::Default,
         };
 
-        Column::new(
-            self.column_ids[data_index].clone(),
-            crate::i18n::text(&definition.header),
+        apply_pin(
+            Column::new(
+                self.column_ids[data_index].clone(),
+                crate::i18n::text(&definition.header),
+            )
+            .width(px(width))
+            .min_width(px(56.))
+            .sort(sort),
         )
-        .width(px(width))
-        .min_width(px(56.))
-        .sort(sort)
     }
 
     fn perform_sort(
@@ -1468,7 +1557,7 @@ impl TableDelegate for ResourceTable {
         _: &mut Window,
         cx: &mut Context<TableState<Self>>,
     ) {
-        if self.selection_column && index == 0 {
+        if self.is_selection_column(index) {
             return;
         }
         let Some(index) = self.data_column(index) else {
@@ -1497,7 +1586,7 @@ impl TableDelegate for ResourceTable {
         _: &mut Window,
         cx: &mut Context<TableState<Self>>,
     ) -> impl IntoElement {
-        if !self.selection_column || column != 0 {
+        if !self.is_selection_column(column) {
             return div()
                 .size_full()
                 .child(self.column(column, cx).name)
@@ -1582,7 +1671,7 @@ impl TableDelegate for ResourceTable {
                 )
                 .into_any_element();
         }
-        if self.selection_column && column == 0 {
+        if self.is_selection_column(column) {
             let Some(key) = self.key_at(row).cloned() else {
                 return h_flex().into_any_element();
             };
@@ -1658,9 +1747,6 @@ impl TableDelegate for ResourceTable {
                     })
                 });
             if ingress {
-                let text = value.display().to_string();
-                let links =
-                    crate::ingress_links::table_links(&object.data, &definition.header, &text);
                 return h_flex()
                     .id(SharedString::from(format!(
                         "ingress-links-{row}-{}",
@@ -1672,7 +1758,12 @@ impl TableDelegate for ResourceTable {
                     .overflow_hidden()
                     .items_center()
                     .text_color(cx.theme().muted_foreground)
-                    .child(crate::web_links::table(text, &links, cx))
+                    .child(crate::ingress_links::table_cell(
+                        &object.data,
+                        &definition.header,
+                        value.display(),
+                        cx,
+                    ))
                     .into_any_element();
             }
         }
@@ -1849,8 +1940,8 @@ fn pod_tools_item(
 #[cfg(all(test, feature = "ui-tests"))]
 mod rendering_tests {
     use super::*;
+    use crate::data_table::TableEvent;
     use crate::feature_test_support as support;
-    use gpui_kit::component::table::TableEvent;
     use gpui_kit::test::TestWindowExt as _;
     use std::{cell::Cell as Counter, rc::Rc};
 
@@ -1950,16 +2041,19 @@ mod rendering_tests {
     }
 
     #[::core::prelude::v1::test]
-    fn ingress_list_links_open_without_selecting_the_resource_row() {
+    fn ingress_hosts_can_be_previewed_copied_and_opened_without_selecting_the_row() {
         let cx = &mut support::context();
-        let first_host =
-            "a-very-long-ingress-host-that-must-fit-within-the-column.secure.example.com";
+        let first_host = concat!(
+            "a-very-long-ingress-host-that-must-fit-within-the-column.",
+            "production-services-in-a-regional-kubernetes-cluster.",
+            "internal-applications.secure.example.com"
+        );
         let second_host = "another-long-ingress-host-that-must-not-wrap.plain.example.com";
         let address = "a-long-load-balancer-address-that-must-stay-inside-its-cell.example.com";
         let object = Arc::new(serde_json::from_value(serde_json::json!({
             "apiVersion":"networking.k8s.io/v1", "kind":"Ingress",
             "metadata":{"name":"routes", "namespace":"default", "uid":"routes-id"},
-            "spec":{"rules":[{"host":first_host}, {"host":second_host}], "tls":[{"hosts":[first_host]}]},
+            "spec":{"rules":[{"host":first_host}, {"host":second_host}, {"host":"*.dev"}], "tls":[{"hosts":[first_host]}]},
             "status":{"loadBalancer":{"ingress":[{"hostname":address}]}}
         })).unwrap());
         let (window, view) = cx.update(|cx| {
@@ -2043,6 +2137,55 @@ mod rendering_tests {
             assert_eq!(cx.opened_url().as_deref(), Some(destination.as_str()));
             assert_eq!(selections.get(), 0);
         }
+        cx.update_window(window, |_, window, cx| {
+            window
+                .within("ingress-links-0-Hosts")
+                .hover(("web-link", 0usize), cx);
+        })
+        .unwrap();
+        let hover_delay = std::time::Duration::from_secs(1);
+        cx.run_until_parked();
+        cx.executor().advance_clock(hover_delay);
+        support::render_until(cx, window, |window| {
+            window.try_find("ingress-host-preview").is_some()
+        });
+        cx.update_window(window, |_, window, _| {
+            let preview = window.find("ingress-host-preview").bounds();
+            let long_name = window.find(("ingress-host-name", 0usize)).bounds();
+            let wildcard = window.find(("ingress-host-name", 2usize)).bounds();
+            let copy = window.find(("copy-ingress-host", 0usize)).bounds();
+            assert!(
+                long_name.size.height > wildcard.size.height,
+                "long host should wrap: {long_name:?}, {wildcard:?}"
+            );
+            assert!(
+                preview.size.width <= px(560.)
+                    && long_name.right() <= copy.left()
+                    && copy.right() <= preview.right()
+            );
+        })
+        .unwrap();
+        let previously_opened = cx.opened_url();
+        for (index, host) in [first_host, second_host, "*.dev"].into_iter().enumerate() {
+            let copy = ("copy-ingress-host", index);
+            cx.update_window(window, |_, window, cx| window.hover(copy, cx))
+                .unwrap();
+            cx.run_until_parked();
+            cx.executor().advance_clock(hover_delay);
+            cx.update_window(window, |_, window, cx| {
+                window.render_frame(cx);
+                window.click(copy, cx);
+                assert_eq!(
+                    cx.read_from_clipboard()
+                        .and_then(|item| item.text())
+                        .as_deref(),
+                    Some(host)
+                );
+            })
+            .unwrap();
+            assert_eq!(cx.opened_url(), previously_opened);
+            assert_eq!(selections.get(), 0);
+        }
     }
 }
 
@@ -2051,11 +2194,11 @@ mod tests {
     // Imported by name rather than with `use super::*`: this module globs
     // `gpui_kit`, whose test-support build exports its own `#[test]`, and a
     // glob would shadow Rust's.
-    use super::{ResourceTable, SortKey};
+    use super::{ResourceColumn, ResourceTable, SortKey};
+    use crate::data_table::ColumnSort;
     use crate::filters::Field;
     use beacon_columns::{CellValue, ColumnSet};
     use beacon_kube::{Delta, DynamicObject, resources};
-    use gpui_kit::component::table::ColumnSort;
     use std::{collections::BTreeMap, sync::Arc};
 
     fn key(value: &str) -> SortKey {
@@ -2171,7 +2314,10 @@ mod tests {
         let headers: Vec<_> = table
             .ordered_columns()
             .into_iter()
-            .map(|index| table.columns.columns[index].header.as_str())
+            .filter_map(|column| match column {
+                ResourceColumn::Data(index) => Some(table.columns.columns[index].header.as_str()),
+                _ => None,
+            })
             .collect();
         let containers = headers
             .iter()
@@ -2197,9 +2343,9 @@ mod tests {
             !table
                 .column_choices()
                 .iter()
-                .find(|(_, name, _, _)| name == "Memory")
+                .find(|c| c.name == "Memory")
                 .unwrap()
-                .2
+                .visible
         );
     }
 
@@ -2220,9 +2366,8 @@ mod tests {
         let restarts_display = table
             .display_columns
             .iter()
-            .position(|index| *index == restarts_index)
-            .unwrap()
-            + 1;
+            .position(|col| *col == ResourceColumn::Data(restarts_index))
+            .unwrap();
         table.reorder_column(restarts_display, 1);
         assert_eq!(table.display_cell_text(0, 1), "4998");
         assert_eq!(table.display_cell_text(0, 2), "pod-00002");
@@ -2240,11 +2385,11 @@ mod tests {
         restored.set_columns(ColumnSet::for_kind("", "Pod", false));
         assert_eq!(restored.display_cell_text(0, 1), "4998");
         restored.set_columns(ColumnSet::for_kind("", "Pod", true));
-        assert!(!restored.display_columns.contains(&1));
+        assert!(!restored.display_columns.contains(&ResourceColumn::Data(1)));
         assert_eq!(restored.layout_snapshot(), layout);
         restored.toggle_column(&name);
         assert!(
-            restored.display_columns.contains(&0),
+            restored.display_columns.contains(&ResourceColumn::Data(0)),
             "the identifying Name column remains visible"
         );
         restored.reorder_column(0, 1);

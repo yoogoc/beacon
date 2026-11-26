@@ -1,7 +1,9 @@
 //! Local customization menus for the current resource list.
 use super::*;
-use crate::table_preferences::{ColumnLayout, FilterPreset, ResourcePreferences};
+use crate::table::ColumnChoice;
+use crate::table_preferences::{ColumnLayout, ColumnPin, FilterPreset, ResourcePreferences};
 use gpui_kit::assets::IconName as Glyph;
+use gpui_kit::component::Selectable as _;
 
 #[derive(Clone)]
 struct DraggedColumn {
@@ -10,6 +12,36 @@ struct DraggedColumn {
     id: String,
     name: String,
     position: usize,
+    pin: ColumnPin,
+}
+
+fn column_pin_buttons(column: &ColumnChoice, owner: &WeakEntity<ClusterView>) -> [Button; 2] {
+    [
+        (ColumnPin::Left, Glyph::PanelLeftClose, "Pin left", "left"),
+        (
+            ColumnPin::Right,
+            Glyph::PanelRightClose,
+            "Pin right",
+            "right",
+        ),
+    ]
+    .map(|(side, icon, label, suffix)| {
+        let view = owner.clone();
+        let id = column.id.clone();
+        let selected = column.pin == side;
+        let next = if selected { ColumnPin::Unpinned } else { side };
+        let hint = crate::i18n::text(if selected { "Unpin column" } else { label });
+        Button::new(SharedString::from(format!("pin-{suffix}-{id}")))
+            .xsmall()
+            .ghost()
+            .icon(icon)
+            .selected(selected)
+            .accessibility_label(format!("{} · {}", hint, crate::i18n::text(&column.name)))
+            .tooltip(hint)
+            .on_click(move |_, _, cx| {
+                let _ = view.update(cx, |view, cx| view.pin_list_column(&id, next, cx));
+            })
+    })
 }
 
 impl Render for DraggedColumn {
@@ -104,6 +136,15 @@ impl ClusterView {
     fn toggle_list_column(&mut self, id: &str, cx: &mut Context<Self>) {
         let layout = self.table.update(cx, |table, cx| {
             table.delegate_mut().toggle_column(id);
+            table.refresh(cx);
+            table.delegate().layout_snapshot()
+        });
+        self.persist_layout(layout, cx);
+    }
+
+    fn pin_list_column(&mut self, id: &str, pin: ColumnPin, cx: &mut Context<Self>) {
+        let layout = self.table.update(cx, |table, cx| {
+            table.delegate_mut().set_column_pin(id, pin);
             table.refresh(cx);
             table.delegate().layout_snapshot()
         });
@@ -269,11 +310,12 @@ impl ClusterView {
             .delegate()
             .column_choices()
             .into_iter()
-            .find(|(_, name, _, required)| {
-                !required && (search.matches(name) || search.matches(&crate::i18n::text(name)))
+            .find(|col| {
+                !col.required
+                    && (search.matches(&col.name) || search.matches(&crate::i18n::text(&col.name)))
             });
-        if let Some((id, _, false, _)) = first {
-            self.toggle_list_column(&id, cx);
+        if let Some(col) = first.filter(|col| !col.visible) {
+            self.toggle_list_column(&col.id, cx);
         }
     }
 
@@ -327,10 +369,13 @@ impl ClusterView {
                 let rows: Vec<_> = choices
                     .iter()
                     .enumerate()
-                    .filter(|(_, (_, name, _, _))| {
-                        search.matches(name) || search.matches(&crate::i18n::text(name))
+                    .filter(|(_, col)| {
+                        search.matches(&col.name) || search.matches(&crate::i18n::text(&col.name))
                     })
-                    .map(|(position, (id, name, visible, required))| {
+                    .map(|(position, col)| {
+                        let id = &col.id;
+                        let name = &col.name;
+                        let pin = col.pin;
                         let toggling = weak.clone();
                         let dropping = weak.clone();
                         let toggled = id.clone();
@@ -343,6 +388,7 @@ impl ClusterView {
                             id: id.clone(),
                             name: name.clone(),
                             position,
+                            pin,
                         };
                         h_flex()
                             .id(SharedString::from(format!("column-picker-row-{id}")))
@@ -357,6 +403,7 @@ impl ClusterView {
                                 value.downcast_ref::<DraggedColumn>().is_some_and(|drag| {
                                     drag.owner == owner
                                         && drag.resource == resource
+                                        && drag.pin == pin
                                         && drag.id != accepted
                                 })
                             })
@@ -380,14 +427,15 @@ impl ClusterView {
                                     .h_full()
                                     .px_2()
                                     .label(crate::i18n::text(name))
-                                    .checked(*visible)
-                                    .disabled(*required)
+                                    .checked(col.visible)
+                                    .disabled(col.required)
                                     .on_click(move |_, _, cx| {
                                         let _ = toggling.update(cx, |view, cx| {
                                             view.toggle_list_column(&toggled, cx)
                                         });
                                     }),
                             )
+                            .children(column_pin_buttons(col, &weak))
                             .child(
                                 div()
                                     .id(SharedString::from(format!("drag-column-{id}")))
@@ -412,7 +460,7 @@ impl ClusterView {
                     })
                     .collect();
                 v_flex()
-                    .w(px(260.))
+                    .w(px(316.))
                     .max_h(px(420.))
                     .min_h_0()
                     .gap_2()

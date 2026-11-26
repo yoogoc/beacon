@@ -703,5 +703,9 @@
   "display.fields_selector": {
     "en": "Fields: %{selector}",
     "zh-CN": "字段：%{selector}"
+  },
+  "messages.sort_by_column": {
+    "en": "Sort by %{column}",
+    "zh-CN": "按%{column}排序"
   }
 }

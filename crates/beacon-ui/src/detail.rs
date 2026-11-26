@@ -1685,7 +1685,7 @@ impl DetailView {
                     } else {
                         &cell.web_links
                     };
-                    crate::web_links::render(value, links, cx)
+                    crate::web_links::render(value, links, crate::web_links::Layout::Detail, cx)
                 }
             })
             .into_any_element()
@@ -2094,6 +2094,7 @@ impl DetailView {
             .child(div().flex_1().min_w_0().child(crate::web_links::render(
                 display_title.to_string(),
                 &display_links,
+                crate::web_links::Layout::Detail,
                 cx,
             )))
     }

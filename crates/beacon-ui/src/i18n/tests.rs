@@ -117,7 +117,7 @@ fn translations_keep_raw_values_and_format_parameters_without_word_concatenation
 #[cfg(feature = "ui-tests")]
 #[::core::prelude::v1::test]
 fn localized_column_headers_keep_persisted_ids_layout_and_canonical_filter_values() {
-    use gpui_kit::component::table::TableDelegate as _;
+    use crate::data_table::TableDelegate as _;
     let cx = crate::feature_test_support::context();
     cx.update(|cx| {
         let mut table =
@@ -126,8 +126,23 @@ fn localized_column_headers_keep_persisted_ids_layout_and_canonical_filter_value
         let choices = table.column_choices();
         let mut layout = table.layout_snapshot();
         layout.order.reverse();
-        layout.widths.insert(choices[0].0.clone(), 240.);
-        layout.hidden.insert(choices[1].0.clone());
+        layout.widths.insert(
+            choices
+                .iter()
+                .find(|col| col.name == "Name")
+                .unwrap()
+                .id
+                .clone(),
+            240.,
+        );
+        layout.hidden.insert(
+            choices
+                .iter()
+                .find(|col| col.name == "Namespace")
+                .unwrap()
+                .id
+                .clone(),
+        );
         table.apply_layout(layout);
         let before = table.layout_snapshot();
         let filters = table.filter_preset(Default::default());
