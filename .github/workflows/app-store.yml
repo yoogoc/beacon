@@ -276,7 +276,7 @@ jobs:
           python scripts/app-store.py package --keychain "$APP_STORE_KEYCHAIN" --profile "$RUNNER_TEMP/beacon-app-store.provisionprofile"
       - uses: actions/upload-artifact@v4
         with:
-          name: app-store-${{ needs.prepare.outputs.version }}
+          name: app-store-${{ needs.prepare.outputs.version }}-attempt-${{ github.run_attempt }}
           path: target/app-store/*.pkg
           if-no-files-found: error
       - name: Validate package with App Store Connect

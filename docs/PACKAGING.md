@@ -93,7 +93,8 @@ GitHub Actions 用 **Developer ID Application** 签署 Beacon 的 `.app` 和 `.d
 正式标签发布 GitHub Release 后，`package` 工作流调用 `app-store.yml`，构建开启
 `app-store` feature 的 ARM64 + Intel 通用应用，用商店证书签署 `.app` 和 `.pkg`，
 通过 `xcrun altool --upload-package --wait` 上传并等待 Apple 处理。安装包同时保存在
-Actions 的 `app-store-<版本>` artifact 中。这个流程只上传构建，不自动提交审核或上架。
+Actions 的 `app-store-<版本>-attempt-<运行次数>` artifact 中，每次重跑分别保留安装包，
+避免同名 artifact 冲突阻断重新上传。这个流程只上传构建，不自动提交审核或上架。
 手动运行 `package` 仍只生成普通开发版产物。
 
 手动运行 **App Store Connect** 工作流会构建并签署商店安装包，再使用 Apple 的服务
