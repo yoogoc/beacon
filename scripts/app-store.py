@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 """Package the app-store feature's universal binary for App Store Connect."""
 import argparse
+import base64
 from datetime import datetime, timezone
 import json
 import os
 from pathlib import Path
 import plistlib
 import re
-import shutil
+import ssl
 import subprocess
 import tomllib
 
@@ -46,8 +47,26 @@ def bundle_identifier(default, environment):
     return identifier
 
 
+def load_provisioning_profile(path, environment):
+    """Read an Apple-signed profile without exposing its contents in command logs."""
+    if path is not None:
+        contents = Path(path).read_bytes()
+    else:
+        encoded = environment.get("APP_STORE_PROVISIONING_PROFILE")
+        if not encoded:
+            raise ValueError("A Mac App Store provisioning profile is required for TestFlight; provide --profile or APP_STORE_PROVISIONING_PROFILE")
+        try:
+            contents = base64.b64decode(encoded, validate=True)
+        except ValueError as error:
+            raise ValueError("APP_STORE_PROVISIONING_PROFILE must contain valid Base64") from error
+    decoded = run("security", "cms", "-D", input=contents, capture_output=True).stdout
+    return contents, plistlib.loads(decoded)
+
+
 def provisioning_entitlements(profile, team, identifier, now=None):
-    """Profiles are optional for these unrestricted entitlements, required for TestFlight."""
+    """Require a current Mac App Store profile for every store build, including TestFlight."""
+    if "OSX" not in profile.get("Platform", []):
+        raise ValueError("The provisioning profile must target macOS")
     now = now or datetime.now(timezone.utc)
     expiry = profile.get("ExpirationDate")
     if not isinstance(expiry, datetime) or expiry.replace(tzinfo=timezone.utc) <= now:
@@ -92,6 +111,12 @@ def packager_config(root, output):
 def package(root, output, keychain, profile):
     team, app_identity, installer_identity = identities(os.environ)
     config = packager_config(root, output)
+    profile_contents, decoded_profile = load_provisioning_profile(profile, os.environ)
+    profile_entitlements = provisioning_entitlements(decoded_profile, team, config["identifier"])
+    certificate = run("security", "find-certificate", "-c", app_identity, "-p", keychain,
+                      capture_output=True, text=True).stdout
+    if ssl.PEM_cert_to_DER_cert(certificate) not in decoded_profile.get("DeveloperCertificates", []):
+        raise ValueError("The provisioning profile does not authorize APP_STORE_APP_IDENTITY; regenerate it with the current distribution certificate")
     binary = output / "beacon"
     architectures = run("lipo", "-archs", binary, capture_output=True, text=True).stdout.split()
     if set(architectures) != {"arm64", "x86_64"}:
@@ -106,10 +131,9 @@ def package(root, output, keychain, profile):
     if info.get("NSHumanReadableCopyright") != config["copyright"]:
         raise ValueError("Packaged app copyright does not match the packaging configuration")
     entitlements = plistlib.loads((root / "assets/packaging/app-store.entitlements").read_bytes())
-    if profile:
-        decoded = run("security", "cms", "-D", "-i", profile, capture_output=True).stdout
-        entitlements.update(provisioning_entitlements(plistlib.loads(decoded), team, config["identifier"]))
-        shutil.copyfile(profile, app / "Contents/embedded.provisionprofile")
+    entitlements.update(profile_entitlements)
+    embedded_profile = app / "Contents/embedded.provisionprofile"
+    embedded_profile.write_bytes(profile_contents)
     entitlements_path = output / "app-store.entitlements"
     entitlements_path.write_bytes(plistlib.dumps(entitlements))
     run("codesign", "--force", "--sign", app_identity, "--keychain", keychain,
@@ -119,6 +143,8 @@ def package(root, output, keychain, profile):
     signed = run("codesign", "--display", "--entitlements", ":-", app, capture_output=True).stdout
     if plistlib.loads(signed) != entitlements:
         raise ValueError("Signed application entitlements do not match the App Store configuration")
+    if embedded_profile.read_bytes() != profile_contents:
+        raise ValueError("The signed application is missing its expected provisioning profile")
     pkg = output / f'Beacon_{config["version"]}_universal_app-store.pkg'
     run("productbuild", "--component", app, "/Applications", "--sign", installer_identity,
         "--keychain", keychain, pkg)
@@ -137,7 +163,11 @@ def main():
     parser.add_argument("--profile", type=Path)
     args = parser.parse_args()
     try:
-        identities(os.environ)
+        team, _, _ = identities(os.environ)
+        if args.command == "preflight":
+            config = packager_config(ROOT, args.output.resolve())
+            _, profile = load_provisioning_profile(args.profile, os.environ)
+            provisioning_entitlements(profile, team, config["identifier"])
         if args.command == "package":
             if not args.keychain:
                 raise ValueError("--keychain is required for signing")

@@ -115,7 +115,7 @@ Actions 的 `app-store-<版本>` artifact 中。这个流程只上传构建，�
 | --- | --- | --- |
 | Secret | `APP_STORE_CERTIFICATE` | 包含应用和安装器两个身份的 `.p12`，Base64 编码，无换行 |
 | Secret | `APP_STORE_CERTIFICATE_PASSWORD` | 该 `.p12` 的导出密码 |
-| Secret，可选 | `APP_STORE_PROVISIONING_PROFILE` | Mac App Store provisioning profile 的 Base64 内容；TestFlight 必须配置 |
+| Secret | `APP_STORE_PROVISIONING_PROFILE` | Mac App Store Connect 分发描述文件的 Base64 内容；所有商店构建必须配置，以支持 TestFlight |
 | Variable | `APP_STORE_APP_IDENTITY` | `Apple Distribution: NAME (TEAMID)` 或 `3rd Party Mac Developer Application: NAME (TEAMID)` |
 | Variable | `APP_STORE_INSTALLER_IDENTITY` | `3rd Party Mac Developer Installer: NAME (TEAMID)` |
 | Variable | `APP_STORE_BUNDLE_ID` | 商店记录的套装 ID，当前为 `top.yoogo.Beacon`；未配置时使用普通版默认值 |
@@ -125,8 +125,25 @@ Actions 的 `app-store-<版本>` artifact 中。这个流程只上传构建，�
 
 上传复用 `APPLE_ID`、`APPLE_PASSWORD`（应用专用密码）和 `APPLE_TEAM_ID`。
 账户需要有上传该 App 的权限。签名材料仅在临时钥匙串中导入，任务结束后删除。
-当前网络、用户选择文件和书签权限无需受限 entitlement 的 profile；配置 profile 后，
-脚本会校验有效期、Team ID、完整 App ID，并拒绝开发或 Developer ID profile。
+发布流程要求每个商店构建都携带 provisioning profile，以避免上传成功后收到
+`ITMS-90889`、导致构建无法用于 TestFlight。预检会在编译前检查描述文件有效期、
+macOS 平台、Team ID 和完整 App ID；签名前还会检查分发证书是否在描述文件的授权列表中。
+开发或 Developer ID profile 会被拒绝。
+
+首次配置或更换分发证书时，在 [Apple Developer → Profiles](https://developer.apple.com/account/resources/profiles/list)
+点击 **+ → Distribution → Mac App Store Connect**，选择 **Mac**、`top.yoogo.Beacon`
+以及 `APP_STORE_APP_IDENTITY` 对应的分发证书，生成并下载 `.provisionprofile` 文件。
+将该文件直接配置到 GitHub Secret（以下命令不会把内容打印到终端）：
+
+```sh
+base64 -i "$HOME/Downloads/Beacon_Mac_App_Store_Distribution.provisionprofile" | tr -d '\n' | gh secret set APP_STORE_PROVISIONING_PROFILE --repo yoogoc/beacon
+```
+
+打包脚本在签名前将它写入 `Beacon.app/Contents/embedded.provisionprofile`，并在签名校验后
+确认文件仍然存在且内容一致。本地运行 `scripts/app-store.py preflight` 或 `package` 时，
+通过 `--profile /path/to/profile.provisionprofile` 指定文件，也可使用同名 Base64 环境变量。
+描述文件过期或证书轮换后，需要重新生成并更新 Secret；更换 Secret 不会修复已上传的构建，
+需要重新打包上传。工作流会为重跑生成新的 `CFBundleVersion`。
 
 商店版启用 `assets/packaging/app-store.entitlements` 中的 App Sandbox、网络客户端与
 服务器权限（用于集群访问和端口转发）、用户选择文件读写及持久书签。请通过

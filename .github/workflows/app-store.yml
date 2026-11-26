@@ -51,6 +51,7 @@ jobs:
         env:
           APP_STORE_CERTIFICATE: ${{ secrets.APP_STORE_CERTIFICATE }}
           APP_STORE_CERTIFICATE_PASSWORD: ${{ secrets.APP_STORE_CERTIFICATE_PASSWORD }}
+          APP_STORE_PROVISIONING_PROFILE: ${{ secrets.APP_STORE_PROVISIONING_PROFILE }}
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
         run: |
@@ -266,17 +267,13 @@ jobs:
                       raise SystemExit(name + " is missing from the imported p12")
           finally:
               certificate.unlink(missing_ok=True)
-          profile = os.environ.get("APP_STORE_PROVISIONING_PROFILE")
-          if profile:
-              (directory / "beacon-app-store.provisionprofile").write_bytes(base64.b64decode(profile, validate=True))
+          profile = directory / "beacon-app-store.provisionprofile"
+          profile.write_bytes(base64.b64decode(os.environ["APP_STORE_PROVISIONING_PROFILE"], validate=True))
+          profile.chmod(0o600)
           PY
       - name: Sign application and installer
         run: |
-          PROFILE_ARGS=()
-          if [ -f "$RUNNER_TEMP/beacon-app-store.provisionprofile" ]; then
-            PROFILE_ARGS=(--profile "$RUNNER_TEMP/beacon-app-store.provisionprofile")
-          fi
-          python scripts/app-store.py package --keychain "$APP_STORE_KEYCHAIN" "${PROFILE_ARGS[@]}"
+          python scripts/app-store.py package --keychain "$APP_STORE_KEYCHAIN" --profile "$RUNNER_TEMP/beacon-app-store.provisionprofile"
       - uses: actions/upload-artifact@v4
         with:
           name: app-store-${{ needs.prepare.outputs.version }}

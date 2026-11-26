@@ -21,6 +21,7 @@ class AppStoreTests(unittest.TestCase):
         }
         self.now = datetime(2026, 11, 18, tzinfo=timezone.utc)
         self.profile = {
+            "Platform": ["OSX"],
             "ExpirationDate": self.now + timedelta(days=30),
             "TeamIdentifier": [self.team],
             "Entitlements": {
@@ -49,6 +50,18 @@ class AppStoreTests(unittest.TestCase):
         for team, identifier in (("OTHERTTEAM", "top.yoogo.Beacon"), (self.team, "other.bundle")):
             with self.subTest(team=team, identifier=identifier), self.assertRaises(ValueError):
                 app_store.provisioning_entitlements(self.profile, team, identifier, self.now)
+
+    def test_missing_or_invalid_profile_fails_before_packaging(self):
+        for environment in ({}, {"APP_STORE_PROVISIONING_PROFILE": "not base64"}):
+            with self.subTest(environment=environment), patch.object(app_store, "run") as command:
+                with self.assertRaisesRegex(ValueError, "provisioning profile is required|valid Base64"):
+                    app_store.load_provisioning_profile(None, environment)
+                command.assert_not_called()
+
+    def test_ios_profiles_cannot_be_used_for_the_mac_app(self):
+        for platform in ([], ["iOS"], ["iOS", "xrOS", "visionOS"]):
+            with self.subTest(platform=platform), self.assertRaisesRegex(ValueError, "macOS"):
+                app_store.provisioning_entitlements(dict(self.profile, Platform=platform), self.team, "top.yoogo.Beacon", self.now)
 
     def test_store_identifier_is_configurable_without_changing_standalone_identifier(self):
         self.assertEqual(app_store.bundle_identifier("top.yoogo.Beacon", {}), "top.yoogo.Beacon")
