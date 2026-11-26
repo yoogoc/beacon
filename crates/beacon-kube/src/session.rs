@@ -718,6 +718,23 @@ impl ClusterSession {
         crate::logs::follow(self.client.clone(), namespace, pod, options, &self.runtime)
     }
 
+    /// Show this Pod's recent tail while backfilling older lines independently.
+    pub fn follow_recent_logs(
+        &self,
+        namespace: String,
+        pod: String,
+        options: LogOptions,
+    ) -> impl futures::Stream<Item = LogEvent> + use<> {
+        crate::logs::spawn_follow(
+            self.client.clone(),
+            namespace,
+            pod,
+            options,
+            &self.runtime,
+            true,
+        )
+    }
+
     /// Save the selected container's complete available log snapshot.
     pub async fn download_logs(
         self: Arc<Self>,

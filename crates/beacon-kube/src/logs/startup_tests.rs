@@ -29,15 +29,8 @@ impl Server {
             let mut replies = VecDeque::from(replies);
             loop {
                 let (mut socket, _) = listener.accept().await.unwrap();
-                let mut header = Vec::new();
-                while !header.ends_with(b"\r\n\r\n") {
-                    header.push(socket.read_u8().await.unwrap());
-                    assert!(header.len() < 8192);
-                }
-                recorded
-                    .lock()
-                    .unwrap()
-                    .push(String::from_utf8(header).unwrap());
+                let request = read_request(&mut socket).await;
+                recorded.lock().unwrap().push(request);
                 let (code, body) = replies.pop_front().unwrap_or_else(|| last.clone());
                 let reason = if code == 200 { "OK" } else { "Error" };
                 socket.write_all(format!("HTTP/1.1 {code} {reason}\r\nContent-Type: text/plain\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).as_bytes()).await.unwrap();
@@ -49,6 +42,16 @@ impl Server {
             task,
         }
     }
+    fn recent(&self, options: LogOptions) -> impl Stream<Item = LogEvent> + use<> {
+        spawn_follow(
+            self.client.clone(),
+            "default".into(),
+            "demo".into(),
+            options,
+            &tokio::runtime::Handle::current(),
+            true,
+        )
+    }
     fn follow(&self, options: LogOptions) -> impl Stream<Item = LogEvent> + use<> {
         follow(
             self.client.clone(),
@@ -58,6 +61,15 @@ impl Server {
             &tokio::runtime::Handle::current(),
         )
     }
+}
+
+async fn read_request(socket: &mut tokio::net::TcpStream) -> String {
+    let mut header = Vec::new();
+    while !header.ends_with(b"\r\n\r\n") {
+        header.push(socket.read_u8().await.unwrap());
+        assert!(header.len() < 8192);
+    }
+    String::from_utf8(header).unwrap()
 }
 
 fn failure(code: u16, message: &str) -> (u16, String) {
@@ -218,4 +230,159 @@ async fn closing_a_waiting_log_pane_cancels_further_requests() {
     drop(events);
     tokio::time::sleep(START_RETRY + Duration::from_millis(50)).await;
     assert_eq!(server.requests.lock().unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn recent_preview_precedes_history_and_preserves_repeated_lines_at_the_seam() {
+    let stamp = "2026-11-26T00:00:01Z";
+    let mut preview = vec![format!("{stamp} same"); 2];
+    preview.extend((2..100).map(|i| format!("2026-11-26T00:00:02Z recent {i}")));
+    let mut all: Vec<_> = (0..1100)
+        .map(|i| format!("2026-11-26T00:00:00Z old {i}"))
+        .collect();
+    all.push(format!("{stamp} same"));
+    all.extend(preview.clone());
+    let server = Server::start(vec![(200, preview.join("\n")), (200, all.join("\n"))]).await;
+    let mut events = server.recent(LogOptions {
+        previous: true,
+        container: Some("sidecar".into()),
+        ..Default::default()
+    });
+    let mut buffer = LogBuffer::new();
+    let mut batches = 0;
+    while let Some(event) = events.next().await {
+        match event {
+            LogEvent::Opened => {}
+            LogEvent::Lines(lines) => {
+                assert_eq!(batches, 0);
+                buffer.extend(lines);
+            }
+            LogEvent::History { lines, discarded } => {
+                if batches == 0 {
+                    assert_eq!(buffer.len(), 100);
+                    assert_eq!(buffer.lines().next_back(), Some("recent 99"));
+                    assert_eq!(lines.last().unwrap(), "same");
+                }
+                assert_eq!(discarded, 0);
+                buffer.prepend(lines, discarded);
+                batches += 1;
+            }
+            LogEvent::Closed => break,
+            other => panic!("unexpected {other:?}"),
+        }
+    }
+    assert!(batches > 1);
+    assert!(
+        buffer
+            .lines()
+            .eq(all.iter().map(|line| line.split_once(' ').unwrap().1))
+    );
+    let requests = server.requests.lock().unwrap();
+    assert_eq!(requests.len(), 2);
+    for (request, limit) in requests.iter().zip(["100", "2000"]) {
+        assert!(
+            request.contains(&format!("tailLines={limit}&")),
+            "{request}"
+        );
+        assert!(request.contains("timestamps=true") && request.contains("previous=true"));
+        assert!(request.contains("container=sidecar") && !request.contains("follow=true"));
+    }
+}
+
+#[tokio::test]
+async fn live_lines_arrive_while_the_history_response_is_blocked() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let client = kube::Client::try_from(kube::Config::new(
+        format!("http://{}", listener.local_addr().unwrap())
+            .parse()
+            .unwrap(),
+    ))
+    .unwrap();
+    let (resume, wait) = tokio::sync::oneshot::channel();
+    let server = tokio::spawn(async move {
+        let (mut live, _) = listener.accept().await.unwrap();
+        assert!(read_request(&mut live).await.contains("follow=true"));
+        let preview: String = (0..100)
+            .map(|i| format!("2026-11-26T00:00:01.{i:09}Z line {i}\n"))
+            .collect();
+        live.write_all(
+            format!(
+                "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n{:x}\r\n{preview}\r\n",
+                preview.len()
+            )
+            .as_bytes(),
+        )
+        .await
+        .unwrap();
+        let (mut history, _) = listener.accept().await.unwrap();
+        assert!(!read_request(&mut history).await.contains("follow=true"));
+        let new = "2026-11-26T00:00:02Z still live\n";
+        live.write_all(format!("{:x}\r\n{new}\r\n0\r\n\r\n", new.len()).as_bytes())
+            .await
+            .unwrap();
+        wait.await.unwrap();
+        let body = format!("2026-11-26T00:00:00Z old\n{preview}{new}");
+        history
+            .write_all(
+                format!(
+                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n{body}",
+                    body.len()
+                )
+                .as_bytes(),
+            )
+            .await
+            .unwrap();
+    });
+    let mut events = spawn_follow(
+        client,
+        "default".into(),
+        "demo".into(),
+        LogOptions::default(),
+        &tokio::runtime::Handle::current(),
+        true,
+    );
+    assert!(matches!(next(&mut events).await, LogEvent::Opened));
+    let mut visible = LogBuffer::new();
+    while visible.len() < 101 {
+        let LogEvent::Lines(lines) = next(&mut events).await else {
+            panic!("expected live data before history")
+        };
+        visible.extend(lines);
+    }
+    assert_eq!(visible.lines().next_back(), Some("still live"));
+    resume.send(()).unwrap();
+    assert!(
+        matches!(next(&mut events).await, LogEvent::History { lines, discarded: 0 } if lines == ["old"])
+    );
+    assert!(matches!(next(&mut events).await, LogEvent::Closed));
+    server.await.unwrap();
+}
+
+#[tokio::test]
+async fn historical_queries_show_the_end_of_the_selected_range_first() {
+    let body = "2026-11-26T00:00:00Z before\n2026-11-26T00:01:00Z oldest\n2026-11-26T00:02:00Z split\n2026-11-26T00:03:00Z last\n2026-11-26T00:03:01Z after\n";
+    let server = Server::start(vec![(200, body.into())]).await;
+    let mut events = server.recent(LogOptions {
+        since_time: Some("2026-11-26T00:01:00Z".parse().unwrap()),
+        until_time: Some("2026-11-26T00:03:00Z".parse().unwrap()),
+        ..Default::default()
+    });
+    assert!(matches!(next(&mut events).await, LogEvent::Opened));
+    assert!(
+        matches!(next(&mut events).await, LogEvent::Lines(lines) if lines == ["2026-11-26T00:02:00Z split","2026-11-26T00:03:00Z last"])
+    );
+    assert!(
+        matches!(next(&mut events).await, LogEvent::History {lines, ..} if lines == ["2026-11-26T00:01:00Z oldest"])
+    );
+    assert!(matches!(next(&mut events).await, LogEvent::Closed));
+    let requests = server.requests.lock().unwrap();
+    assert_eq!(requests.len(), 2);
+    for (request, since) in requests.iter().zip(["00:02:00Z", "00:01:00Z"]) {
+        let uri = request.split_whitespace().nth(1).unwrap();
+        let uri = url::Url::parse(&format!("http://fixture{uri}")).unwrap();
+        assert!(
+            uri.query_pairs()
+                .any(|(key, value)| key == "sinceTime" && value.ends_with(since))
+        );
+    }
 }

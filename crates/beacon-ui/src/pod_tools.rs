@@ -62,6 +62,7 @@ pub(crate) struct PodToolsView {
     logs: LogBuffer,
     log_options: LogOptions,
     log_status: LogStatus,
+    log_history_error: Option<String>,
     log_scroll: UniformListScrollHandle,
     log_widths: LogLineWidths,
     log_search: Entity<InputState>,
@@ -199,6 +200,7 @@ fn log_filename(
 /// lines need shaping; scrolling through history reuses their measurements.
 #[derive(Default)]
 pub(crate) struct LogLineWidths {
+    unwrapped_count: usize,
     wrapped_font: Option<(Font, Pixels)>,
     font: Option<(Font, Pixels)>,
     #[cfg(test)]
@@ -344,6 +346,7 @@ impl LogCanvas<'_> {
                 .children(overlay)
                 .into_any_element()
         } else {
+            self.widths.unwrapped_count = count;
             let font = Font {
                 family: "monospace".into(),
                 ..window.text_style().font()
@@ -572,6 +575,7 @@ impl PodToolsView {
                 ..Default::default()
             },
             log_status: LogStatus::Unopened,
+            log_history_error: None,
             log_scroll: UniformListScrollHandle::new(),
             log_widths: LogLineWidths::default(),
             log_search,
@@ -927,7 +931,8 @@ impl PodToolsView {
         self.log_wrap_scroll.set_follow_mode(FollowMode::Tail);
         self.log_status = LogStatus::Following;
 
-        let stream = self.session.follow_logs(
+        self.log_history_error = None;
+        let stream = self.session.follow_recent_logs(
             namespace,
             self.target.name.clone(),
             self.log_options.clone(),
@@ -952,6 +957,15 @@ impl PodToolsView {
                             view.scroll_logs_to_end();
                         }
                     }
+                    LogEvent::History { lines, discarded } => {
+                        let follow = view.log_follow && view.is_at_tail();
+                        view.logs.prepend(lines, discarded);
+                        view.update_log_display(cx);
+                        if follow {
+                            view.scroll_logs_to_end();
+                        }
+                    }
+                    LogEvent::HistoryFailed(error) => view.log_history_error = Some(error),
                     LogEvent::Closed => view.log_status = LogStatus::Ended,
                     LogEvent::Failed(error) => view.log_status = LogStatus::Failed(error),
                 }
@@ -974,8 +988,16 @@ impl PodToolsView {
             return self.log_wrap_scroll.is_following_tail();
         }
         let state = self.log_scroll.0.borrow();
+        if let Some(pending) = &state.deferred_scroll_to_item {
+            return pending.strategy == ScrollStrategy::Bottom;
+        }
         let offset = state.base_handle.offset().y;
-        let max = state.base_handle.max_offset().y;
+        let max = match (state.last_item_size, self.unwrapped_row_height()) {
+            (Some(size), Some(height)) => {
+                height * self.log_display.borrow().rows.len() - size.item.height
+            }
+            _ => state.base_handle.max_offset().y,
+        };
 
         if max <= px(0.) {
             return true;
@@ -987,7 +1009,6 @@ impl PodToolsView {
     }
 
     fn update_log_display(&mut self, cx: &mut App) {
-        let old_top = self.unwrapped_log_top();
         let filter = self.log_workbench.read(cx).filter(cx);
         let change = self
             .log_display
@@ -999,10 +1020,10 @@ impl PodToolsView {
             self.log_wrap_scroll
                 .reset(self.log_display.borrow().rows.len());
         } else {
-            if change.removed > 0 {
-                self.log_wrap_scroll.splice(0..change.removed, 0);
-                self.log_scroll
-                    .scroll_to_item(old_top.saturating_sub(change.removed), ScrollStrategy::Top);
+            if change.removed > 0 || change.prepended > 0 {
+                self.log_wrap_scroll
+                    .splice(0..change.removed, change.prepended);
+                self.shift_unwrapped_scroll(change.removed, change.prepended);
             }
             if change.added > 0 {
                 let count = self.log_wrap_scroll.item_count();
@@ -1032,13 +1053,32 @@ impl PodToolsView {
         }
     }
 
+    fn unwrapped_row_height(&self) -> Option<Pixels> {
+        let count = self.log_widths.unwrapped_count;
+        let size = self.log_scroll.0.borrow().last_item_size?;
+        (count > 0 && size.contents.height > px(0.)).then(|| size.contents.height / count as f32)
+    }
+
+    fn shift_unwrapped_scroll(&self, removed: usize, inserted: usize) {
+        let height = self.unwrapped_row_height();
+        let mut state = self.log_scroll.0.borrow_mut();
+        if let Some(pending) = &mut state.deferred_scroll_to_item {
+            pending.item_index = pending.item_index.saturating_sub(removed) + inserted;
+        } else if let Some(height) = height {
+            let mut offset = state.base_handle.offset();
+            offset.y = (offset.y + height * removed - height * inserted).min(px(0.));
+            state.base_handle.set_offset(offset);
+        }
+    }
+
     fn unwrapped_log_top(&self) -> usize {
-        let scroll = self.log_scroll.0.borrow();
-        scroll
-            .deferred_scroll_to_item
-            .as_ref()
-            .map(|item| item.item_index)
-            .unwrap_or_else(|| scroll.base_handle.logical_scroll_top().0)
+        let state = self.log_scroll.0.borrow();
+        if let Some(pending) = &state.deferred_scroll_to_item {
+            return pending.item_index;
+        }
+        self.unwrapped_row_height().map_or(0, |height| {
+            (-state.base_handle.offset().y / height).floor() as usize
+        })
     }
 
     fn toggle_log_wrap(&mut self, cx: &mut Context<Self>) {
@@ -1238,6 +1278,7 @@ impl PodToolsView {
             ))
             .when(self.embedded.is_some(), |pane| pane.child(self.workspace_log_toolbar(cx)))
             .when(self.embedded.is_none() || self.log_advanced, |pane| pane.child(self.log_workbench.clone()))
+            .when_some(self.log_history_error.clone(), |pane, error| pane.child(div().px_3().py_1().text_xs().text_color(cx.theme().warning).child(crate::copyable_text::copyable_text("pod-log-history-error", crate::i18n::message("messages.older_logs_error", &[("error", error)]).to_string()))))
             .when(matches!(self.log_status, LogStatus::Failed(_)) && count > 0, |pane| pane.child(div().px_3().py_1().text_xs().text_color(cx.theme().danger).child(crate::copyable_text::copyable_text("pod-log-stream-error", match &self.log_status { LogStatus::Failed(error) => error.clone(), _ => String::new() }))))
             .children(self.render_download_status(cx))
             .child(div().flex_1().min_size_0().overflow_hidden().child(body))
@@ -1606,6 +1647,65 @@ mod rendering_tests {
                 }
                 .render(window, cx),
             )
+        }
+    }
+
+    #[::core::prelude::v1::test]
+    fn prepending_history_keeps_the_reading_position_in_both_log_layouts() {
+        use crate::feature_test_support as support;
+        let cx = &mut support::context();
+        let object = serde_json::json!({"apiVersion":"v1","kind":"Pod","metadata":{"name":"demo","namespace":"default","uid":"history"},"spec":{"containers":[{"name":"app"}]}});
+        let (_fixture, session) = support::fixture(cx, "history", vec![object.clone()]);
+        let (window, view) = cx.update(|cx| {
+            gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
+                window.set_view_retention(false);
+                let object = Arc::new(serde_json::from_value(object).unwrap());
+                cx.new(|cx| PodToolsView::new(session, object, None, PodToolTab::Logs, window, cx))
+            })
+            .unwrap()
+        });
+        support::settle(cx, |cx| {
+            view.read_with(cx, |view, _| view.log_status == LogStatus::Ended)
+        });
+        for wrapped in [false, true] {
+            cx.update_window(window, |_, window, cx| {
+                view.update(cx, |view, cx| {
+                    view.logs.clear();
+                    view.log_display.borrow_mut().reset_stream();
+                    view.logs.extend((0..120).map(|i| format!("live {i}")));
+                    view.log_wrap = wrapped;
+                    view.set_log_follow(false);
+                    view.update_log_display(cx);
+                    cx.notify();
+                });
+                window.render_frame(cx);
+                view.update(cx, |view, cx| {
+                    view.log_wrap_scroll.scroll_to(ListOffset {
+                        item_ix: 40,
+                        offset_in_item: px(3.),
+                    });
+                    view.log_scroll
+                        .scroll_to_item_strict(40, ScrollStrategy::Top);
+                    cx.notify();
+                });
+                window.render_frame(cx);
+                let id = view.read(cx).log_display.borrow().rows[40].id;
+                let before = window.find(("pod-log-line", id)).bounds().top();
+                view.update(cx, |view, cx| {
+                    view.logs
+                        .prepend((0..75).map(|i| format!("older {i}")).collect(), 0);
+                    view.update_log_display(cx);
+                    cx.notify();
+                });
+                window.render_frame(cx);
+                assert_eq!(view.read(cx).log_display.borrow().rows[115].id, id);
+                assert_eq!(
+                    window.find(("pod-log-line", id)).bounds().top(),
+                    before,
+                    "wrapped={wrapped}"
+                );
+            })
+            .unwrap();
         }
     }
 

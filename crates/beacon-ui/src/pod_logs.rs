@@ -310,13 +310,13 @@ pub(crate) struct Row {
 #[derive(Default)]
 pub(crate) struct Display {
     pub rows: VecDeque<Row>,
-    records: VecDeque<(usize, usize, Arc<Record>)>, // sequence, session ID, parsed line
+    records: VecDeque<(i64, usize, Arc<Record>)>, // sequence, session ID, parsed line
     pub bookmarks: BTreeMap<usize, Arc<Record>>,
     pub fields: BTreeMap<String, usize>,
     pub error: Option<String>,
     filter: Filter,
     expression: Option<Regex>,
-    seen: usize,
+    seen: i64,
     next_id: usize,
     dirty: bool,
     source: Option<String>,
@@ -325,6 +325,7 @@ pub(crate) struct Change {
     pub reset: bool,
     pub removed: usize,
     pub added: usize,
+    pub prepended: usize,
 }
 impl Display {
     pub fn set_source(&mut self, source: String) {
@@ -363,7 +364,8 @@ impl Display {
         )
     }
     pub fn update_with(&mut self, logs: &LogBuffer, filter: &Filter) -> Change {
-        let total = logs.dropped() + logs.len();
+        let first = logs.first_sequence();
+        let total = first + logs.len() as i64;
         if total < self.seen {
             self.reset_stream();
         }
@@ -383,12 +385,15 @@ impl Display {
         }
         self.dirty = false;
         self.filter = filter.clone();
-        while self
-            .records
-            .front()
-            .is_some_and(|(sequence, _, _)| *sequence < logs.dropped())
-        {
-            let (_, _, record) = self.records.pop_front().unwrap();
+        let old = self.rows.len();
+        if reset {
+            self.rows.clear();
+        }
+        while self.records.front().is_some_and(|(seq, _, _)| *seq < first) {
+            let (_, id, record) = self.records.pop_front().unwrap();
+            if !filter.bookmarks && self.rows.front().is_some_and(|row| row.id == id) {
+                self.rows.pop_front();
+            }
             for key in record.fields.keys() {
                 if let Some(count) = self.fields.get_mut(key) {
                     *count -= 1;
@@ -398,91 +403,97 @@ impl Display {
                 }
             }
         }
-        let mut arrivals = Vec::new();
+        let removed = old - self.rows.len();
+        let project_new = !reset && !filter.bookmarks;
+        let retained = self.rows.len();
+        let prefix_end = self
+            .records
+            .front()
+            .map_or(self.seen, |r| r.0)
+            .clamp(first, total);
+        let prefix = (prefix_end - first) as usize;
+        for (index, text) in logs.lines().take(prefix).enumerate().rev() {
+            let (id, record) = self.parse_line(text);
+            if project_new && let Some(row) = self.row(id, &record) {
+                self.rows.push_front(row);
+            }
+            self.records.push_front((first + index as i64, id, record));
+        }
+        let prepended = self.rows.len() - retained;
+        let before_append = self.rows.len();
         for (index, text) in logs
             .lines()
             .enumerate()
-            .skip(self.seen.saturating_sub(logs.dropped()))
+            .skip((self.seen.max(first) - first) as usize)
         {
-            let mut record = Record::parse(text);
-            if record.source.is_none()
-                && let Some(source) = &self.source
-            {
-                record.source = Some(source.clone());
-                record.fields.insert("_source".into(), source.clone());
+            let (id, record) = self.parse_line(text);
+            if project_new && let Some(row) = self.row(id, &record) {
+                self.rows.push_back(row);
             }
-            let record = Arc::new(record);
-            for key in record.fields.keys() {
-                *self.fields.entry(key.clone()).or_default() += 1;
-            }
-            let id = self.next_id;
-            self.next_id += 1;
-            self.records
-                .push_back((logs.dropped() + index, id, record.clone()));
-            arrivals.push((id, record));
+            self.records.push_back((first + index as i64, id, record));
         }
         self.seen = total;
-        let expression = self.expression.clone();
-        let regex = expression.as_ref();
-        let old = self.rows.len();
-        if reset {
-            self.rows.clear();
-        } else {
-            while self
-                .rows
-                .front()
-                .is_some_and(|row| self.records.front().is_none_or(|(_, id, _)| row.id < *id))
-            {
-                self.rows.pop_front();
-            }
-        }
-        let removed = old - self.rows.len();
-        let retained = self.rows.len();
-        let candidates: Vec<_> = if filter.bookmarks {
-            self.bookmarks
+        if reset && filter.bookmarks {
+            self.rows = self
+                .bookmarks
                 .iter()
-                .map(|(id, record)| (*id, record.clone()))
-                .collect()
+                .filter_map(|(&id, record)| self.row(id, record))
+                .collect();
         } else if reset {
-            self.records
+            self.rows = self
+                .records
                 .iter()
-                .map(|(_, id, record)| (*id, record.clone()))
-                .collect()
-        } else {
-            arrivals
-        };
-        if filter.bookmarks && !reset {
-            self.rows.clear();
-        }
-        if self.error.is_none() {
-            for (id, record) in candidates {
-                if filter.includes(&record, regex) {
-                    let text = record.presentation(filter);
-                    let matches = if let Some(regex) = regex {
-                        regex
-                            .find_iter(&text)
-                            .filter(|found| !found.is_empty())
-                            .map(|found| found.range())
-                            .collect()
-                    } else {
-                        matches(&text, &filter.query)
-                    };
-                    self.rows.push_back(Row {
-                        id,
-                        text,
-                        record,
-                        matches,
-                        bookmarked: self.bookmarks.contains_key(&id),
-                    });
-                }
-            }
+                .filter_map(|(_, id, record)| self.row(*id, record))
+                .collect();
         }
         Change {
-            reset: reset || filter.bookmarks,
+            reset,
             removed,
-            added: self.rows.len().saturating_sub(retained),
+            added: self.rows.len().saturating_sub(before_append),
+            prepended,
         }
     }
+
+    fn parse_line(&mut self, text: &str) -> (usize, Arc<Record>) {
+        let mut record = Record::parse(text);
+        if record.source.is_none()
+            && let Some(source) = &self.source
+        {
+            record.source = Some(source.clone());
+            record.fields.insert("_source".into(), source.clone());
+        }
+        for key in record.fields.keys() {
+            *self.fields.entry(key.clone()).or_default() += 1;
+        }
+        let id = self.next_id;
+        self.next_id += 1;
+        (id, Arc::new(record))
+    }
+
+    fn row(&self, id: usize, record: &Arc<Record>) -> Option<Row> {
+        let regex = self.expression.as_ref();
+        if self.error.is_some() || !self.filter.includes(record, regex) {
+            return None;
+        }
+        let text = record.presentation(&self.filter);
+        let matches = if let Some(regex) = regex {
+            regex
+                .find_iter(&text)
+                .filter(|found| !found.is_empty())
+                .map(|found| found.range())
+                .collect()
+        } else {
+            matches(&text, &self.filter.query)
+        };
+        Some(Row {
+            id,
+            text,
+            record: record.clone(),
+            matches,
+            bookmarked: self.bookmarks.contains_key(&id),
+        })
+    }
+
     /// Export always keeps the original lines, independent of field projection.
     pub fn text(&self) -> String {
         self.rows
@@ -621,6 +632,31 @@ mod tests {
                 .contains("regular expression")
         );
     }
+    #[test]
+    fn backfill_preserves_visible_row_ids_filters_bookmarks_and_eviction_order() {
+        let mut logs = LogBuffer::new();
+        let mut display = Display::default();
+        logs.extend(["info live".into(), "error live".into()]);
+        display.update(&logs, "error");
+        let id = display.rows[0].id;
+        display.toggle_bookmark(id);
+        display.update(&logs, "error");
+        logs.prepend(vec!["info older".into(), "error older".into()], 0);
+        logs.push("error newer".into());
+        let change = display.update(&logs, "error");
+        assert!(!change.reset);
+        assert_eq!((change.removed, change.prepended, change.added), (0, 1, 1));
+        assert_eq!(display.text(), "error older\nerror live\nerror newer");
+        assert_eq!(display.rows[1].id, id);
+        assert!(display.rows[1].bookmarked);
+        for _ in 0..50_000 {
+            logs.push("ok".into());
+        }
+        display.update(&logs, "error");
+        assert!(display.rows.is_empty());
+        assert_eq!(display.record(id).unwrap().raw.as_ref(), "error live");
+    }
+
     #[test]
     fn search_updates_follow_appends_query_changes_and_ring_eviction() {
         let mut logs = LogBuffer::new();

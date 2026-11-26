@@ -10,6 +10,8 @@
 //! end is the one being read. How many were dropped is kept, so the pane can
 //! say so rather than silently showing a window into the middle of something.
 
+mod recent;
+
 use std::{
     collections::VecDeque,
     path::PathBuf,
@@ -165,6 +167,13 @@ pub enum LogEvent {
     /// The log request succeeded, even if the container has not logged a line.
     Opened,
     Lines(Vec<String>),
+    /// Older lines in chronological order, to insert above the current view.
+    History {
+        lines: Vec<String>,
+        discarded: usize,
+    },
+    /// The live stream remains usable when its optional history request fails.
+    HistoryFailed(String),
     /// The stream ended. A followed stream ends when the container does.
     Closed,
     Failed(String),
@@ -207,6 +216,7 @@ pub struct LogBuffer {
     lines: VecDeque<String>,
     bytes: usize,
     dropped: usize,
+    first_sequence: i64,
 }
 
 impl LogBuffer {
@@ -231,11 +241,32 @@ impl LogBuffer {
             if let Some(dropped) = self.lines.pop_front() {
                 self.bytes -= dropped.len();
                 self.dropped += 1;
+                self.first_sequence += 1;
             }
         }
     }
 
-    pub fn lines(&self) -> impl Iterator<Item = &str> {
+    /// Add the nearest older lines first. Already displayed lines always have priority.
+    pub fn prepend(&mut self, lines: Vec<String>, discarded: usize) {
+        let mut older = lines.into_iter().rev();
+        while let Some(line) = older.next() {
+            if self.dropped > 0 || self.len() >= MAX_LINES || self.bytes + line.len() > MAX_BYTES {
+                self.dropped += 1 + older.len();
+                break;
+            }
+            self.bytes += line.len();
+            self.first_sequence -= 1;
+            self.lines.push_front(line);
+        }
+        self.dropped += discarded;
+    }
+
+    /// Stable position of the oldest retained line. History precedes sequence zero.
+    pub fn first_sequence(&self) -> i64 {
+        self.first_sequence
+    }
+
+    pub fn lines(&self) -> impl DoubleEndedIterator<Item = &str> + ExactSizeIterator {
         self.lines.iter().map(String::as_str)
     }
 
@@ -257,6 +288,7 @@ impl LogBuffer {
         self.lines.clear();
         self.bytes = 0;
         self.dropped = 0;
+        self.first_sequence = 0;
     }
 
     /// Everything held, for the clipboard or a file.
@@ -280,14 +312,42 @@ pub fn follow(
     options: LogOptions,
     runtime: &tokio::runtime::Handle,
 ) -> impl Stream<Item = LogEvent> + use<> {
+    spawn_follow(client, namespace, pod, options, runtime, false)
+}
+
+pub(crate) fn spawn_follow(
+    client: kube::Client,
+    namespace: String,
+    pod: String,
+    options: LogOptions,
+    runtime: &tokio::runtime::Handle,
+    recent_first: bool,
+) -> impl Stream<Item = LogEvent> + use<> {
     let (sender, receiver) = mpsc::unbounded();
 
     let task = runtime.spawn(async move {
         let api: Api<Pod> = Api::namespaced(client, &namespace);
 
+        let mut params = options.to_params();
+        let show_timestamps = params.timestamps;
+        let range_start = options
+            .until_time
+            .and_then(|until| {
+                k8s_openapi::jiff::Timestamp::from_second(until.as_second() - 60).ok()
+            })
+            .filter(|start| recent_first && options.since_time.is_none_or(|since| since < *start));
+        if let Some(start) = range_start {
+            // pods/log only supports sinceTime. Read near the selected end first.
+            params.since_time = Some(start);
+        }
+        let preview_tail = recent_first && options.until_time.is_none();
+        if preview_tail {
+            params.tail_lines = Some(recent::PREVIEW_LINES as i64);
+            params.timestamps = true;
+        }
         let mut waiting = false;
         let stream = loop {
-            match api.log_stream(&pod, &options.to_params()).await {
+            match api.log_stream(&pod, &params).await {
                 Ok(stream) => break stream,
                 Err(error) if !options.previous && waiting_to_start(&error) => {
                     if !waiting && sender.unbounded_send(LogEvent::Waiting).is_err() {
@@ -306,50 +366,72 @@ pub fn follow(
             return;
         }
 
-        // `futures`' line reader, not tokio's: kube hands back a
-        // `futures::AsyncBufRead`, and the two traits are not interchangeable.
-        let lines = stream.lines();
-        futures::pin_mut!(lines);
+        if recent_first && let Some(until) = options.until_time {
+            let end =
+                recent::load_range(stream, &api, &pod, &options, until, range_start, &sender).await;
+            let _ = sender.unbounded_send(end);
+            return;
+        }
 
-        let mut pending: Vec<String> = Vec::new();
-        let mut ticker = tokio::time::interval(BATCH_WINDOW);
-        ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-
-        loop {
-            let flush = tokio::select! {
-                line = lines.next() => match line {
-                    Some(Ok(line)) => {
-                        if options.until_time.is_none_or(|until| within_until(&line, until)) {
-                            pending.push(line);
+        let (anchor_tx, anchor_rx) = tokio::sync::oneshot::channel();
+        let read = async {
+            let mut preview = preview_tail.then(|| recent::Preview::new(anchor_tx));
+            let mut lines = stream.lines();
+            let mut pending = Vec::new();
+            let mut ticker = tokio::time::interval(BATCH_WINDOW);
+            ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+            loop {
+                let flush = tokio::select! {
+                    line = lines.next() => match line {
+                        Some(Ok(line)) => {
+                            if options.until_time.is_none_or(|until| within_until(&line, until)) {
+                                let ready = preview.as_mut().is_some_and(|p| p.observe(&line));
+                                pending.push(if preview_tail && !show_timestamps {
+                                    recent::without_timestamp(line)
+                                } else {
+                                    line
+                                });
+                                ready || pending.len() >= BATCH_LIMIT
+                            } else {
+                                false
+                            }
                         }
-                        pending.len() >= BATCH_LIMIT
-                    }
-                    None => {
-                        if !pending.is_empty() {
-                            let _ = sender
-                                .unbounded_send(LogEvent::Lines(std::mem::take(&mut pending)));
+                        None => break,
+                        Some(Err(error)) => {
+                            if !pending.is_empty() {
+                                let _ = sender.unbounded_send(LogEvent::Lines(pending));
+                            }
+                            return LogEvent::Failed(error.to_string());
                         }
-                        let _ = sender.unbounded_send(LogEvent::Closed);
-                        return;
-                    }
-                    Some(Err(error)) => {
-                        let _ = sender.unbounded_send(LogEvent::Failed(error.to_string()));
-                        return;
-                    }
-                },
-                _ = ticker.tick(), if !pending.is_empty() => true,
-            };
-
-            if flush {
-                let batch = std::mem::take(&mut pending);
-                // A send failure means the pane is gone, which is the signal
-                // to stop reading -- and, because the response body drops with
-                // this task, to close the connection.
-                if sender.unbounded_send(LogEvent::Lines(batch)).is_err() {
-                    return;
+                    },
+                    _ = ticker.tick(), if !pending.is_empty() => true,
+                };
+                if flush
+                    && sender
+                        .unbounded_send(LogEvent::Lines(std::mem::take(&mut pending)))
+                        .is_err()
+                {
+                    break;
+                }
+                if let Some(preview) = preview.take_if(|p| p.ready()) {
+                    preview.start_history();
                 }
             }
-        }
+            if !pending.is_empty() {
+                let _ = sender.unbounded_send(LogEvent::Lines(pending));
+            }
+            LogEvent::Closed
+        };
+        let backfill = async {
+            if let Ok(anchor) = anchor_rx.await
+                && let Err(error) =
+                    recent::load_history(&api, &pod, &options, anchor, &sender).await
+            {
+                let _ = sender.unbounded_send(LogEvent::HistoryFailed(error));
+            }
+        };
+        let (end, ()) = tokio::join!(read, backfill);
+        let _ = sender.unbounded_send(end);
     });
 
     Events { receiver, task }
@@ -386,7 +468,7 @@ mod tests {
         assert_eq!(buffer.dropped(), 10);
         assert_eq!(buffer.lines().next(), Some("line 10"));
         assert_eq!(
-            buffer.lines().last(),
+            buffer.lines().next_back(),
             Some(format!("line {}", MAX_LINES + 9).as_str())
         );
     }
@@ -405,6 +487,21 @@ mod tests {
         assert!(buffer.len() < 500, "trimmed: {} lines", buffer.len());
         assert!(buffer.bytes <= MAX_BYTES + fat.len());
         assert!(buffer.dropped() > 0);
+    }
+
+    #[test]
+    fn history_cannot_displace_recent_lines_or_bridge_an_evicted_gap() {
+        let mut buffer = LogBuffer::new();
+        buffer.push("new".into());
+        buffer.prepend(
+            vec!["too early".into(), "x".repeat(MAX_BYTES), "near".into()],
+            0,
+        );
+        assert_eq!(buffer.to_text(), "near\nnew");
+        assert_eq!((buffer.first_sequence(), buffer.dropped()), (-1, 2));
+        buffer.prepend(vec!["earlier".into()], 3);
+        assert_eq!(buffer.to_text(), "near\nnew");
+        assert_eq!(buffer.dropped(), 6);
     }
 
     /// A single line larger than the whole ceiling must still be shown, not

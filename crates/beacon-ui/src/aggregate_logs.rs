@@ -313,7 +313,9 @@ impl AggregateLogs {
                         LogEvent::Failed(error) => {
                             view.errors.insert(identity.clone(), error);
                         }
-                        LogEvent::Closed => {}
+                        LogEvent::Closed
+                        | LogEvent::History { .. }
+                        | LogEvent::HistoryFailed(_) => {}
                     }
                     cx.notify();
                 },

@@ -44,6 +44,10 @@
     "en": "Could not open the save dialog: %{error}",
     "zh-CN": "无法打开保存对话框：%{error}"
   },
+  "messages.older_logs_error": {
+    "en": "Could not load earlier logs: %{error}",
+    "zh-CN": "无法加载较早的日志：%{error}"
+  },
   "messages.could_not_download_logs_to_error": {
     "en": "Could not download logs to %{value0}: %{error}",
     "zh-CN": "无法下载日志至 %{value0}：%{error}"
